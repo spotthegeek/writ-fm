@@ -260,8 +260,8 @@ SHOW_MUSIC: dict[str, list[str | dict]] = {
 }
 
 # Duration range for bumpers (seconds)
-BUMPER_MIN = 120.0
-BUMPER_MAX = 240.0
+BUMPER_MIN = 180.0
+BUMPER_MAX = 300.0
 
 
 def _display_name(caption: str) -> str:

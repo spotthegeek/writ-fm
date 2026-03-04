@@ -7,18 +7,16 @@ __pycache__/
 # Chatterbox venv (separate from main)
 mac/chatterbox/.venv/
 
-# Output files (generated content)
-output/segments/*.wav
-output/segments/*.aiff
-output/segments/*.mp3
-output/segments/**/*.wav
-output/segments/**/*.aiff
-output/segments/**/*.mp3
-output/scripts/*.json
+# Output files (generated content — never commit)
+output/segments/
+output/talk_segments/
+output/music_bumpers/
+output/scripts/
 output/chopped_music/
 output/music/
 output/podcasts/
 output/now_playing.json
+output/generation.log
 
 # Dev files
 command.txt
