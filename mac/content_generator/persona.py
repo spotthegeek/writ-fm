@@ -15,7 +15,7 @@ from helpers import get_time_of_day
 
 STATION_NAME = "WRIT-FM"
 STATION_TAGLINE = "The frequency between frequencies"
-STATION_URL = "radio.khy.io"
+STATION_URL = "www.khaledeltokhy.com/claude-show"
 
 STATION_LORE = """
 WRIT-FM began broadcasting in the spaces between stations. No one remembers

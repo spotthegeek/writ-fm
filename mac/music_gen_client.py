@@ -32,6 +32,7 @@ def generate_music(
     seed: int = -1,
     instrumental: bool = True,
     lyrics: str = "[Instrumental]",
+    guidance_scale: float = 0.0,
     base_url: str = MUSIC_GEN_BASE_URL,
     timeout: float = 600.0,
 ) -> bool:
@@ -58,8 +59,8 @@ def generate_music(
         "duration": duration,
         "audio_format": audio_format,
         "seed": seed,
-        "inference_steps": 8,
-        "guidance_scale": 7.0,
+        "inference_steps": 25,
+        "guidance_scale": guidance_scale if guidance_scale > 0 else 7.0,
         "thinking": True,
     }).encode()
 

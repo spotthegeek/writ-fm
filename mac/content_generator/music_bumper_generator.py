@@ -259,6 +259,26 @@ SHOW_MUSIC: dict[str, list[str | dict]] = {
     ],
 }
 
+# Merge expanded caption pools (25 instrumental + 10 vocal per show)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from music_pools_expanded import (  # noqa: E402
+    midnight_signal_new, the_night_garden_new, dawn_chorus_new,
+    sonic_archaeology_new, signal_report_new, the_groove_lab_new,
+    crosswire_new, listener_hours_new,
+)
+_EXPANDED = {
+    "midnight_signal": midnight_signal_new,
+    "the_night_garden": the_night_garden_new,
+    "dawn_chorus": dawn_chorus_new,
+    "sonic_archaeology": sonic_archaeology_new,
+    "signal_report": signal_report_new,
+    "the_groove_lab": the_groove_lab_new,
+    "crosswire": crosswire_new,
+    "listener_hours": listener_hours_new,
+}
+for _show_id, _new_pool in _EXPANDED.items():
+    SHOW_MUSIC[_show_id].extend(_new_pool)
+
 # Duration range for bumpers (seconds)
 BUMPER_MIN = 120.0
 BUMPER_MAX = 240.0
@@ -323,8 +343,10 @@ def generate_one_bumper(show_id: str, verbose: bool = True) -> bool:
         print(f"  [{show_id}] {int(duration)}s ({kind}) — {caption[:70]}...")
 
     start = time.perf_counter()
+    guidance = round(random.uniform(4.0, 10.0), 1)
     ok = generate_music(caption, audio_path, duration=duration,
-                        instrumental=instrumental, lyrics=lyrics)
+                        instrumental=instrumental, lyrics=lyrics,
+                        guidance_scale=guidance)
     elapsed = time.perf_counter() - start
 
     if ok:

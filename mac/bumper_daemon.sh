@@ -4,7 +4,7 @@
 # Runs as a launchd agent; safe to kill and restart anytime.
 
 RADIO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-MIN_BUMPERS=10
+MIN_BUMPERS=30
 SLEEP_STOCKED=300    # 5min between checks when all shows are full
 SLEEP_NO_SERVER=60   # 1min retry when music-gen.server is offline
 

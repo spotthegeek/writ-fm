@@ -6,7 +6,6 @@ Streams talk segments with music bumpers to Icecast.
 Uses a single ffmpeg encoder fed by continuous PCM from decoded audio.
 
 Flow: talk segment -> music bumper (60-120s) -> talk segment -> ...
-Falls back to continuous music if no talk segments are available.
 """
 
 import subprocess
@@ -41,10 +40,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TALK_SEGMENTS_DIR = PROJECT_ROOT / "output" / "talk_segments"
 AI_BUMPERS_DIR = PROJECT_ROOT / "output" / "music_bumpers"
 
-# Legacy segments (fallback for old period-based segments)
-DEFAULT_SEGMENTS_DIR = PROJECT_ROOT / "output" / "segments"
-SEGMENTS_DIR = Path(os.environ.get("WRIT_SEGMENTS_DIR", str(DEFAULT_SEGMENTS_DIR))).expanduser()
-
 # Weekly schedule
 DEFAULT_SCHEDULE_PATH = PROJECT_ROOT / "config" / "schedule.yaml"
 SCHEDULE_PATH = Path(os.environ.get("WRIT_SCHEDULE_PATH", str(DEFAULT_SCHEDULE_PATH))).expanduser()
@@ -69,6 +64,7 @@ running = True
 encoder_proc = None
 skip_current = False
 force_segment = False
+last_bumper_path: Path | None = None
 current_track_info: dict = {
     "track": None,
     "type": None,
@@ -121,29 +117,19 @@ class ProgramContext:
 
 def get_program_context(station_schedule=None) -> ProgramContext:
     """Resolve the current show/program from the schedule."""
-    if station_schedule is not None:
-        resolved = station_schedule.resolve()
-        return ProgramContext(
-            show_id=resolved.show_id,
-            show_name=resolved.name,
-            show_description=resolved.description,
-            host=resolved.host,
-            topic_focus=resolved.topic_focus,
-            segment_types=resolved.segment_types,
-            bumper_style=resolved.bumper_style,
-            voices=dict(resolved.voices),
-        )
+    if station_schedule is None:
+        raise RuntimeError("Station schedule is required")
 
-    # Fallback if no schedule
+    resolved = station_schedule.resolve()
     return ProgramContext(
-        show_id="midnight_signal",
-        show_name="Midnight Signal",
-        show_description="Philosophy and late-night transmissions.",
-        host="liminal_operator",
-        topic_focus="philosophy",
-        segment_types=["deep_dive", "story"],
-        bumper_style="ambient",
-        voices={"host": "am_michael"},
+        show_id=resolved.show_id,
+        show_name=resolved.name,
+        show_description=resolved.description,
+        host=resolved.host,
+        topic_focus=resolved.topic_focus,
+        segment_types=resolved.segment_types,
+        bumper_style=resolved.bumper_style,
+        voices=dict(resolved.voices),
     )
 
 
@@ -325,24 +311,13 @@ def get_track_duration(filepath: Path) -> float | None:
 def get_talk_segments(show_id: str) -> list[Path]:
     """Load pre-generated talk segments for a show.
 
-    Checks show-specific directory first, then falls back to legacy period folders.
     Listener responses are sorted to the front so they air first.
     """
-    segments = []
-
-    # Primary: show-specific talk segments
     show_dir = TALK_SEGMENTS_DIR / show_id
-    if show_dir.exists():
-        segments = sorted(show_dir.glob("*.wav"), key=lambda p: p.stat().st_mtime)
+    if not show_dir.exists():
+        return []
 
-    # Fallback: legacy period-based segments
-    if not segments:
-        period = _get_current_period()
-        period_dir = SEGMENTS_DIR / period
-        if period_dir.exists():
-            segments = list(period_dir.glob("*.wav"))
-        if not segments:
-            segments = list(SEGMENTS_DIR.glob("*.wav"))
+    segments = sorted(show_dir.glob("*.wav"), key=lambda p: p.stat().st_mtime)
 
     # Prioritize listener responses — they should air before other talk segments
     listener_responses = [s for s in segments if "listener_response" in s.name]
@@ -361,24 +336,7 @@ def get_listener_responses(show_id: str) -> list[Path]:
     )
 
 
-def _get_current_period() -> str:
-    """Map current hour to legacy period name."""
-    hour = datetime.now().hour
-    if hour < 6:
-        return "late_night"
-    if hour < 12:
-        return "morning"
-    if hour < 18:
-        return "afternoon"
-    return "evening"
-
-
-# =============================================================================
-# BUMPER MUSIC SELECTION
-# =============================================================================
-
-
-def select_ai_bumper(show_id: str) -> tuple[Path, float, float, str | None, str | None] | None:
+def select_ai_bumper(show_id: str, exclude: set[Path] | None = None) -> tuple[Path, float, float, str | None, str | None] | None:
     """Pick a pre-generated AI music bumper for the current show.
 
     Returns (path, start_time, duration, caption, display_name) or None if unavailable.
@@ -404,6 +362,15 @@ def select_ai_bumper(show_id: str) -> tuple[Path, float, float, str | None, str 
                 candidates = fresh
         except Exception:
             pass
+
+    # Exclude tracks already played in this set + the last bumper played
+    skip = set(exclude) if exclude else set()
+    if last_bumper_path is not None:
+        skip.add(last_bumper_path)
+    if skip:
+        candidates = [c for c in candidates if c not in skip]
+        if not candidates:
+            return None
 
     track = random.choice(candidates)
     duration = get_track_duration(track)
@@ -481,7 +448,7 @@ def start_encoder() -> subprocess.Popen:
             "-ac", "2",
             "-i", "-",
             "-acodec", "libmp3lame",
-            "-b:a", "192k",
+            "-b:a", "96k",
             "-content_type", "audio/mpeg",
             "-ice_name", "WRIT-FM",
             "-ice_description", "The frequency between frequencies",
@@ -565,7 +532,7 @@ def pipe_track(filepath: Path, encoder: subprocess.Popen, start_time: float = 0,
 # =============================================================================
 
 def run():
-    global running, encoder_proc, force_segment
+    global running, encoder_proc, force_segment, last_bumper_path
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
@@ -576,13 +543,13 @@ def run():
     log(f"Streaming to: {ICECAST_URL}")
 
     # Load schedule
-    station_schedule = None
-    if SCHEDULE_ENABLED and SCHEDULE_PATH.exists():
-        try:
-            station_schedule = load_schedule(SCHEDULE_PATH)
-            log(f"Loaded schedule with {len(station_schedule.shows)} shows")
-        except Exception as e:
-            log(f"Schedule load failed, using fallback: {e}")
+    if not SCHEDULE_ENABLED:
+        raise RuntimeError("Schedule module is unavailable")
+    if not SCHEDULE_PATH.exists():
+        raise FileNotFoundError(f"Schedule file not found: {SCHEDULE_PATH}")
+
+    station_schedule = load_schedule(SCHEDULE_PATH)
+    log(f"Loaded schedule with {len(station_schedule.shows)} shows")
 
     # Start embedded API server
     from api_server import start_api_thread
@@ -611,7 +578,7 @@ def run():
     if bumper_count > 0:
         log(f"AI music bumpers: {bumper_count} (will use instead of local music)")
     else:
-        log("AI music bumpers: none (using local music library)")
+        log("AI music bumpers: none")
 
     while running:
         log("Starting encoder...")
@@ -659,7 +626,6 @@ def run():
                     # Play talk segment
                     seg_name = clean_name(talk_seg, is_speech=True)
                     seg_type = _extract_segment_type(talk_seg)
-                    talk_dur = get_track_duration(talk_seg)
                     log(f"  TALK: {seg_name}")
                     update_now_playing(
                         seg_name, "talk",
@@ -682,15 +648,13 @@ def run():
 
                     record_play(talk_seg, seg_name, "talk", ctx.show_id)
 
-                    # Play music set between talk segments
-                    # Target ~equal airtime to talk for ~50-55% music overall
+                    # Play 2-3 songs between talk segments (~30% music)
                     if running and encoder_proc.poll() is None:
-                        target_music = talk_dur if talk_dur and talk_dur > 60 else 900.0
-                        music_played = 0.0
+                        max_tracks = random.randint(3, 4)
                         set_count = 0
 
                         while (running and encoder_proc.poll() is None
-                               and music_played < target_music):
+                               and set_count < max_tracks):
                             ai_bumper = select_ai_bumper(ctx.show_id)
                             if not ai_bumper:
                                 if set_count == 0:
@@ -714,10 +678,15 @@ def run():
                                 break
 
                             record_play(bpath, bname, "ai_bumper", ctx.show_id)
-                            music_played += bdur or 180.0
+                            try:
+                                bpath.unlink()
+                                log(f"    (consumed)")
+                            except Exception:
+                                pass
+                            last_bumper_path = bpath
 
                         if set_count > 0:
-                            log(f"  Music set: {set_count} tracks, {int(music_played)}s")
+                            log(f"  Music set: {set_count} tracks")
 
                     # Check for new listener responses that arrived mid-queue
                     if running and encoder_proc.poll() is None:
@@ -745,44 +714,8 @@ def run():
                                     pass
 
             else:
-                # No talk segments — loop AI bumpers until talk appears
-                log("  No talk segments — AI bumper loop")
-
-                bumper_count = 0
-                while running and encoder_proc.poll() is None and bumper_count < 20:
-                    # Check if show changed or talk segments appeared
-                    new_ctx = get_program_context(station_schedule)
-                    if new_ctx.show_id != ctx.show_id:
-                        break
-                    new_talks = get_talk_segments(ctx.show_id)
-                    if new_talks:
-                        log("  Talk segments found — switching to talk mode")
-                        break
-
-                    ai_bumper = select_ai_bumper(ctx.show_id)
-                    if not ai_bumper:
-                        log("  No AI bumpers available — waiting 30s...")
-                        time.sleep(30)
-                        continue
-
-                    bpath, bstart, bdur, bcaption, bdisplay = ai_bumper
-                    bname = bdisplay or "AI Music"
-                    log(f"  AI BUMPER: {bname} ({int(bdur)}s)")
-                    if bcaption:
-                        log(f"    {bcaption[:70]}...")
-                    update_now_playing(
-                        bname, "bumper",
-                        show_id=ctx.show_id,
-                        show_name=ctx.show_name,
-                        caption=bcaption,
-                    )
-
-                    if not pipe_track(bpath, encoder_proc, bstart, bdur):
-                        break
-
-                    record_play(bpath, bname, "ai_bumper", ctx.show_id)
-
-                    bumper_count += 1
+                log(f"  No talk segments for {ctx.show_id}; waiting 30s")
+                time.sleep(30)
 
             if running and encoder_proc.poll() is None:
                 log("Queue complete, refreshing...")
