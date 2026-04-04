@@ -117,7 +117,40 @@ Check for:
 - Talk segments playing with music bumpers between them
 - `No talk segments for ...` messages (means the current show needs more content)
 
-### 7. Log Status
+### 7. Drift Detection
+Before you finish, check for drift between declared behavior and actual behavior.
+
+Compare these sources of truth:
+- Runtime state: tmux logs, running processes, queue folders, API responses
+- Config: `config/schedule.yaml`
+- Operator instructions: this file
+- User-facing docs: `README.md`, `docs/how-to.html`
+
+Run checks like:
+```bash
+uv run python mac/schedule.py now
+curl -sf http://localhost:8001/health || true
+curl -sf http://localhost:8001/schedule || true
+curl -sf http://localhost:8001/now-playing || true
+find output/talk_segments -maxdepth 2 -type f | wc -l
+find output/music_bumpers -maxdepth 2 -type f | wc -l
+```
+
+Look for:
+- Docs claiming fallbacks or daemons that no longer exist
+- Prompt instructions that no longer match streamer behavior
+- API status disagreeing with actual running components
+- Schedule/config expecting shows or assets that are not present on disk
+
+If drift is operational:
+- fix the runtime state
+
+If drift is descriptive:
+- patch the docs or this operator prompt
+
+Always note any detected drift and what you changed.
+
+### 8. Log Status
 Append to daily log:
 ```bash
 LOGFILE="output/operator_$(date +%Y-%m-%d).log"
@@ -187,3 +220,4 @@ Short-form (transitions):
 - Prefer the smallest generation action that restores healthy stock
 - music-gen.server runs separately — start it before generating bumpers
 - You are allowed to decide which show to stock and how many assets to generate based on live status instead of following a rigid daemon policy
+- Drift detection is part of normal operation, not a special case
