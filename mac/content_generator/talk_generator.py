@@ -337,119 +337,72 @@ def run_generation(prompt: str, segment_type: str) -> str | None:
 # =============================================================================
 
 
-def render_kokoro(text: str, output_path: Path, voice: str = "am_michael") -> bool:
-    """Render text to speech using Kokoro TTS."""
-    kokoro_dir = PROJECT_ROOT / "mac" / "kokoro"
-    venv_python = kokoro_dir / ".venv" / "bin" / "python"
+try:
+    from kokoro import KPipeline
+    import soundfile as sf
+    import numpy as np
+    KOKORO_AVAILABLE = True
+except ImportError:
+    KOKORO_AVAILABLE = False
 
-    if not venv_python.exists():
-        log("Kokoro venv not found")
-        return False
+_KOKORO_PIPELINE = None
 
-    escaped_text = text.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
-
-    tts_script = f'''
-import warnings
-warnings.filterwarnings("ignore")
-
-from kokoro import KPipeline
-import soundfile as sf
-import numpy as np
-
-pipe = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M")
-
-text = "{escaped_text}"
-voice = "{voice}"
-
-generator = pipe(text, voice=voice, speed=1.0)
-audio_segments = []
-for _, _, audio in generator:
-    audio_segments.append(audio)
-
-if len(audio_segments) == 1:
-    full_audio = audio_segments[0]
-else:
-    full_audio = np.concatenate(audio_segments)
-
-sf.write("{output_path}", full_audio, 24000)
-print("SUCCESS")
-'''
-
-    try:
-        result = subprocess.run(
-            [str(venv_python), "-c", tts_script],
-            capture_output=True,
-            text=True,
-            timeout=300,
-            cwd=str(kokoro_dir),
-        )
-        return "SUCCESS" in result.stdout
-    except Exception as e:
-        log(f"Kokoro error: {e}")
-        return False
-
+def get_kokoro_pipeline():
+    global _KOKORO_PIPELINE
+    if _KOKORO_PIPELINE is None:
+        if not KOKORO_AVAILABLE:
+            log("Kokoro not available in current environment")
+            return None
+        log("Loading Kokoro pipeline...")
+        try:
+            # Use CPU to save memory
+            _KOKORO_PIPELINE = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M")
+        except Exception as e:
+            log(f"Failed to load Kokoro: {e}")
+            return None
+    return _KOKORO_PIPELINE
 
 def render_single_voice(script: str, output_path: Path, voice: str) -> bool:
-    """Render a single-voice script to audio, chunking for long content."""
-    MAX_CHUNK_WORDS = 100
-    words = script.split()
-
-    if len(words) <= MAX_CHUNK_WORDS:
-        return render_kokoro(script, output_path, voice)
-
-    # Split at sentence boundaries
-    import re
-    sentences = re.split(r'(?<=[.!?])\s+', script)
-
-    # Group into chunks
-    chunks = []
-    current_chunk = []
-    current_words = 0
-
-    for sentence in sentences:
-        sentence_words = len(sentence.split())
-        if current_words + sentence_words > MAX_CHUNK_WORDS and current_chunk:
-            chunks.append(' '.join(current_chunk))
-            current_chunk = [sentence]
-            current_words = sentence_words
-        else:
-            current_chunk.append(sentence)
-            current_words += sentence_words
-
-    if current_chunk:
-        chunks.append(' '.join(current_chunk))
-
-    log(f"  Rendering {len(chunks)} chunks with voice {voice}...")
-
-    chunk_files = []
-    for i, chunk in enumerate(chunks):
-        chunk_path = output_path.with_stem(f"{output_path.stem}_chunk{i:03d}")
-        for attempt in range(2):
-            if render_kokoro(chunk, chunk_path, voice):
-                chunk_files.append(chunk_path)
-                break
-            time.sleep(2)
-
-    if not chunk_files:
-        log("  No chunks rendered")
+    """Render a single-voice script to audio, streaming chunks to disk."""
+    pipe = get_kokoro_pipeline()
+    if not pipe:
         return False
 
-    return _concatenate_audio(chunk_files, output_path)
+    log(f"  Rendering single voice '{voice}' to {output_path.name}...")
+    try:
+        generator = pipe(script, voice=voice, speed=1.0)
+        
+        with sf.SoundFile(str(output_path), mode='w', samplerate=24000, channels=1) as f:
+            chunk_count = 0
+            for _, _, audio in generator:
+                if audio is not None:
+                    f.write(audio)
+                    chunk_count += 1
+                    if chunk_count % 10 == 0:
+                        log(f"    ...rendered {chunk_count} segments")
+                        
+        if chunk_count > 0:
+            log(f"  Finished rendering {chunk_count} segments.")
+            return True
+        else:
+            log("  No audio generated.")
+            return False
+            
+    except Exception as e:
+        log(f"  Kokoro rendering error: {e}")
+        return False
 
 
 def render_multi_voice(script: str, output_path: Path, voices: dict[str, str]) -> bool:
-    """Render a multi-voice script (panel/interview) to audio.
-
-    Parses HOST:/GUEST: or HOST_A:/HOST_B: markers and renders each speaker
-    with their assigned voice. Concatenates with brief gaps.
-    """
+    """Render a multi-voice script (panel/interview) to audio, streaming to disk."""
     import re
+    pipe = get_kokoro_pipeline()
+    if not pipe:
+        return False
 
     # Parse speaker markers
-    # Matches HOST:, GUEST:, HOST_A:, HOST_B:, or named markers like DR. RESONANCE:
     segments = re.split(r'((?:HOST|GUEST|HOST_A|HOST_B|[A-Z][A-Z\s.]+):)', script)
 
-    # Build ordered list of (speaker_key, text)
     parts: list[tuple[str, str]] = []
     current_speaker = None
     for seg in segments:
@@ -461,91 +414,54 @@ def render_multi_voice(script: str, output_path: Path, voices: dict[str, str]) -
         elif current_speaker:
             parts.append((current_speaker, seg))
         else:
-            # No speaker marker yet, treat as host
             parts.append(("HOST", seg))
 
+    host_voice = voices.get("host", "am_michael")
     if not parts:
-        # No markers found, render as single voice
-        host_voice = voices.get("host", "am_michael")
         return render_single_voice(script, output_path, host_voice)
 
-    # Map speaker keys to voices
-    voice_map = {}
-    host_voice = voices.get("host", "am_michael")
     guest_voice = voices.get("guest", "af_bella")
-
+    voice_map = {}
     for key in ("HOST", "HOST_A"):
         voice_map[key] = host_voice
     for key in ("GUEST", "HOST_B"):
         voice_map[key] = guest_voice
 
-    log(f"  Rendering {len(parts)} dialogue segments...")
-
-    # Render each part
-    chunk_files = []
-    for i, (speaker, text) in enumerate(parts):
-        voice = voice_map.get(speaker, host_voice)
-        chunk_path = output_path.with_stem(f"{output_path.stem}_part{i:03d}")
-
-        # Clean text
-        text = preprocess_for_tts(text)
-        if not text.strip():
-            continue
-
-        # Render in sub-chunks if long
-        if len(text.split()) > 100:
-            if render_single_voice(text, chunk_path, voice):
-                chunk_files.append(chunk_path)
-        else:
-            for attempt in range(2):
-                if render_kokoro(text, chunk_path, voice):
-                    chunk_files.append(chunk_path)
-                    break
-                time.sleep(2)
-
-    if not chunk_files:
-        log("  No dialogue parts rendered")
-        return False
-
-    return _concatenate_audio(chunk_files, output_path, gap_seconds=0.3)
-
-
-def _concatenate_audio(chunk_files: list[Path], output_path: Path, gap_seconds: float = 0) -> bool:
-    """Concatenate WAV files, optionally with silence gaps between them."""
-    if len(chunk_files) == 1:
-        chunk_files[0].rename(output_path)
-        return True
-
-    list_file = output_path.with_suffix('.concat.txt')
+    log(f"  Rendering {len(parts)} dialogue segments to {output_path.name}...")
+    
+    gap_audio = np.zeros(int(24000 * 0.3), dtype=np.float32)
 
     try:
-        with open(list_file, 'w') as f:
-            for i, cf in enumerate(chunk_files):
-                f.write(f"file '{cf}'\n")
+        with sf.SoundFile(str(output_path), mode='w', samplerate=24000, channels=1) as f:
+            total_chunks = 0
+            for i, (speaker, text) in enumerate(parts):
+                voice = voice_map.get(speaker, host_voice)
+                
+                text = preprocess_for_tts(text)
+                if not text.strip():
+                    continue
+                
+                # Add gap between speakers
+                if i > 0:
+                    f.write(gap_audio)
+                    
+                generator = pipe(text, voice=voice, speed=1.0)
+                for _, _, audio in generator:
+                    if audio is not None:
+                        f.write(audio)
+                        total_chunks += 1
+                        if total_chunks % 10 == 0:
+                            log(f"    ...rendered {total_chunks} total segments")
 
-        # Use ffmpeg concat
-        cmd = [
-            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-            "-i", str(list_file),
-            "-c", "copy", str(output_path)
-        ]
-
-        result = subprocess.run(cmd, capture_output=True, timeout=120)
-
-        # Cleanup
-        list_file.unlink(missing_ok=True)
-        for cf in chunk_files:
-            cf.unlink(missing_ok=True)
-
-        if result.returncode != 0:
-            log(f"  Concat failed: {result.stderr.decode()[:100]}")
+        if total_chunks > 0:
+            log(f"  Finished rendering {total_chunks} total segments.")
+            return True
+        else:
+            log("  No dialogue parts rendered")
             return False
-
-        return output_path.exists()
-
+            
     except Exception as e:
-        log(f"  Concat error: {e}")
-        list_file.unlink(missing_ok=True)
+        log(f"  Kokoro multi-voice rendering error: {e}")
         return False
 
 

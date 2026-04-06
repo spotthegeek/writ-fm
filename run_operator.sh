@@ -12,5 +12,7 @@ cd "$(dirname "$0")"
 # Read the operator prompt
 PROMPT=$(cat mac/operator_prompt.md)
 
-# Launch Claude Code with the prompt
-claude -p "$PROMPT" --allowedTools "Bash,Read,Write,Edit,Glob,Grep"
+# Launch Gemini CLI with the prompt
+# Note: gemini -p expects the prompt as an argument.
+# We use --approval-mode plan to ensure it only reads/writes as expected.
+gemini --approval-mode plan -p "$PROMPT"

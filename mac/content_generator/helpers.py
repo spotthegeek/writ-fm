@@ -80,6 +80,7 @@ def run_claude(
     min_length: int = 0,
     strip_quotes: bool = True,
 ) -> str | None:
+    # Try Claude first
     args = ["claude", "-p", prompt]
     if model:
         args.extend(["--model", model])
@@ -91,20 +92,33 @@ def run_claude(
             text=True,
             timeout=timeout,
         )
-    except subprocess.TimeoutExpired:
-        log("Claude timed out")
-        return None
+        if result.returncode == 0 and result.stdout.strip():
+            script = clean_claude_output(result.stdout, strip_quotes=strip_quotes)
+            if len(script) > min_length:
+                return script
+    except Exception:
+        pass
+
+    # Fallback to Gemini CLI
+    args = ["gemini", "--approval-mode", "plan", "-p", prompt]
+    if model:
+        args.extend(["--model", model])
+
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            script = clean_claude_output(result.stdout, strip_quotes=strip_quotes)
+            if len(script) > min_length:
+                return script
     except Exception as exc:
-        log(f"Claude error: {exc}")
-        return None
+        log(f"LLM error: {exc}")
 
-    if result.returncode != 0 or not result.stdout.strip():
-        return None
-
-    script = clean_claude_output(result.stdout, strip_quotes=strip_quotes)
-    if len(script) <= min_length:
-        return None
-    return script
+    return None
 
 
 def _strip_namespace(tag: str) -> str:

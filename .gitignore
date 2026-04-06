@@ -42,3 +42,10 @@ uv.lock
 
 # Kokoro venv
 mac/kokoro/.venv/
+
+# Kokoro ONNX model files
+mac/kokoro/*.onnx
+mac/kokoro/onnx/
+mac/kokoro/tokenizer.json
+mac/kokoro/*.bin
+mac/kokoro/voices/

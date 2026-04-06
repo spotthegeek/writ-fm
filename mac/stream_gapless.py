@@ -49,7 +49,7 @@ ICECAST_HOST = os.environ.get("ICECAST_HOST", "localhost")
 ICECAST_PORT = int(os.environ.get("ICECAST_PORT", "8000"))
 ICECAST_MOUNT = os.environ.get("ICECAST_MOUNT", "/stream")
 ICECAST_USER = os.environ.get("ICECAST_USER", "source")
-ICECAST_PASS = os.environ.get("ICECAST_PASS", "writ_source_2024")
+ICECAST_PASS = os.environ.get("ICECAST_PASS", "1cecast2")
 ICECAST_URL = f"icecast://{ICECAST_USER}:{ICECAST_PASS}@{ICECAST_HOST}:{ICECAST_PORT}{ICECAST_MOUNT}"
 ICECAST_STATUS_URL = os.environ.get(
     "ICECAST_STATUS_URL",
