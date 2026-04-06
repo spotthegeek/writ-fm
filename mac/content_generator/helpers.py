@@ -75,12 +75,36 @@ def clean_claude_output(text: str, *, strip_quotes: bool = True) -> str:
 def run_claude(
     prompt: str,
     *,
-    timeout: int = 60,
+    timeout: int = 120,
     model: str | None = None,
     min_length: int = 0,
     strip_quotes: bool = True,
 ) -> str | None:
-    # Try Claude first
+    # 1. Try Ollama (if configured)
+    import json
+    ollama_url = os.environ.get("OLLAMA_URL")
+    if ollama_url:
+        ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.3")
+        try:
+            req = urllib.request.Request(
+                f"{ollama_url.rstrip('/')}/api/generate",
+                data=json.dumps({
+                    "model": ollama_model,
+                    "prompt": prompt,
+                    "stream": False
+                }).encode('utf-8'),
+                headers={'Content-Type': 'application/json'}
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                result = json.loads(response.read().decode('utf-8'))
+                if "response" in result:
+                    script = clean_claude_output(result["response"], strip_quotes=strip_quotes)
+                    if len(script) > min_length:
+                        return script
+        except Exception as e:
+            log(f"Ollama error: {e}")
+
+    # 2. Try Claude
     args = ["claude", "-p", prompt]
     if model:
         args.extend(["--model", model])
@@ -99,7 +123,7 @@ def run_claude(
     except Exception:
         pass
 
-    # Fallback to Gemini CLI
+    # 3. Fallback to Gemini CLI
     args = ["gemini", "--approval-mode", "plan", "-p", prompt]
     if model:
         args.extend(["--model", model])

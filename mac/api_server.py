@@ -84,10 +84,21 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path.rstrip("/") or "/"
 
-        if path in ("/now-playing", "/"):
+        if path == "/now-playing":
             data = get_now_playing()
             track_stats_update(data)
             self._send_json(data, "no-cache, no-store, must-revalidate")
+        elif path in ("/", "/index.html"):
+            try:
+                with open(PROJECT_ROOT / "index.html", "rb") as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(content)
+            except Exception as e:
+                self._send_error(500, str(e))
         elif path == "/health":
             self._send_json(get_health_status())
         elif path == "/stats":

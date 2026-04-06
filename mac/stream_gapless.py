@@ -714,8 +714,18 @@ def run():
                                     pass
 
             else:
-                log(f"  No talk segments for {ctx.show_id}; waiting 30s")
-                time.sleep(30)
+                log(f"  No talk segments for {ctx.show_id}; piping fallback tone to maintain stream")
+                fallback_tone = Path("/root/writ-fm/output/fallback_tone.wav")
+                if fallback_tone.exists():
+                    update_now_playing(
+                        "Holding Pattern", "bumper",
+                        show_id=ctx.show_id,
+                        show_name=ctx.show_name,
+                        caption="Signal lost... awaiting data.",
+                    )
+                    pipe_track(fallback_tone, encoder_proc)
+                else:
+                    time.sleep(10)
 
             if running and encoder_proc.poll() is None:
                 log("Queue complete, refreshing...")
