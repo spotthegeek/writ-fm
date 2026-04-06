@@ -355,8 +355,8 @@ def get_kokoro_pipeline():
             return None
         log("Loading Kokoro pipeline...")
         try:
-            # Use CPU to save memory
-            _KOKORO_PIPELINE = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M")
+            # Use CUDA for GPU acceleration
+            _KOKORO_PIPELINE = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M", device="cuda")
         except Exception as e:
             log(f"Failed to load Kokoro: {e}")
             return None
