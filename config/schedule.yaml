@@ -1,129 +1,202 @@
 timezone: local
-
-# WRIT-FM Talk Show Schedule
-# Talk-first format: 10-20 minute segments with 1-2 minute music breaks.
-
 shows:
   midnight_signal:
-    name: "Midnight Signal"
-    description: "Philosophy, memory, and the transmissions that only come through after midnight."
-    host: "liminal_operator"
-    topic_focus: "philosophy"
-    segment_types: ["deep_dive", "story", "interview", "listener_mailbag"]
-    bumper_style: "ambient"
+    name: Midnight Signal
+    description: Philosophy, memory, and the transmissions that only come through
+      after midnight.
+    host: liminal_operator
+    topic_focus: philosophy
+    segment_types:
+    - deep_dive
+    - story
+    - interview
+    - listener_mailbag
+    bumper_style: ambient
     voices:
-      host: "am_michael"
-
+      host: am_michael
   the_night_garden:
-    name: "The Night Garden"
-    description: "Dreams, darkness, and the things that bloom when no one is watching."
-    host: "nyx"
-    topic_focus: "night_philosophy"
-    segment_types: ["deep_dive", "story", "interview"]
-    bumper_style: "ambient"
+    name: The Night Garden
+    description: Dreams, darkness, and the things that bloom when no one is watching.
+    host: nyx
+    topic_focus: night_philosophy
+    segment_types:
+    - deep_dive
+    - story
+    - interview
+    bumper_style: ambient
     voices:
-      host: "af_heart"
-
+      host: af_heart
   dawn_chorus:
-    name: "Dawn Chorus"
-    description: "Morning reflections. The world rewrites itself at sunrise."
-    host: "liminal_operator"
-    topic_focus: "philosophy"
-    segment_types: ["deep_dive", "music_essay", "story"]
-    bumper_style: "jazz"
+    name: Dawn Chorus
+    description: Morning reflections. The world rewrites itself at sunrise.
+    host: liminal_operator
+    topic_focus: philosophy
+    segment_types:
+    - deep_dive
+    - music_essay
+    - story
+    bumper_style: jazz
     voices:
-      host: "am_michael"
-
+      host: am_michael
   sonic_archaeology:
-    name: "Sonic Archaeology"
-    description: "Deep cuts, lost sessions, genre genealogy, and the music they forgot to remember."
-    host: "dr_resonance"
-    topic_focus: "music_history"
-    segment_types: ["deep_dive", "music_essay", "interview"]
-    bumper_style: "jazz"
+    name: Sonic Archaeology
+    description: Deep cuts, lost sessions, genre genealogy, and the music they forgot
+      to remember.
+    host: dr_resonance
+    topic_focus: music_history
+    segment_types:
+    - deep_dive
+    - music_essay
+    - interview
+    bumper_style: jazz
     voices:
-      host: "bm_daniel"
-
+      host: bm_daniel
   signal_report:
-    name: "Signal Report"
-    description: "Current events decoded. The news behind the news, through a late-night lens."
-    host: "signal"
-    topic_focus: "current_events"
-    segment_types: ["news_analysis", "deep_dive", "panel"]
-    bumper_style: "downtempo"
+    name: Signal Report
+    description: Current events decoded. The news behind the news, through a late-night
+      lens.
+    host: signal
+    topic_focus: current_events
+    segment_types:
+    - news_analysis
+    - deep_dive
+    - panel
+    bumper_style: downtempo
     voices:
-      host: "am_onyx"
-
+      host: am_onyx
   the_groove_lab:
-    name: "The Groove Lab"
-    description: "Soul, funk, and the feeling of feeling something. Music as food."
-    host: "ember"
-    topic_focus: "soul_music"
-    segment_types: ["deep_dive", "music_essay", "story"]
-    bumper_style: "soul"
+    name: The Groove Lab
+    description: Soul, funk, and the feeling of feeling something. Music as food.
+    host: ember
+    topic_focus: soul_music
+    segment_types:
+    - deep_dive
+    - music_essay
+    - story
+    bumper_style: soul
     voices:
-      host: "af_bella"
-
+      host: af_bella
   crosswire:
-    name: "Crosswire"
-    description: "Two voices, one topic. Where ideas collide and sparks fly."
-    host: "dr_resonance"
-    topic_focus: "culture"
-    segment_types: ["panel", "deep_dive", "interview"]
-    bumper_style: "indie"
+    name: Crosswire
+    description: Two voices, one topic. Where ideas collide and sparks fly.
+    host: dr_resonance
+    topic_focus: culture
+    segment_types:
+    - panel
+    - deep_dive
+    - interview
+    bumper_style: indie
     voices:
-      host: "bm_daniel"
-      guest: "af_bella"
-
+      host: bm_daniel
+      guest: af_bella
   listener_hours:
-    name: "Listener Hours"
-    description: "Your messages, your questions, your frequency. The mailbag opens."
-    host: "liminal_operator"
-    topic_focus: "listeners"
-    segment_types: ["listener_mailbag", "deep_dive", "story"]
-    bumper_style: "soul"
+    name: Listener Hours
+    description: Your messages, your questions, your frequency. The mailbag opens.
+    host: liminal_operator
+    topic_focus: listeners
+    segment_types:
+    - listener_mailbag
+    - deep_dive
+    - story
+    bumper_style: soul
     voices:
-      host: "am_michael"
-
-
-# Weekly schedule.
-# - `base` applies every day.
-# - `overrides` replace the base when day+time match.
+      host: am_michael
+  nosleep:
+    name: /r/nosleep
+    description: Retelling the no sleep stories from Reddit
+    topic_focus: culture
+    research_topic: Nosleep is a place for redditors to share their scary personal
+      experiences.
+    research_sources:
+    - type: url
+      url: https://www.reddit.com/r/nosleep/
+    guests: []
+    segment_types:
+    - show_intro
+    - show_outro
+    - station_id
+    - story
+    bumper_style: ambient
+    hosts:
+    - id: liminal_operator
+      role: primary
+      tts_backend: minimax
+      voice_kokoro: am_michael
+      voice_minimax: Deep_Voice_Man
+    host: liminal_operator
+    tts_backend: minimax
+    voices:
+      host: am_michael
+  alien_theory:
+    name: /r/alien_theory
+    description: Reddit discussions and theories about extraterrestrials or ancient
+      terrestrials, and the existence of life - of any kind - outside planet Earth.
+    topic_focus: philosophy
+    research_topic: Aliens
+    research_sources:
+    - type: url
+      url: https://www.reddit.com/r/Alien_Theory/
+    - type: url
+      url: https://www.reddit.com/r/EBEs/
+    - type: url
+      url: https://www.reddit.com/r/UFOs/
+    guests: []
+    segment_types:
+    - show_intro
+    - show_outro
+    - station_id
+    - deep_dive
+    - news_analysis
+    - interview
+    - panel
+    - story
+    - listener_mailbag
+    bumper_style: ambient
+    hosts:
+    - id: liminal_operator
+      role: primary
+      tts_backend: minimax
+      voice_kokoro: am_michael
+      voice_minimax: Deep_Voice_Man
+    host: liminal_operator
+    tts_backend: minimax
+    voices:
+      host: am_michael
 schedule:
   base:
-    - start: "00:00"
-      end: "04:00"
-      show: "midnight_signal"
-    - start: "04:00"
-      end: "06:00"
-      show: "the_night_garden"
-    - start: "06:00"
-      end: "09:00"
-      show: "dawn_chorus"
-    - start: "09:00"
-      end: "12:00"
-      show: "sonic_archaeology"
-    - start: "12:00"
-      end: "14:00"
-      show: "signal_report"
-    - start: "14:00"
-      end: "16:00"
-      show: "the_groove_lab"
-    - start: "16:00"
-      end: "18:00"
-      show: "crosswire"
-    - start: "18:00"
-      end: "20:00"
-      show: "sonic_archaeology"
-    - start: "20:00"
-      end: "22:00"
-      show: "the_groove_lab"
-    - start: "22:00"
-      end: "00:00"
-      show: "the_night_garden"
-
+  - start: 00:00
+    end: 04:00
+    show: midnight_signal
+  - start: 04:00
+    end: 06:00
+    show: the_night_garden
+  - start: 06:00
+    end: 09:00
+    show: dawn_chorus
+  - start: 09:00
+    end: '12:00'
+    show: sonic_archaeology
+  - start: '12:00'
+    end: '14:00'
+    show: signal_report
+  - start: '14:00'
+    end: '16:00'
+    show: the_groove_lab
+  - start: '16:00'
+    end: '18:00'
+    show: crosswire
+  - start: '18:00'
+    end: '20:00'
+    show: sonic_archaeology
+  - start: '20:00'
+    end: '22:00'
+    show: the_groove_lab
+  - start: '22:00'
+    end: 00:00
+    show: nosleep
   overrides:
-    - days: ["sun"]
-      start: "18:00"
-      end: "20:00"
-      show: "listener_hours"
+  - days:
+    - sun
+    start: '18:00'
+    end: '20:00'
+    show: listener_hours

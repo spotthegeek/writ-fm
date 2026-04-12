@@ -1,0 +1,1427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WRIT-FM Admin</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background: #0f1117; color: #e2e8f0; font-family: 'Courier New', monospace; }
+  .tab-btn { transition: all 0.15s; }
+  .tab-btn.active { background: #6366f1; color: white; }
+  .tab-btn:not(.active):hover { background: #1e2130; }
+  .card { background: #1a1f2e; border: 1px solid #2d3452; border-radius: 8px; }
+  .input { background: #0f1117; border: 1px solid #2d3452; color: #e2e8f0; border-radius: 4px; padding: 6px 10px; width: 100%; }
+  .input:focus { outline: none; border-color: #6366f1; }
+  .btn { border-radius: 4px; padding: 6px 16px; cursor: pointer; font-size: 13px; transition: all 0.15s; }
+  .btn-primary { background: #6366f1; color: white; }
+  .btn-primary:hover { background: #4f46e5; }
+  .btn-danger { background: #dc2626; color: white; }
+  .btn-danger:hover { background: #b91c1c; }
+  .btn-ghost { background: transparent; border: 1px solid #2d3452; color: #94a3b8; }
+  .btn-ghost:hover { border-color: #6366f1; color: #e2e8f0; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 11px; }
+  .pill-green { background: #14532d; color: #86efac; }
+  .pill-red { background: #450a0a; color: #fca5a5; }
+  .pill-yellow { background: #422006; color: #fcd34d; }
+  .pill-blue { background: #1e3a5f; color: #93c5fd; }
+  .pill-purple { background: #3b0764; color: #d8b4fe; }
+  .log-area { background: #070b0f; border: 1px solid #1e2130; border-radius: 4px; padding: 12px; font-size: 12px; color: #94a3b8; height: 280px; overflow-y: auto; white-space: pre-wrap; }
+  select.input option { background: #1a1f2e; }
+  .schedule-grid { display: grid; grid-template-columns: 60px repeat(7, 1fr); gap: 1px; background: #2d3452; }
+  .schedule-cell { background: #1a1f2e; padding: 4px; font-size: 11px; min-height: 32px; }
+  .schedule-header { background: #0f1117; color: #6366f1; font-weight: bold; padding: 6px 4px; text-align: center; }
+  .show-block { border-radius: 3px; padding: 2px 4px; margin: 1px 0; cursor: pointer; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: #6366f1; margin-bottom: 8px; }
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 50; display: flex; align-items: center; justify-content: center; }
+  .modal { background: #1a1f2e; border: 1px solid #2d3452; border-radius: 8px; width: 640px; max-height: 90vh; overflow-y: auto; padding: 24px; }
+  /* Live stream button */
+  #live-btn { border-radius: 4px; padding: 5px 14px; font-size: 12px; cursor: pointer; transition: all 0.15s; border: 1px solid #374151; }
+  #live-btn.off { background: transparent; color: #6b7280; }
+  #live-btn.off:hover { border-color: #6366f1; color: #e2e8f0; }
+  #live-btn.on { background: #dc2626; border-color: #dc2626; color: white; animation: pulse-red 2s infinite; }
+  @keyframes pulse-red { 0%,100% { box-shadow: 0 0 0 0 rgba(220,38,38,0.4); } 50% { box-shadow: 0 0 0 6px rgba(220,38,38,0); } }
+  /* Inline preview player */
+  .preview-bar { background: #0f1117; border: 1px solid #2d3452; border-radius: 4px; padding: 6px 10px; margin-top: 6px; display: none; align-items: center; gap-8px; gap: 8px; }
+  .preview-bar.active { display: flex; }
+  .preview-bar audio { flex: 1; height: 28px; min-width: 0; }
+  audio::-webkit-media-controls-panel { background: #1a1f2e; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<!-- Header -->
+<div class="border-b border-gray-800 px-6 py-3 flex items-center justify-between">
+  <div class="flex items-center gap-3">
+    <div class="text-indigo-400 font-bold text-lg tracking-widest">WRIT-FM</div>
+    <div class="text-gray-600 text-sm">Admin Console</div>
+  </div>
+  <div id="status-bar" class="flex items-center gap-3 text-xs text-gray-500">
+    <span id="icecast-status">⬤ Icecast</span>
+    <span id="streamer-status">⬤ Streamer</span>
+    <span id="now-playing-label" class="text-gray-600 truncate max-w-48"></span>
+    <button id="live-btn" class="off" onclick="toggleLiveStream()">▶ LIVE</button>
+  </div>
+</div>
+<!-- Hidden live stream audio element -->
+<audio id="live-audio" preload="none"></audio>
+
+<!-- Nav Tabs -->
+<div class="flex gap-1 px-6 pt-4">
+  <button class="tab-btn active px-4 py-2 text-sm rounded" onclick="showTab('dashboard')">Dashboard</button>
+  <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('shows')">Shows</button>
+  <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('schedule')">Schedule</button>
+  <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('generate')">Generate</button>
+  <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('library')">Library</button>
+</div>
+
+<div class="px-6 py-4">
+
+<!-- ===== DASHBOARD ===== -->
+<div id="tab-dashboard">
+  <div class="grid grid-cols-4 gap-3 mb-4">
+    <div class="card p-4">
+      <div class="section-title">Icecast</div>
+      <div id="dash-icecast" class="text-2xl font-bold">–</div>
+    </div>
+    <div class="card p-4">
+      <div class="section-title">Streamer</div>
+      <div id="dash-streamer" class="text-2xl font-bold">–</div>
+    </div>
+    <div class="card p-4">
+      <div class="section-title">Talk Segments</div>
+      <div id="dash-segments" class="text-2xl font-bold">–</div>
+    </div>
+    <div class="card p-4">
+      <div class="section-title">Bumpers</div>
+      <div id="dash-bumpers" class="text-2xl font-bold">–</div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-2 gap-3 mb-4">
+    <div class="card p-4">
+      <div class="section-title">Now Playing</div>
+      <div id="dash-now-playing" class="text-sm text-gray-300">Loading...</div>
+    </div>
+    <div class="card p-4">
+      <div class="section-title">Segment Inventory</div>
+      <div id="dash-inventory" class="text-sm space-y-1"></div>
+    </div>
+  </div>
+
+  <div class="flex gap-3">
+    <button class="btn btn-primary" onclick="showTab('generate')">+ Generate Content</button>
+    <button class="btn btn-ghost" onclick="loadDashboard()">↺ Refresh</button>
+  </div>
+</div>
+
+<!-- ===== SHOWS ===== -->
+<div id="tab-shows" class="hidden">
+  <div class="flex justify-between items-center mb-4">
+    <h2 class="text-sm font-bold text-gray-300">Shows</h2>
+    <button class="btn btn-primary" onclick="openShowModal(null)">+ New Show</button>
+  </div>
+  <div id="shows-list" class="space-y-2"></div>
+</div>
+
+<!-- ===== SCHEDULE ===== -->
+<div id="tab-schedule" class="hidden">
+  <div class="flex justify-between items-center mb-4">
+    <h2 class="text-sm font-bold text-gray-300">Weekly Schedule</h2>
+    <button class="btn btn-primary" onclick="saveSchedule()">Save Schedule</button>
+  </div>
+
+  <div class="card p-4 mb-4">
+    <div class="section-title">Base Schedule (all days unless overridden)</div>
+    <div id="schedule-blocks" class="space-y-2"></div>
+    <button class="btn btn-ghost mt-3 text-xs" onclick="addScheduleBlock()">+ Add Block</button>
+  </div>
+
+  <div class="card p-4">
+    <div class="section-title">Overrides (specific days)</div>
+    <div id="override-blocks" class="space-y-2"></div>
+    <button class="btn btn-ghost mt-3 text-xs" onclick="addOverrideBlock()">+ Add Override</button>
+  </div>
+</div>
+
+<!-- ===== GENERATE ===== -->
+<div id="tab-generate" class="hidden">
+  <div class="flex gap-2 mb-4">
+    <button class="tab-btn active px-3 py-1.5 text-xs rounded" onclick="switchGenTab('manual', this)">Manual Generate</button>
+    <button class="tab-btn px-3 py-1.5 text-xs rounded" onclick="switchGenTab('schedules', this)">Auto-Generate Schedules</button>
+    <button class="tab-btn px-3 py-1.5 text-xs rounded" onclick="switchGenTab('activity', this)">Activity Log</button>
+  </div>
+
+  <!-- Auto-Generate Schedules sub-tab -->
+  <div id="gentab-schedules" class="hidden">
+    <div class="text-xs text-gray-500 mb-4">Configure automatic generation for each show. The scheduler checks inventory every 5 minutes and generates content when below the minimum threshold.</div>
+    <div id="sched-cards" class="space-y-3"></div>
+  </div>
+
+  <!-- Activity Log sub-tab -->
+  <div id="gentab-activity" class="hidden">
+    <div class="flex justify-between items-center mb-3">
+      <div class="section-title mb-0">Scheduler Activity</div>
+      <button class="btn btn-ghost text-xs" onclick="loadActivityLog()">↺ Refresh</button>
+    </div>
+    <div id="activity-log" class="log-area" style="height:400px"></div>
+  </div>
+
+  <!-- Manual Generate sub-tab -->
+  <div id="gentab-manual">
+  <div class="grid grid-cols-2 gap-4">
+    <div class="space-y-4">
+      <div class="card p-4">
+        <div class="section-title">Content Settings</div>
+        <div class="space-y-3">
+          <div>
+            <label class="text-xs text-gray-400 block mb-1">Content Type</label>
+            <div class="flex gap-2">
+              <button id="gen-type-talk" class="btn btn-primary flex-1 text-xs" onclick="setGenContentType('talk')">Talk Segment</button>
+              <button id="gen-type-music" class="btn btn-ghost flex-1 text-xs" onclick="setGenContentType('music')">Music Bumper</button>
+            </div>
+          </div>
+          <div>
+            <label class="text-xs text-gray-400 block mb-1">Show</label>
+            <select id="gen-show" class="input" onchange="onGenShowChange()">
+              <option value="">Select show...</option>
+            </select>
+          </div>
+          <div id="gen-talk-fields">
+            <div class="space-y-3">
+              <div>
+                <label class="text-xs text-gray-400 block mb-1">Segment Type</label>
+                <select id="gen-type" class="input">
+                  <option value="random">Random (from show's types)</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 block mb-1">Topic <span class="text-gray-600">(leave blank for auto)</span></label>
+                <div class="flex gap-2">
+                  <input id="gen-topic" class="input" placeholder="e.g. pirate radio history..." oninput="onTopicInput()" />
+                  <button id="gen-expand-btn" class="btn btn-ghost text-xs shrink-0 px-2" onclick="expandTopic()" disabled title="Type 2+ words to enable">✦ Expand</button>
+                </div>
+                <div id="gen-expand-status" class="text-xs text-gray-600 mt-1 hidden"></div>
+              </div>
+            </div>
+          </div>
+          <div id="gen-music-fields" class="hidden">
+            <div class="space-y-3">
+              <div>
+                <label class="text-xs text-gray-400 block mb-1">Style Prompt <span class="text-gray-600">(leave blank to use show's curated pool)</span></label>
+                <textarea id="gen-music-caption" class="input h-16 resize-none" placeholder="e.g. Brian Eno ambient, slow evolving organ tones, late night silence&#10;e.g. Nils Frahm style felt piano and synthesizer, warm and intimate"></textarea>
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 block mb-1">Track Type</label>
+                <select id="gen-music-vocal" class="input">
+                  <option value="instrumental">Instrumental</option>
+                  <option value="vocal">Vocal (AI lyrics)</option>
+                </select>
+              </div>
+              <div class="text-xs text-gray-600">Generated via MiniMax music-2.6 · ~130s per track · saves as MP3</div>
+            </div>
+          </div>
+          <div>
+            <label class="text-xs text-gray-400 block mb-1">Count</label>
+            <input id="gen-count" type="number" min="1" max="10" value="1" class="input" style="width:80px" />
+          </div>
+        </div>
+      </div>
+
+      <div id="gen-tts-card" class="card p-4">
+        <div class="section-title">Hosts & TTS</div>
+        <div class="space-y-3">
+          <div>
+            <label class="text-xs text-gray-400 block mb-1">TTS Backend</label>
+            <select id="gen-tts" class="input">
+              <option value="">Use show default</option>
+              <option value="kokoro">Kokoro (local)</option>
+              <option value="minimax">MiniMax (cloud)</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-400 block mb-1">Host Voice Override</label>
+            <select id="gen-host-voice" class="input">
+              <option value="">Use show default</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div id="gen-guest-toggle-row" class="flex items-center gap-2">
+        <label class="flex items-center gap-2 cursor-pointer text-xs text-gray-400">
+          <input type="checkbox" id="gen-guest-enabled" class="accent-indigo-500" onchange="toggleGuestCard(this.checked)">
+          Add a Guest / Call-in
+        </label>
+      </div>
+
+      <div id="gen-guest-card" class="card p-4 hidden">
+        <div class="section-title">Guest / Call-in</div>
+        <div class="space-y-3">
+          <div>
+            <label class="text-xs text-gray-400 block mb-1">Guest Character</label>
+            <input id="gen-guest-name" class="input" placeholder="e.g. a retired jazz producer from Detroit" />
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-xs text-gray-400 block mb-1">Guest Voice (Kokoro)</label>
+              <select id="gen-guest-voice-kokoro" class="input"></select>
+            </div>
+            <div>
+              <label class="text-xs text-gray-400 block mb-1">Guest Voice (MiniMax)</label>
+              <select id="gen-guest-voice-minimax" class="input"></select>
+            </div>
+          </div>
+          <div>
+            <label class="text-xs text-gray-400 block mb-1">Guest TTS Backend</label>
+            <select id="gen-guest-tts" class="input">
+              <option value="kokoro">Kokoro</option>
+              <option value="minimax">MiniMax</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <button class="btn btn-primary w-full py-3 text-base" onclick="startGeneration()">▶ Generate Content</button>
+    </div>
+
+    <div class="space-y-4">
+      <div class="card p-4">
+        <div class="flex justify-between items-center mb-2">
+          <div class="section-title mb-0">Generation Log</div>
+          <div class="flex items-center gap-3">
+            <span id="gen-timer" class="text-xs text-yellow-400 hidden"></span>
+            <div id="job-status-pill"></div>
+          </div>
+        </div>
+        <div id="gen-log" class="log-area">Ready. Configure settings and click Generate.</div>
+      </div>
+
+      <div class="card p-4">
+        <div class="section-title">Recent Jobs</div>
+        <div id="jobs-list" class="space-y-1 text-xs max-h-48 overflow-y-auto"></div>
+      </div>
+    </div>
+  </div>
+  </div><!-- /gentab-manual -->
+</div>
+
+<!-- ===== LIBRARY ===== -->
+<div id="tab-library" class="hidden">
+  <div class="flex justify-between items-center mb-4">
+    <div class="flex gap-3">
+      <button class="btn btn-ghost text-xs active" onclick="switchLibrary('segments', this)">Talk Segments</button>
+      <button class="btn btn-ghost text-xs" onclick="switchLibrary('bumpers', this)">Music Bumpers</button>
+    </div>
+    <button class="btn btn-ghost text-xs" onclick="loadLibrary()">↺ Refresh</button>
+  </div>
+  <div id="library-segments">
+    <div id="seg-list" class="space-y-3"></div>
+  </div>
+  <div id="library-bumpers" class="hidden">
+    <div id="bump-list" class="space-y-3"></div>
+  </div>
+</div>
+
+</div><!-- /px-6 -->
+
+<!-- ===== SHOW MODAL ===== -->
+<div id="show-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <h2 class="text-base font-bold mb-4" id="modal-title">Edit Show</h2>
+    <input id="modal-show-id" type="hidden" />
+
+    <div class="space-y-4">
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">Show ID <span class="text-gray-600">(slug, no spaces)</span></label>
+          <input id="modal-id-input" class="input" placeholder="my_show" />
+        </div>
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">Display Name</label>
+          <input id="modal-name" class="input" placeholder="My Show" />
+        </div>
+      </div>
+
+      <div>
+        <label class="text-xs text-gray-400 block mb-1">Description</label>
+        <textarea id="modal-description" class="input h-16 resize-none" placeholder="What is this show about?"></textarea>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">Topic Focus</label>
+          <select id="modal-topic-focus" class="input"></select>
+        </div>
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">Bumper Style</label>
+          <select id="modal-bumper-style" class="input">
+            <option value="ambient">Ambient</option>
+            <option value="jazz">Jazz</option>
+            <option value="soul">Soul</option>
+            <option value="downtempo">Downtempo</option>
+            <option value="indie">Indie</option>
+            <option value="electronic">Electronic</option>
+            <option value="folk">Folk</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label class="text-xs text-gray-400 block mb-1">Research Topic <span class="text-gray-600">(used as primary script focus)</span></label>
+        <input id="modal-research-topic" class="input" placeholder="e.g. AI consciousness and the philosophy of mind" />
+      </div>
+
+      <div>
+        <label class="text-xs text-gray-400 block mb-1">Research Sources</label>
+        <div id="modal-sources" class="space-y-2 mb-2"></div>
+        <button class="btn btn-ghost text-xs" onclick="addSource()">+ Add Source</button>
+      </div>
+
+      <div>
+        <label class="text-xs text-gray-400 block mb-1">Segment Types</label>
+        <div id="modal-segment-types" class="flex flex-wrap gap-2"></div>
+      </div>
+
+      <div>
+        <div class="flex justify-between items-center mb-2">
+          <label class="text-xs text-gray-400">Hosts</label>
+          <button class="btn btn-ghost text-xs" onclick="addHost()">+ Add Host</button>
+        </div>
+        <div id="modal-hosts" class="space-y-2"></div>
+      </div>
+
+      <div>
+        <div class="flex justify-between items-center mb-2">
+          <label class="text-xs text-gray-400">Recurring Guests <span class="text-gray-600">(pool for interview/panel segments)</span></label>
+          <button class="btn btn-ghost text-xs" onclick="addGuest()">+ Add Guest</button>
+        </div>
+        <div id="modal-guests" class="space-y-2"></div>
+      </div>
+
+      <div>
+        <div class="section-title">Content Lifecycle <span class="text-gray-600 text-xs normal-case font-normal ml-1">— leave blank for unlimited</span></div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <div class="text-xs text-gray-400 mb-2">Talk Segments</div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Max plays</label>
+                <input id="modal-talk-max-plays" type="number" min="1" class="input" placeholder="∞">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Max age (days)</label>
+                <input id="modal-talk-max-days" type="number" min="1" class="input" placeholder="∞">
+              </div>
+            </div>
+          </div>
+          <div>
+            <div class="text-xs text-gray-400 mb-2">Music Bumpers</div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Max plays</label>
+                <input id="modal-music-max-plays" type="number" min="1" class="input" placeholder="∞">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Max age (days)</label>
+                <input id="modal-music-max-days" type="number" min="1" class="input" placeholder="∞">
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex justify-end gap-3 mt-6">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-danger hidden" id="modal-delete-btn" onclick="deleteShow()">Delete Show</button>
+      <button class="btn btn-primary" onclick="saveShow()">Save Show</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// State
+// ============================================================
+let allShows = {};
+let allHosts = {};
+let genOptions = {};
+let currentSchedule = {base: [], overrides: []};
+let activeJobId = null;
+let jobPollTimer = null;
+const SHOW_COLORS = ['#4f46e5','#0891b2','#059669','#d97706','#dc2626','#7c3aed','#0284c7','#65a30d'];
+let showColorMap = {};
+
+// ============================================================
+// Tab management
+// ============================================================
+function showTab(name) {
+  document.querySelectorAll('[id^="tab-"]').forEach(el => el.classList.add('hidden'));
+  document.getElementById('tab-' + name).classList.remove('hidden');
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.toggle('active', b.getAttribute('onclick').includes(name));
+  });
+  if (name === 'dashboard') loadDashboard();
+  if (name === 'shows') loadShows();
+  if (name === 'schedule') loadScheduleTab();
+  if (name === 'generate') loadGenerateTab();
+  if (name === 'library') loadLibrary();
+}
+
+// ============================================================
+// API helpers
+// ============================================================
+async function api(path, opts={}) {
+  const r = await fetch('/api' + path, opts);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+// ============================================================
+// Status bar
+// ============================================================
+async function updateStatusBar() {
+  try {
+    const s = await api('/status');
+    const ic = document.getElementById('icecast-status');
+    const st = document.getElementById('streamer-status');
+    const np = document.getElementById('now-playing-label');
+    ic.textContent = '⬤ Icecast';
+    ic.style.color = s.icecast ? '#86efac' : '#fca5a5';
+    st.textContent = '⬤ Streamer';
+    st.style.color = s.streamer ? '#86efac' : '#fca5a5';
+    const t = s.now_playing?.track;
+    np.textContent = t ? '▶ ' + t : '';
+  } catch(e) {}
+}
+setInterval(updateStatusBar, 8000);
+updateStatusBar();
+
+// ============================================================
+// Dashboard
+// ============================================================
+async function loadDashboard() {
+  try {
+    const s = await api('/status');
+    document.getElementById('dash-icecast').innerHTML =
+      `<span class="${s.icecast ? 'text-green-400' : 'text-red-400'}">${s.icecast ? 'Up' : 'Down'}</span>`;
+    document.getElementById('dash-streamer').innerHTML =
+      `<span class="${s.streamer ? 'text-green-400' : 'text-red-400'}">${s.streamer ? 'Up' : 'Down'}</span>`;
+    document.getElementById('dash-segments').textContent = s.total_segments;
+    document.getElementById('dash-bumpers').textContent = s.total_bumpers;
+
+    const np = s.now_playing;
+    document.getElementById('dash-now-playing').innerHTML = np?.track
+      ? `<div class="font-bold">${np.track}</div>
+         <div class="text-gray-500 text-xs mt-1">${np.type || ''} · ${np.show_name || ''}</div>
+         <div class="text-gray-600 text-xs mt-1">${np.listeners ?? 0} listeners</div>`
+      : '<div class="text-gray-600">No active stream</div>';
+
+    const inv = document.getElementById('dash-inventory');
+    inv.innerHTML = Object.entries(s.segments_per_show).map(([show, count]) => `
+      <div class="flex justify-between text-xs">
+        <span class="text-gray-400">${show}</span>
+        <span class="${count < 3 ? 'text-yellow-400' : 'text-green-400'}">${count} segments</span>
+      </div>`).join('') || '<div class="text-gray-600 text-xs">No segments</div>';
+  } catch(e) {
+    console.error(e);
+  }
+}
+loadDashboard();
+
+// ============================================================
+// Shows
+// ============================================================
+async function loadShows() {
+  allShows = await api('/shows');
+  allHosts = await api('/hosts');
+  const colors = Object.keys(allShows);
+  colors.forEach((id, i) => { showColorMap[id] = SHOW_COLORS[i % SHOW_COLORS.length]; });
+
+  document.getElementById('shows-list').innerHTML = Object.entries(allShows).map(([id, show]) => `
+    <div class="card p-4 flex justify-between items-start">
+      <div class="flex-1">
+        <div class="flex items-center gap-2 mb-1">
+          <div class="w-3 h-3 rounded-full" style="background:${showColorMap[id]}"></div>
+          <span class="font-bold text-sm">${show.name}</span>
+          <span class="text-gray-600 text-xs">${id}</span>
+          <span class="pill pill-blue">${show.topic_focus}</span>
+        </div>
+        <div class="text-gray-500 text-xs mb-2">${show.description}</div>
+        <div class="flex flex-wrap gap-1">
+          ${(show.hosts||[]).map(h=>`<span class="pill" style="background:#1e2d4a;color:#93c5fd">${h.id} (${h.role})</span>`).join('')}
+          ${(show.segment_types||[]).map(t=>`<span class="pill pill-purple">${t}</span>`).join('')}
+        </div>
+        ${show.research_topic ? `<div class="text-xs text-indigo-400 mt-1">📌 ${show.research_topic}</div>` : ''}
+      </div>
+      <button class="btn btn-ghost ml-4" onclick='openShowModal(${JSON.stringify(id)})'>Edit</button>
+    </div>`).join('');
+}
+
+function openShowModal(showId) {
+  const show = showId ? allShows[showId] : null;
+  const isNew = !showId;
+  document.getElementById('modal-title').textContent = isNew ? 'New Show' : 'Edit Show';
+  document.getElementById('modal-show-id').value = showId || '';
+  document.getElementById('modal-id-input').value = isNew ? '' : showId;
+  document.getElementById('modal-id-input').disabled = !isNew;
+  document.getElementById('modal-name').value = show?.name || '';
+  document.getElementById('modal-description').value = show?.description || '';
+  document.getElementById('modal-research-topic').value = show?.research_topic || '';
+  document.getElementById('modal-delete-btn').classList.toggle('hidden', isNew);
+
+  // Topic focus options
+  const topicSel = document.getElementById('modal-topic-focus');
+  const topics = ['philosophy','music_history','current_events','culture','soul_music','night_philosophy','listeners'];
+  topicSel.innerHTML = topics.map(t => `<option value="${t}" ${t===show?.topic_focus?'selected':''}>${t}</option>`).join('');
+
+  // Bumper style
+  document.getElementById('modal-bumper-style').value = show?.bumper_style || 'ambient';
+
+  // Sources
+  renderSources(show?.research_sources || []);
+
+  // Segment types
+  const allTypes = ['show_intro','show_outro','station_id','deep_dive','news_analysis','interview','panel','story','listener_mailbag','music_essay'];
+  const selected = show?.segment_types || [];
+  document.getElementById('modal-segment-types').innerHTML = allTypes.map(t => `
+    <label class="flex items-center gap-1 cursor-pointer">
+      <input type="checkbox" value="${t}" ${selected.includes(t)?'checked':''} class="seg-type-cb accent-indigo-500">
+      <span class="text-xs text-gray-300">${t}</span>
+    </label>`).join('');
+
+  // Hosts
+  renderHosts(show?.hosts || [{id:'liminal_operator',role:'primary',voice_kokoro:'am_michael',voice_minimax:'Deep_Voice_Man',tts_backend:'kokoro'}]);
+
+  // Guests
+  renderGuests(show?.guests || []);
+
+  // Content lifecycle
+  const talkLc = show?.content_lifecycle?.talk || {};
+  const musicLc = show?.content_lifecycle?.music || {};
+  document.getElementById('modal-talk-max-plays').value = talkLc.max_plays ?? '';
+  document.getElementById('modal-talk-max-days').value = talkLc.max_days ?? '';
+  document.getElementById('modal-music-max-plays').value = musicLc.max_plays ?? '';
+  document.getElementById('modal-music-max-days').value = musicLc.max_days ?? '';
+
+  document.getElementById('show-modal').classList.remove('hidden');
+}
+
+function closeModal() { document.getElementById('show-modal').classList.add('hidden'); }
+
+function renderSources(sources) {
+  document.getElementById('modal-sources').innerHTML = sources.map((s,i) => `
+    <div class="flex gap-2 items-center">
+      <select class="input source-type" style="width:110px" onchange="updateSource(${i})">
+        <option value="rss" ${s.type==='rss'?'selected':''}>RSS Feed</option>
+        <option value="url" ${s.type==='url'?'selected':''}>URL</option>
+        <option value="topic" ${s.type==='topic'?'selected':''}>Topic</option>
+      </select>
+      <input class="input source-value" value="${s.url||s.description||''}" placeholder="${s.type==='topic'?'Topic description...':'https://...'}" />
+      <button class="btn btn-ghost text-xs px-2" onclick="removeSource(${i})">✕</button>
+    </div>`).join('');
+}
+
+function addSource() {
+  const sources = getSources();
+  sources.push({type:'rss', url:''});
+  renderSources(sources);
+}
+
+function removeSource(i) {
+  const s = getSources();
+  s.splice(i,1);
+  renderSources(s);
+}
+
+function getSources() {
+  return [...document.querySelectorAll('#modal-sources > div')].map(row => {
+    const type = row.querySelector('.source-type').value;
+    const val = row.querySelector('.source-value').value.trim();
+    return type==='topic' ? {type, description:val} : {type, url:val};
+  });
+}
+
+const HOST_ROLES = ['primary','co-host','guest','call-in'];
+function renderHosts(hosts) {
+  const hostIds = Object.keys(allHosts);
+  const kokoroVoices = genOptions.kokoro_voices || ['am_michael','am_onyx','af_bella','af_heart'];
+  const minimaxVoices = genOptions.minimax_voices || ['Deep_Voice_Man','Wise_Woman'];
+  document.getElementById('modal-hosts').innerHTML = hosts.map((h,i) => `
+    <div class="card p-3 space-y-2">
+      <div class="flex gap-2 items-center">
+        <select class="input host-id" style="width:160px">
+          ${hostIds.map(id=>`<option value="${id}" ${id===h.id?'selected':''}>${allHosts[id]?.name||id}</option>`).join('')}
+          <option value="custom" ${!hostIds.includes(h.id)?'selected':''}>Custom...</option>
+        </select>
+        <select class="input host-role" style="width:100px">
+          ${HOST_ROLES.map(r=>`<option value="${r}" ${r===h.role?'selected':''}>${r}</option>`).join('')}
+        </select>
+        <select class="input host-tts" style="width:100px">
+          <option value="kokoro" ${h.tts_backend==='kokoro'?'selected':''}>Kokoro</option>
+          <option value="minimax" ${h.tts_backend==='minimax'?'selected':''}>MiniMax</option>
+        </select>
+        <button class="btn btn-ghost text-xs px-2" onclick="removeHost(${i})">✕</button>
+      </div>
+      <div class="flex gap-2">
+        <div class="flex-1">
+          <label class="text-xs text-gray-500">Kokoro voice</label>
+          <select class="input host-voice-kokoro">
+            ${kokoroVoices.map(v=>`<option value="${v}" ${v===h.voice_kokoro?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+        <div class="flex-1">
+          <label class="text-xs text-gray-500">MiniMax voice</label>
+          <select class="input host-voice-minimax">
+            ${minimaxVoices.map(v=>`<option value="${v}" ${v===h.voice_minimax?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+function addHost() {
+  const hosts = getHosts();
+  hosts.push({id:'liminal_operator',role:'co-host',voice_kokoro:'am_michael',voice_minimax:'Deep_Voice_Man',tts_backend:'kokoro'});
+  renderHosts(hosts);
+}
+
+function removeHost(i) { const h=getHosts(); h.splice(i,1); renderHosts(h); }
+
+function getHosts() {
+  return [...document.querySelectorAll('#modal-hosts > div')].map(row => ({
+    id: row.querySelector('.host-id').value,
+    role: row.querySelector('.host-role').value,
+    tts_backend: row.querySelector('.host-tts').value,
+    voice_kokoro: row.querySelector('.host-voice-kokoro').value,
+    voice_minimax: row.querySelector('.host-voice-minimax').value,
+  }));
+}
+
+function renderGuests(guests) {
+  document.getElementById('modal-guests').innerHTML = guests.map((g,i) => `
+    <div class="flex gap-2 items-center">
+      <input class="input guest-name" value="${g.name||''}" placeholder="e.g. a retired jazz producer from Detroit" />
+      <input class="input guest-expertise" style="width:180px" value="${g.expertise||''}" placeholder="Expertise/context" />
+      <button class="btn btn-ghost text-xs px-2" onclick="removeGuest(${i})">✕</button>
+    </div>`).join('');
+}
+
+function addGuest() {
+  const g = getGuests();
+  g.push({name:'',expertise:''});
+  renderGuests(g);
+}
+
+function removeGuest(i) { const g=getGuests(); g.splice(i,1); renderGuests(g); }
+
+function getGuests() {
+  return [...document.querySelectorAll('#modal-guests > div')].map(row => ({
+    name: row.querySelector('.guest-name').value.trim(),
+    expertise: row.querySelector('.guest-expertise').value.trim(),
+  })).filter(g => g.name);
+}
+
+async function saveShow() {
+  const showId = document.getElementById('modal-show-id').value;
+  const newId = document.getElementById('modal-id-input').value.trim().toLowerCase().replace(/\s+/g,'_');
+  if (!newId) return alert('Show ID required');
+
+  const segTypes = [...document.querySelectorAll('.seg-type-cb:checked')].map(c=>c.value);
+  const talkMaxPlays = document.getElementById('modal-talk-max-plays').value;
+  const talkMaxDays = document.getElementById('modal-talk-max-days').value;
+  const musicMaxPlays = document.getElementById('modal-music-max-plays').value;
+  const musicMaxDays = document.getElementById('modal-music-max-days').value;
+  const body = {
+    name: document.getElementById('modal-name').value.trim(),
+    description: document.getElementById('modal-description').value.trim(),
+    topic_focus: document.getElementById('modal-topic-focus').value,
+    research_topic: document.getElementById('modal-research-topic').value.trim(),
+    research_sources: getSources(),
+    segment_types: segTypes,
+    bumper_style: document.getElementById('modal-bumper-style').value,
+    hosts: getHosts(),
+    guests: getGuests(),
+    content_lifecycle: {
+      talk: {
+        ...(talkMaxPlays ? {max_plays: parseInt(talkMaxPlays)} : {}),
+        ...(talkMaxDays  ? {max_days:  parseInt(talkMaxDays)}  : {}),
+      },
+      music: {
+        ...(musicMaxPlays ? {max_plays: parseInt(musicMaxPlays)} : {}),
+        ...(musicMaxDays  ? {max_days:  parseInt(musicMaxDays)}  : {}),
+      },
+    },
+  };
+
+  try {
+    if (showId) {
+      await api('/shows/' + showId, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    } else {
+      await api('/shows?show_id=' + newId, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    }
+    closeModal();
+    loadShows();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function deleteShow() {
+  const showId = document.getElementById('modal-show-id').value;
+  if (!confirm(`Delete show "${showId}"? This cannot be undone.`)) return;
+  await api('/shows/' + showId, {method:'DELETE'});
+  closeModal();
+  loadShows();
+}
+
+// ============================================================
+// Schedule
+// ============================================================
+async function loadScheduleTab() {
+  if (!Object.keys(allShows).length) allShows = await api('/shows');
+  const sched = await api('/schedule');
+  currentSchedule = sched;
+  renderScheduleBlocks();
+  renderOverrideBlocks();
+}
+
+function showSelect(selected='') {
+  return `<select class="input block-show" style="width:170px">
+    ${Object.entries(allShows).map(([id,s])=>`<option value="${id}" ${id===selected?'selected':''}>${s.name}</option>`).join('')}
+  </select>`;
+}
+
+function renderScheduleBlocks() {
+  document.getElementById('schedule-blocks').innerHTML = currentSchedule.base.map((b,i) => `
+    <div class="flex gap-2 items-center text-xs">
+      <input type="time" value="${b.start}" class="input block-start" style="width:90px">
+      <span class="text-gray-500">to</span>
+      <input type="time" value="${b.end}" class="input block-end" style="width:90px">
+      ${showSelect(b.show)}
+      <button class="btn btn-ghost px-2" onclick="removeBlock(${i})">✕</button>
+    </div>`).join('');
+}
+
+function renderOverrideBlocks() {
+  const days = ['mon','tue','wed','thu','fri','sat','sun'];
+  document.getElementById('override-blocks').innerHTML = currentSchedule.overrides.map((b,i) => `
+    <div class="flex gap-2 items-center text-xs flex-wrap">
+      <div class="flex gap-1">
+        ${days.map(d=>`<label class="flex items-center gap-0.5"><input type="checkbox" class="override-day accent-indigo-500" value="${d}" ${(b.days||[]).includes(d)?'checked':''}><span>${d}</span></label>`).join('')}
+      </div>
+      <input type="time" value="${b.start}" class="input override-start" style="width:90px">
+      <span class="text-gray-500">to</span>
+      <input type="time" value="${b.end}" class="input override-end" style="width:90px">
+      ${showSelect(b.show)}
+      <button class="btn btn-ghost px-2" onclick="removeOverride(${i})">✕</button>
+    </div>`).join('');
+}
+
+function addScheduleBlock() {
+  currentSchedule.base.push({start:'00:00',end:'04:00',show:Object.keys(allShows)[0]||''});
+  renderScheduleBlocks();
+}
+
+function addOverrideBlock() {
+  currentSchedule.overrides.push({days:['sat'],start:'18:00',end:'20:00',show:Object.keys(allShows)[0]||''});
+  renderOverrideBlocks();
+}
+
+function removeBlock(i) { currentSchedule.base.splice(i,1); renderScheduleBlocks(); }
+function removeOverride(i) { currentSchedule.overrides.splice(i,1); renderOverrideBlocks(); }
+
+async function saveSchedule() {
+  const base = [...document.querySelectorAll('#schedule-blocks > div')].map(row => ({
+    start: row.querySelector('.block-start').value,
+    end: row.querySelector('.block-end').value,
+    show: row.querySelector('.block-show').value,
+  }));
+  const overrides = [...document.querySelectorAll('#override-blocks > div')].map(row => ({
+    days: [...row.querySelectorAll('.override-day:checked')].map(c=>c.value),
+    start: row.querySelector('.override-start').value,
+    end: row.querySelector('.override-end').value,
+    show: row.querySelector('.block-show').value,
+  }));
+  await api('/schedule', {method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({base, overrides})});
+  alert('Schedule saved. Streamer will use new schedule on next show transition.');
+}
+
+// ============================================================
+// Generate
+// ============================================================
+async function loadGenerateTab() {
+  genOptions = await api('/generate/options');
+  allShows = await api('/shows');
+  // Ensure manual sub-tab is visible by default
+  switchGenTab('manual', document.querySelector('#tab-generate .tab-btn'));
+
+  const showSel = document.getElementById('gen-show');
+  showSel.innerHTML = '<option value="">Select show...</option>' +
+    genOptions.shows.map(s => `<option value="${s}">${allShows[s]?.name||s}</option>`).join('');
+
+  const typeSel = document.getElementById('gen-type');
+  typeSel.innerHTML = '<option value="random">Random (from show\'s types)</option>' +
+    genOptions.segment_types.map(t=>`<option value="${t}">${t}</option>`).join('');
+
+  const hostVoiceSel = document.getElementById('gen-host-voice');
+  hostVoiceSel.innerHTML = '<option value="">Use show default</option>' +
+    genOptions.kokoro_voices.map(v=>`<option value="${v}">${v}</option>`).join('');
+
+  const gvk = document.getElementById('gen-guest-voice-kokoro');
+  gvk.innerHTML = genOptions.kokoro_voices.map(v=>`<option value="${v}" ${v==='af_bella'?'selected':''}>${v}</option>`).join('');
+
+  const gvm = document.getElementById('gen-guest-voice-minimax');
+  gvm.innerHTML = genOptions.minimax_voices.map(v=>`<option value="${v}" ${v==='Wise_Woman'?'selected':''}>${v}</option>`).join('');
+
+  loadJobs();
+}
+
+// ============================================================
+// Generation form helpers
+// ============================================================
+let _genTimer = null;
+let _genTimerStart = null;
+
+function setFormEnabled(enabled) {
+  const fields = document.querySelectorAll('#gentab-manual input, #gentab-manual select, #gentab-manual textarea, #gentab-manual button');
+  fields.forEach(el => {
+    if (el.id === 'gen-expand-btn' && enabled) {
+      // re-enable only if topic has 2+ words
+      onTopicInput();
+      return;
+    }
+    el.disabled = !enabled;
+  });
+}
+
+function startGenTimer() {
+  _genTimerStart = Date.now();
+  const el = document.getElementById('gen-timer');
+  if (!el) return;
+  el.classList.remove('hidden');
+  _genTimer = setInterval(() => {
+    const s = Math.floor((Date.now() - _genTimerStart) / 1000);
+    const m = Math.floor(s / 60);
+    el.textContent = `⏱ ${m}:${String(s % 60).padStart(2,'0')} elapsed`;
+  }, 1000);
+}
+
+function stopGenTimer() {
+  if (_genTimer) { clearInterval(_genTimer); _genTimer = null; }
+  const el = document.getElementById('gen-timer');
+  if (el) el.classList.add('hidden');
+}
+
+function toggleGuestCard(show) {
+  document.getElementById('gen-guest-card').classList.toggle('hidden', !show);
+}
+
+function onTopicInput() {
+  const words = document.getElementById('gen-topic').value.trim().split(/\s+/).filter(Boolean);
+  document.getElementById('gen-expand-btn').disabled = words.length < 2;
+}
+
+async function expandTopic() {
+  const showId = document.getElementById('gen-show').value;
+  const hint = document.getElementById('gen-topic').value.trim();
+  if (hint.split(/\s+/).filter(Boolean).length < 2) return;
+
+  const btn = document.getElementById('gen-expand-btn');
+  const status = document.getElementById('gen-expand-status');
+  btn.disabled = true;
+  btn.textContent = '…';
+  status.textContent = 'Expanding via LLM…';
+  status.classList.remove('hidden');
+
+  try {
+    const r = await api('/generate/expand-topic', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({hint, show_id: showId}),
+    });
+    document.getElementById('gen-topic').value = r.expanded;
+    status.textContent = 'Prompt expanded ✓';
+    setTimeout(() => status.classList.add('hidden'), 3000);
+  } catch(e) {
+    status.textContent = 'Expansion failed: ' + e.message;
+  } finally {
+    btn.textContent = '✦ Expand';
+    onTopicInput();
+  }
+}
+
+function toggleMeta(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle('hidden');
+}
+
+let _genContentType = 'talk';
+
+function setGenContentType(type) {
+  _genContentType = type;
+  document.getElementById('gen-type-talk').className = `btn flex-1 text-xs ${type==='talk' ? 'btn-primary' : 'btn-ghost'}`;
+  document.getElementById('gen-type-music').className = `btn flex-1 text-xs ${type==='music' ? 'btn-primary' : 'btn-ghost'}`;
+  document.getElementById('gen-talk-fields').classList.toggle('hidden', type !== 'talk');
+  document.getElementById('gen-music-fields').classList.toggle('hidden', type !== 'music');
+  document.getElementById('gen-tts-card').classList.toggle('hidden', type !== 'talk');
+  document.getElementById('gen-guest-toggle-row').classList.toggle('hidden', type !== 'talk');
+  // Always hide guest card when switching; user must re-check
+  document.getElementById('gen-guest-card').classList.add('hidden');
+  if (type === 'talk') {
+    document.getElementById('gen-guest-enabled').checked = false;
+  }
+}
+
+function onGenShowChange() {
+  const showId = document.getElementById('gen-show').value;
+  const show = allShows[showId];
+  if (!show) return;
+  // Pre-fill topic from show config
+  if (show.research_topic && !document.getElementById('gen-topic').value) {
+    document.getElementById('gen-topic').value = show.research_topic;
+  }
+  // Set TTS default
+  const primary = (show.hosts||[]).find(h=>h.role==='primary');
+  if (primary) {
+    document.getElementById('gen-tts').value = primary.tts_backend || '';
+  }
+}
+
+async function startGeneration() {
+  const showId = document.getElementById('gen-show').value;
+  if (!showId) return alert('Select a show first.');
+
+  const isMusicMode = _genContentType === 'music';
+  const body = {
+    show_id: showId,
+    content_type: _genContentType,
+    segment_type: document.getElementById('gen-type').value || 'random',
+    // For music: reuse topic as caption prompt, tts_backend as vocal flag
+    topic: isMusicMode
+      ? document.getElementById('gen-music-caption').value.trim()
+      : document.getElementById('gen-topic').value.trim(),
+    count: parseInt(document.getElementById('gen-count').value) || 1,
+    tts_backend: isMusicMode
+      ? document.getElementById('gen-music-vocal').value  // "instrumental" or "vocal"
+      : document.getElementById('gen-tts').value,
+    host_voice: document.getElementById('gen-host-voice').value,
+    guest_name: document.getElementById('gen-guest-name').value.trim(),
+    guest_voice_kokoro: document.getElementById('gen-guest-voice-kokoro').value,
+    guest_voice_minimax: document.getElementById('gen-guest-voice-minimax').value,
+    guest_tts_backend: document.getElementById('gen-guest-tts').value,
+  };
+
+  const logEl = document.getElementById('gen-log');
+  logEl.textContent = 'Starting generation job...\n';
+  document.getElementById('job-status-pill').innerHTML = '<span class="pill pill-yellow">running</span>';
+  setFormEnabled(false);
+  startGenTimer();
+
+  try {
+    const result = await api('/generate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    activeJobId = result.job_id;
+    logEl.textContent += `Job ID: ${activeJobId}\n`;
+    if (jobPollTimer) clearInterval(jobPollTimer);
+    jobPollTimer = setInterval(pollJob, 1500);
+  } catch(e) {
+    logEl.textContent += `Error: ${e.message}\n`;
+    document.getElementById('job-status-pill').innerHTML = '<span class="pill pill-red">error</span>';
+    setFormEnabled(true);
+    stopGenTimer();
+  }
+}
+
+async function pollJob() {
+  if (!activeJobId) return;
+  try {
+    const job = await api('/generate/jobs/' + activeJobId);
+    const logEl = document.getElementById('gen-log');
+    logEl.textContent = job.log.join('\n');
+    logEl.scrollTop = logEl.scrollHeight;
+
+    const pill = document.getElementById('job-status-pill');
+    if (job.status === 'completed') {
+      pill.innerHTML = '<span class="pill pill-green">completed</span>';
+      clearInterval(jobPollTimer);
+      stopGenTimer();
+      setFormEnabled(true);
+      loadJobs();
+      loadDashboard();
+    } else if (job.status === 'failed') {
+      pill.innerHTML = '<span class="pill pill-red">failed</span>';
+      clearInterval(jobPollTimer);
+      stopGenTimer();
+      setFormEnabled(true);
+    }
+  } catch(e) {}
+}
+
+async function loadJobs() {
+  try {
+    const jobs = await api('/generate/jobs');
+    document.getElementById('jobs-list').innerHTML = jobs.slice(0,8).map(j => `
+      <div class="flex justify-between items-center py-1 border-b border-gray-800">
+        <span class="text-gray-400">${allShows[j.show_id]?.name||j.show_id} · ${j.content_type==='music' ? '♪ music bumper' : j.segment_type}</span>
+        <div class="flex items-center gap-2">
+          <span class="text-gray-600 text-xs">${j.created_at?.substring(11,16)}</span>
+          <span class="pill ${j.status==='completed'?'pill-green':j.status==='failed'?'pill-red':'pill-yellow'}">${j.status}</span>
+          <button class="text-indigo-400 hover:text-indigo-300" onclick="viewJob('${j.id}')">log</button>
+        </div>
+      </div>`).join('') || '<div class="text-gray-600">No jobs yet</div>';
+  } catch(e) {}
+}
+
+async function viewJob(jobId) {
+  activeJobId = jobId;
+  const job = await api('/generate/jobs/' + jobId);
+  const logEl = document.getElementById('gen-log');
+  logEl.textContent = job.log.join('\n');
+  logEl.scrollTop = logEl.scrollHeight;
+  const pill = document.getElementById('job-status-pill');
+  pill.innerHTML = `<span class="pill ${job.status==='completed'?'pill-green':job.status==='failed'?'pill-red':'pill-yellow'}">${job.status}</span>`;
+}
+
+// ============================================================
+// Library
+// ============================================================
+function switchLibrary(type, btn) {
+  document.getElementById('library-segments').classList.toggle('hidden', type!=='segments');
+  document.getElementById('library-bumpers').classList.toggle('hidden', type!=='bumpers');
+  document.querySelectorAll('#tab-library .btn').forEach(b => b.classList.remove('active','bg-indigo-700','text-white'));
+  btn.classList.add('active');
+}
+
+async function loadLibrary() {
+  const [segs, bumps] = await Promise.all([api('/library/segments'), api('/library/bumpers')]);
+
+  document.getElementById('seg-list').innerHTML = Object.entries(segs).map(([show, files]) => `
+    <div class="card p-3">
+      <div class="flex justify-between items-center mb-2">
+        <div class="font-bold text-sm">${allShows[show]?.name||show}</div>
+        <span class="pill pill-blue">${files.length} files</span>
+      </div>
+      <div class="space-y-1">${files.map(f=>{
+        const eid = 'seg-' + CSS.escape(show + '-' + f.name).replace(/[^a-z0-9]/gi,'_');
+        const src = `/api/library/audio/${show}/${encodeURIComponent(f.name)}?type=segment`;
+        const playsLabel = f.play_count > 0
+          ? `<span class="pill pill-purple">${f.play_count}▶</span>`
+          : '<span class="text-gray-700 text-xs">unplayed</span>';
+        const lastPlayed = f.last_played ? f.last_played.substring(0,10) : '';
+        const promptText = f.prompt || '';
+        const metaEid = eid + '_meta';
+        return `
+        <div class="py-1 border-b border-gray-800">
+          <div class="flex justify-between items-center text-xs">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="text-gray-400 truncate max-w-xs">${f.name}</span>
+              ${f.segment_type ? `<span class="pill pill-purple text-xs">${f.segment_type}</span>` : ''}
+              ${f.word_count ? `<span class="text-gray-600">${f.word_count}w</span>` : ''}
+            </div>
+            <div class="flex items-center gap-3 ml-2 shrink-0">
+              ${playsLabel}
+              <span class="text-gray-600">${f.size_kb}KB${lastPlayed ? ' · '+lastPlayed : ''}</span>
+              ${promptText ? `<button class="text-gray-500 hover:text-gray-300" onclick="toggleMeta('${metaEid}')">ⓘ prompt</button>` : ''}
+              <button class="text-indigo-400 hover:text-indigo-300" onclick="togglePreview('${eid}','${src}')">▶ preview</button>
+              <button class="text-red-400 hover:text-red-300" onclick="deleteSegment('${show}','${f.name}')">✕</button>
+            </div>
+          </div>
+          ${promptText ? `<div id="${metaEid}" class="hidden text-xs text-indigo-300 bg-indigo-950 rounded px-3 py-2 mt-1 italic">${promptText.replace(/</g,'&lt;')}</div>` : ''}
+          <div class="preview-bar" id="${eid}">
+            <audio controls preload="none" style="flex:1;height:28px;min-width:0"><source src="${src}"></audio>
+          </div>
+        </div>`;}).join('')}
+      </div>
+    </div>`).join('') || '<div class="text-gray-600 text-sm">No talk segments</div>';
+
+  document.getElementById('bump-list').innerHTML = Object.entries(bumps).map(([show, files]) => `
+    <div class="card p-3">
+      <div class="flex justify-between items-center mb-2">
+        <div class="font-bold text-sm">${allShows[show]?.name||show}</div>
+        <span class="pill pill-blue">${files.length} files</span>
+      </div>
+      <div class="space-y-1">${files.map(f=>{
+        const eid = 'bump-' + CSS.escape(show + '-' + f.name).replace(/[^a-z0-9]/gi,'_');
+        const src = `/api/library/audio/${show}/${encodeURIComponent(f.name)}?type=bumper`;
+        const playsLabel = f.play_count > 0
+          ? `<span class="pill pill-purple">${f.play_count}▶</span>`
+          : '<span class="text-gray-700 text-xs">unplayed</span>';
+        const lastPlayed = f.last_played ? f.last_played.substring(0,10) : '';
+        const promptText = f.prompt || '';
+        const displayLabel = f.display_name ? `<span class="text-gray-500">${f.display_name}</span>` : '';
+        const metaEid = eid + '_meta';
+        return `
+        <div class="py-1 border-b border-gray-800">
+          <div class="flex justify-between items-center text-xs">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="text-gray-400 truncate max-w-xs">${f.name}</span>
+              ${displayLabel}
+            </div>
+            <div class="flex items-center gap-3 ml-2 shrink-0">
+              ${playsLabel}
+              <span class="text-gray-600">${f.size_kb}KB${lastPlayed ? ' · '+lastPlayed : ''}</span>
+              ${promptText ? `<button class="text-gray-500 hover:text-gray-300" onclick="toggleMeta('${metaEid}')">ⓘ prompt</button>` : ''}
+              <button class="text-indigo-400 hover:text-indigo-300" onclick="togglePreview('${eid}','${src}')">▶ preview</button>
+              <button class="text-red-400 hover:text-red-300" onclick="deleteBumper('${show}','${f.name}')">✕</button>
+            </div>
+          </div>
+          ${promptText ? `<div id="${metaEid}" class="hidden text-xs text-indigo-300 bg-indigo-950 rounded px-3 py-2 mt-1 italic">${promptText.replace(/</g,'&lt;')}</div>` : ''}
+          <div class="preview-bar" id="${eid}">
+            <audio controls preload="none" style="flex:1;height:28px;min-width:0"><source src="${src}"></audio>
+          </div>
+        </div>`;}).join('')}
+      </div>
+    </div>`).join('') || '<div class="text-gray-600 text-sm">No bumpers</div>';
+}
+
+async function deleteSegment(show, name) {
+  if (!confirm(`Delete "${name}"?`)) return;
+  await api(`/library/segments/${show}/${encodeURIComponent(name)}`, {method:'DELETE'});
+  loadLibrary();
+}
+async function deleteBumper(show, name) {
+  if (!confirm(`Delete "${name}"?`)) return;
+  await api(`/library/bumpers/${show}/${encodeURIComponent(name)}`, {method:'DELETE'});
+  loadLibrary();
+}
+
+// ============================================================
+// Generate tab sub-tabs
+// ============================================================
+function switchGenTab(name, btn) {
+  ['manual','schedules','activity'].forEach(t => {
+    document.getElementById('gentab-' + t).classList.toggle('hidden', t !== name);
+  });
+  document.querySelectorAll('#tab-generate .tab-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  if (name === 'schedules') loadSchedulerStatus();
+  if (name === 'activity') loadActivityLog();
+}
+
+// ============================================================
+// Auto-generate schedules
+// ============================================================
+const CADENCE_OPTIONS = ['continuous','hourly','daily','weekly','monthly'];
+
+async function loadSchedulerStatus() {
+  const [status] = await Promise.all([api('/scheduler/status')]);
+  const shows = status.shows || {};
+  const container = document.getElementById('sched-cards');
+
+  container.innerHTML = Object.entries(shows).map(([showId, s]) => {
+    const showName = allShows[showId]?.name || showId;
+    const talk = s.talk;
+    const music = s.music;
+    const talkPct = talk.target_inventory ? Math.min(100, Math.round(talk.inventory / talk.target_inventory * 100)) : 0;
+    const musicPct = music.target_inventory ? Math.min(100, Math.round(music.inventory / music.target_inventory * 100)) : 0;
+    const talkColor = talk.inventory < talk.min_inventory ? '#dc2626' : talk.inventory < talk.target_inventory ? '#d97706' : '#16a34a';
+    const musicColor = music.inventory < music.min_inventory ? '#dc2626' : music.inventory < music.target_inventory ? '#d97706' : '#16a34a';
+
+    return `<div class="card p-4" id="sched-card-${showId}">
+      <div class="flex justify-between items-center mb-3">
+        <div class="font-bold text-sm">${showName}</div>
+        <div class="flex gap-2">
+          <button class="btn btn-ghost text-xs" onclick="triggerNow('${showId}','talk')">▶ Talk Now</button>
+          <button class="btn btn-ghost text-xs" onclick="triggerNow('${showId}','music')">♪ Music Now</button>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <!-- Talk -->
+        <div>
+          <div class="flex justify-between items-center mb-1">
+            <span class="text-xs text-gray-400">Talk Segments</span>
+            <label class="flex items-center gap-1 cursor-pointer">
+              <input type="checkbox" class="accent-indigo-500" ${talk.enabled ? 'checked' : ''}
+                onchange="setGenEnabled('${showId}','talk',this.checked)">
+              <span class="text-xs text-gray-400">Auto</span>
+            </label>
+          </div>
+          <div class="flex items-center gap-2 mb-2">
+            <div class="flex-1 bg-gray-800 rounded-full h-2">
+              <div class="h-2 rounded-full transition-all" style="width:${talkPct}%;background:${talkColor}"></div>
+            </div>
+            <span class="text-xs" style="color:${talkColor}">${talk.inventory}/${talk.target_inventory}</span>
+          </div>
+          <div class="grid grid-cols-3 gap-1 text-xs">
+            <div>
+              <label class="text-gray-500 block">Min</label>
+              <input type="number" min="1" max="50" value="${talk.min_inventory}"
+                class="input py-1 text-xs" onchange="updateSchedField('${showId}','talk','min_inventory',+this.value)">
+            </div>
+            <div>
+              <label class="text-gray-500 block">Target</label>
+              <input type="number" min="1" max="100" value="${talk.target_inventory}"
+                class="input py-1 text-xs" onchange="updateSchedField('${showId}','talk','target_inventory',+this.value)">
+            </div>
+            <div>
+              <label class="text-gray-500 block">Cadence</label>
+              <select class="input py-1 text-xs" onchange="updateSchedField('${showId}','talk','cadence',this.value)">
+                ${CADENCE_OPTIONS.map(c=>`<option value="${c}" ${c===talk.cadence?'selected':''}>${c}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          ${talk.last_run ? `<div class="text-xs text-gray-600 mt-1">Last run: ${talk.last_run.substring(0,16)}</div>` : ''}
+        </div>
+        <!-- Music -->
+        <div>
+          <div class="flex justify-between items-center mb-1">
+            <span class="text-xs text-gray-400">Music Bumpers</span>
+            <label class="flex items-center gap-1 cursor-pointer">
+              <input type="checkbox" class="accent-indigo-500" ${music.enabled ? 'checked' : ''}
+                onchange="setGenEnabled('${showId}','music',this.checked)">
+              <span class="text-xs text-gray-400">Auto</span>
+            </label>
+          </div>
+          <div class="flex items-center gap-2 mb-2">
+            <div class="flex-1 bg-gray-800 rounded-full h-2">
+              <div class="h-2 rounded-full transition-all" style="width:${musicPct}%;background:${musicColor}"></div>
+            </div>
+            <span class="text-xs" style="color:${musicColor}">${music.inventory}/${music.target_inventory}</span>
+          </div>
+          <div class="grid grid-cols-3 gap-1 text-xs">
+            <div>
+              <label class="text-gray-500 block">Min</label>
+              <input type="number" min="1" max="20" value="${music.min_inventory}"
+                class="input py-1 text-xs" onchange="updateSchedField('${showId}','music','min_inventory',+this.value)">
+            </div>
+            <div>
+              <label class="text-gray-500 block">Target</label>
+              <input type="number" min="1" max="50" value="${music.target_inventory}"
+                class="input py-1 text-xs" onchange="updateSchedField('${showId}','music','target_inventory',+this.value)">
+            </div>
+            <div>
+              <label class="text-gray-500 block">Cadence</label>
+              <select class="input py-1 text-xs" onchange="updateSchedField('${showId}','music','cadence',this.value)">
+                ${CADENCE_OPTIONS.map(c=>`<option value="${c}" ${c===music.cadence?'selected':''}>${c}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          ${music.last_run ? `<div class="text-xs text-gray-600 mt-1">Last run: ${music.last_run.substring(0,16)}</div>` : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// Per-show generation config cache (to avoid full reloads on each field change)
+const _schedConfig = {};
+
+async function _ensureSchedConfig(showId) {
+  if (!_schedConfig[showId]) {
+    const status = await api('/scheduler/status');
+    const s = status.shows[showId] || {};
+    _schedConfig[showId] = {
+      talk: { ...(s.talk || {}) },
+      music: { ...(s.music || {}) },
+    };
+  }
+  return _schedConfig[showId];
+}
+
+async function updateSchedField(showId, type, field, value) {
+  const cfg = await _ensureSchedConfig(showId);
+  cfg[type][field] = value;
+  await api(`/scheduler/config/${showId}`, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ talk: cfg.talk, music: cfg.music }),
+  });
+}
+
+async function setGenEnabled(showId, type, enabled) {
+  const cfg = await _ensureSchedConfig(showId);
+  cfg[type].enabled = enabled;
+  await api(`/scheduler/config/${showId}`, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ talk: cfg.talk, music: cfg.music }),
+  });
+}
+
+async function triggerNow(showId, type) {
+  const r = await api(`/scheduler/trigger/${showId}/${type}`, {method: 'POST'});
+  alert(r.message);
+  setTimeout(() => loadSchedulerStatus(), 2000);
+}
+
+async function loadActivityLog() {
+  const log = await api('/activity/log?limit=100');
+  const el = document.getElementById('activity-log');
+  if (!log.length) { el.textContent = 'No activity yet.'; return; }
+  el.textContent = log.map(e => {
+    const icon = e.level === 'error' ? '✗' : '✓';
+    const src = {manual:'[manual] ', scheduler:'[sched]  ', history:'[hist]   '}[e.source] || '[?]      ';
+    return `${e.ts}  ${icon}  ${src}  [${e.show_id}/${e.type}]  ${e.msg}`;
+  }).join('\n');
+}
+
+// ============================================================
+// Live stream player
+// ============================================================
+const liveAudio = document.getElementById('live-audio');
+const liveBtn = document.getElementById('live-btn');
+let liveStreamUrl = 'http://' + location.hostname + ':8000/stream';
+
+liveAudio.addEventListener('playing', () => {
+  liveBtn.className = 'on';
+  liveBtn.textContent = '■ LIVE';
+});
+liveAudio.addEventListener('pause', () => {
+  liveBtn.className = 'off';
+  liveBtn.textContent = '▶ LIVE';
+});
+liveAudio.addEventListener('error', () => {
+  liveBtn.className = 'off';
+  liveBtn.textContent = '▶ LIVE';
+});
+
+function toggleLiveStream() {
+  if (liveAudio.paused) {
+    // Force reload so we get the live edge, not a cached position
+    liveAudio.src = liveStreamUrl + '?t=' + Date.now();
+    liveAudio.play().catch(() => {
+      liveBtn.className = 'off';
+      liveBtn.textContent = '▶ LIVE';
+    });
+  } else {
+    liveAudio.pause();
+    liveAudio.src = '';
+  }
+}
+
+// ============================================================
+// Inline preview player
+// ============================================================
+let lastPreviewId = null;
+
+function togglePreview(id, src) {
+  // Close previously open preview (unless it's the same one)
+  if (lastPreviewId && lastPreviewId !== id) {
+    const prev = document.getElementById(lastPreviewId);
+    if (prev) {
+      const a = prev.querySelector('audio');
+      if (a) { a.pause(); a.currentTime = 0; }
+      prev.classList.remove('active');
+    }
+  }
+  const bar = document.getElementById(id);
+  if (!bar) return;
+  const audio = bar.querySelector('audio');
+  if (bar.classList.contains('active')) {
+    // Toggle off
+    audio.pause();
+    audio.currentTime = 0;
+    bar.classList.remove('active');
+    lastPreviewId = null;
+  } else {
+    bar.classList.add('active');
+    audio.play();
+    lastPreviewId = id;
+  }
+}
+
+// Init
+showTab('dashboard');
+</script>
+</body>
+</html>

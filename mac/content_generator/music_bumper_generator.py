@@ -312,23 +312,38 @@ def print_status():
     print(f"\n  Total: {total}")
 
 
-def generate_one_bumper(show_id: str, verbose: bool = True) -> bool:
-    """Generate one AI music track for a show. Returns True on success."""
-    if show_id not in SHOW_MUSIC:
+def generate_one_bumper(show_id: str, verbose: bool = True,
+                        caption_override: str | None = None,
+                        vocal_override: bool | None = None) -> bool:
+    """Generate one AI music track for a show. Returns True on success.
+
+    Args:
+        caption_override: If set, use this prompt instead of a random pool entry.
+        vocal_override: If set, force instrumental (False) or vocal (True).
+    """
+    if show_id not in SHOW_MUSIC and not caption_override:
         print(f"Unknown show: {show_id}")
         return False
 
-    entry = random.choice(SHOW_MUSIC[show_id])
-
-    # Entry is either a plain caption string (instrumental) or a dict with lyrics
-    if isinstance(entry, dict):
-        caption = entry["caption"]
-        lyrics = entry["lyrics"]
-        instrumental = False
+    if caption_override:
+        caption = caption_override
+        if vocal_override is True:
+            instrumental = False
+            lyrics = "[verse]\nCustom vocals\n\n[chorus]\nGenerated track"
+        else:
+            instrumental = True
+            lyrics = "[Instrumental]"
     else:
-        caption = entry
-        lyrics = "[Instrumental]"
-        instrumental = True
+        entry = random.choice(SHOW_MUSIC[show_id])
+        # Entry is either a plain caption string (instrumental) or a dict with lyrics
+        if isinstance(entry, dict):
+            caption = entry["caption"]
+            lyrics = entry["lyrics"]
+            instrumental = False
+        else:
+            caption = entry
+            lyrics = "[Instrumental]"
+            instrumental = True
 
     duration = round(random.uniform(BUMPER_MIN, BUMPER_MAX), 1)
 
@@ -371,13 +386,17 @@ def generate_one_bumper(show_id: str, verbose: bool = True) -> bool:
         return False
 
 
-def generate_bumpers_for_show(show_id: str, count: int = 3, verbose: bool = True) -> int:
+def generate_bumpers_for_show(show_id: str, count: int = 3, verbose: bool = True,
+                               caption_override: str | None = None,
+                               vocal_override: bool | None = None) -> int:
     """Generate `count` AI bumpers for a show. Returns number successfully generated."""
     generated = 0
     for i in range(count):
         if verbose:
             print(f"[{i+1}/{count}] Generating...")
-        if generate_one_bumper(show_id, verbose=verbose):
+        if generate_one_bumper(show_id, verbose=verbose,
+                               caption_override=caption_override,
+                               vocal_override=vocal_override):
             generated += 1
     return generated
 
@@ -389,6 +408,9 @@ def main():
     parser.add_argument("--count", type=int, default=3, help="Bumpers to generate per show")
     parser.add_argument("--status", action="store_true", help="Show bumper counts and exit")
     parser.add_argument("--min", type=int, default=5, help="Min bumpers threshold (used with --all)")
+    parser.add_argument("--caption", help="Custom style prompt (overrides random pool pick)")
+    parser.add_argument("--vocal", action="store_true", default=False,
+                        help="Generate vocal track (default: instrumental)")
     args = parser.parse_args()
 
     if args.status:
@@ -396,9 +418,7 @@ def main():
         return
 
     if not is_server_available():
-        print(f"music-gen.server not available at {MUSIC_GEN_BASE_URL}")
-        print("Start it with:")
-        print("  cd /path/to/music-gen.server && uv run uvicorn src.kortexa.music_gen.server:app --port 4009")
+        print("MINIMAX_API_KEY is not set — cannot generate music")
         sys.exit(1)
 
     if args.all:
@@ -413,10 +433,14 @@ def main():
         return
 
     if args.show:
-        if args.show not in SHOW_MUSIC:
+        caption_override = args.caption or None
+        vocal_override = True if args.vocal else None
+        if not caption_override and args.show not in SHOW_MUSIC:
             print(f"Unknown show '{args.show}'. Valid shows: {', '.join(SHOW_MUSIC)}")
             sys.exit(1)
-        total = generate_bumpers_for_show(args.show, count=args.count)
+        total = generate_bumpers_for_show(args.show, count=args.count,
+                                          caption_override=caption_override,
+                                          vocal_override=vocal_override)
         print(f"\nGenerated {total}/{args.count} bumpers for {args.show}")
         return
 

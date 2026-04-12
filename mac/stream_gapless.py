@@ -49,7 +49,10 @@ ICECAST_HOST = os.environ.get("ICECAST_HOST", "localhost")
 ICECAST_PORT = int(os.environ.get("ICECAST_PORT", "8000"))
 ICECAST_MOUNT = os.environ.get("ICECAST_MOUNT", "/stream")
 ICECAST_USER = os.environ.get("ICECAST_USER", "source")
-ICECAST_PASS = os.environ.get("ICECAST_PASS", "1cecast2")
+ICECAST_PASS = os.environ.get("ICECAST_PASS", "hackme")
+
+# Set WRIT_CONSUME_SEGMENTS=0 to keep talk segments on disk after playing (useful for testing).
+CONSUME_SEGMENTS = os.environ.get("WRIT_CONSUME_SEGMENTS", "1").strip() not in ("0", "false", "no")
 ICECAST_URL = f"icecast://{ICECAST_USER}:{ICECAST_PASS}@{ICECAST_HOST}:{ICECAST_PORT}{ICECAST_MOUNT}"
 ICECAST_STATUS_URL = os.environ.get(
     "ICECAST_STATUS_URL",
@@ -104,6 +107,110 @@ NOW_PLAYING_PATHS = list(dict.fromkeys(NOW_PLAYING_PATHS))
 # =============================================================================
 
 @dataclass
+class ContentLifecycle:
+    """Play-count and age limits for retiring content."""
+    max_plays: int | None = None   # None = unlimited
+    max_days: int | None = None    # None = unlimited
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ContentLifecycle":
+        return cls(
+            max_plays=d.get("max_plays"),
+            max_days=d.get("max_days"),
+        )
+
+    def is_unlimited(self) -> bool:
+        return self.max_plays is None and self.max_days is None
+
+
+def _plays_sidecar(audio_path: Path) -> Path:
+    """Return the path of the play-count sidecar file for an audio file."""
+    return audio_path.parent / (audio_path.name + ".plays.json")
+
+
+def _read_plays(audio_path: Path) -> dict:
+    """Read play metadata sidecar. Returns empty dict if missing or corrupt."""
+    p = _plays_sidecar(audio_path)
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return {}
+
+
+def _record_play_lifecycle(audio_path: Path) -> dict:
+    """Increment play count in sidecar. Returns updated metadata."""
+    p = _plays_sidecar(audio_path)
+    meta = _read_plays(audio_path)
+    meta["play_count"] = meta.get("play_count", 0) + 1
+    now = datetime.now().isoformat()
+    if "created_at" not in meta:
+        # Use file mtime as creation time if not yet set
+        meta["created_at"] = datetime.fromtimestamp(audio_path.stat().st_mtime).isoformat()
+    if "first_played_at" not in meta:
+        meta["first_played_at"] = now
+    meta["last_played_at"] = now
+    try:
+        p.write_text(json.dumps(meta, indent=2))
+    except Exception:
+        pass
+    return meta
+
+
+def _should_retire(audio_path: Path, lifecycle: ContentLifecycle) -> bool:
+    """Return True if this file has exceeded its play count or age limit."""
+    if lifecycle.is_unlimited():
+        return False
+    meta = _read_plays(audio_path)
+    if lifecycle.max_plays is not None:
+        if meta.get("play_count", 0) >= lifecycle.max_plays:
+            return True
+    if lifecycle.max_days is not None:
+        created_str = meta.get("created_at")
+        if created_str:
+            try:
+                age_days = (datetime.now() - datetime.fromisoformat(created_str)).days
+                if age_days >= lifecycle.max_days:
+                    return True
+            except Exception:
+                pass
+        else:
+            # No sidecar yet — use file mtime as proxy age
+            age_days = (datetime.now() - datetime.fromtimestamp(audio_path.stat().st_mtime)).days
+            if age_days >= lifecycle.max_days:
+                return True
+    return False
+
+
+def _retire(audio_path: Path):
+    """Delete an audio file and its sidecar."""
+    try:
+        audio_path.unlink()
+    except Exception:
+        pass
+    sidecar = _plays_sidecar(audio_path)
+    if sidecar.exists():
+        try:
+            sidecar.unlink()
+        except Exception:
+            pass
+
+
+def _load_lifecycle(show_id: str, content_type: str) -> ContentLifecycle:
+    """Load lifecycle config for a show/content-type from schedule.yaml."""
+    try:
+        import yaml
+        with open(SCHEDULE_PATH) as f:
+            data = yaml.safe_load(f)
+        show = data.get("shows", {}).get(show_id, {})
+        lc = show.get("content_lifecycle", {}).get(content_type, {})
+        return ContentLifecycle.from_dict(lc)
+    except Exception:
+        return ContentLifecycle()
+
+
+@dataclass
 class ProgramContext:
     show_id: str
     show_name: str
@@ -113,6 +220,8 @@ class ProgramContext:
     segment_types: list[str]
     bumper_style: str
     voices: dict[str, str] = field(default_factory=dict)
+    talk_lifecycle: ContentLifecycle = field(default_factory=ContentLifecycle)
+    music_lifecycle: ContentLifecycle = field(default_factory=ContentLifecycle)
 
 
 def get_program_context(station_schedule=None) -> ProgramContext:
@@ -130,6 +239,8 @@ def get_program_context(station_schedule=None) -> ProgramContext:
         segment_types=resolved.segment_types,
         bumper_style=resolved.bumper_style,
         voices=dict(resolved.voices),
+        talk_lifecycle=_load_lifecycle(resolved.show_id, "talk"),
+        music_lifecycle=_load_lifecycle(resolved.show_id, "music"),
     )
 
 
@@ -155,10 +266,11 @@ def record_play(filepath: Path, name: str, vibe: str, show_id: str):
 
 def signal_handler(signum, frame):
     global running, encoder_proc
-    log("Shutting down...")
+    signame = {2: "SIGINT", 15: "SIGTERM", 1: "SIGHUP"}.get(signum, f"SIG{signum}")
+    log(f"Shutting down (received {signame})...")
     running = False
-    if encoder_proc:
-        encoder_proc.terminate()
+    _kill_encoder(encoder_proc)
+    _release_instance_lock()
     sys.exit(0)
 
 
@@ -308,16 +420,33 @@ def get_track_duration(filepath: Path) -> float | None:
 # TALK SEGMENT MANAGEMENT
 # =============================================================================
 
-def get_talk_segments(show_id: str) -> list[Path]:
+def get_talk_segments(show_id: str, lifecycle: ContentLifecycle | None = None) -> list[Path]:
     """Load pre-generated talk segments for a show.
 
     Listener responses are sorted to the front so they air first.
+    Files that exceed their lifecycle limits are retired (deleted) immediately.
     """
     show_dir = TALK_SEGMENTS_DIR / show_id
     if not show_dir.exists():
         return []
 
-    segments = sorted(show_dir.glob("*.wav"), key=lambda p: p.stat().st_mtime)
+    if lifecycle is None:
+        lifecycle = _load_lifecycle(show_id, "talk")
+
+    audio_exts = {".wav", ".mp3", ".flac"}
+    all_files = sorted(
+        (f for f in show_dir.iterdir() if f.is_file() and f.suffix.lower() in audio_exts),
+        key=lambda p: p.stat().st_mtime,
+    )
+
+    segments = []
+    for f in all_files:
+        if _should_retire(f, lifecycle):
+            plays = _read_plays(f).get("play_count", 0)
+            log(f"  Retiring {f.name} (played {plays}×, lifecycle exceeded)")
+            _retire(f)
+        else:
+            segments.append(f)
 
     # Prioritize listener responses — they should air before other talk segments
     listener_responses = [s for s in segments if "listener_response" in s.name]
@@ -336,7 +465,8 @@ def get_listener_responses(show_id: str) -> list[Path]:
     )
 
 
-def select_ai_bumper(show_id: str, exclude: set[Path] | None = None) -> tuple[Path, float, float, str | None, str | None] | None:
+def select_ai_bumper(show_id: str, exclude: set[Path] | None = None,
+                     lifecycle: ContentLifecycle | None = None) -> tuple[Path, float, float, str | None, str | None] | None:
     """Pick a pre-generated AI music bumper for the current show.
 
     Returns (path, start_time, duration, caption, display_name) or None if unavailable.
@@ -345,10 +475,21 @@ def select_ai_bumper(show_id: str, exclude: set[Path] | None = None) -> tuple[Pa
     if not show_dir.exists():
         return None
 
-    audio_files = [
-        f for f in show_dir.iterdir()
-        if f.is_file() and f.suffix.lower() in {".flac", ".mp3", ".wav"}
-    ]
+    if lifecycle is None:
+        lifecycle = _load_lifecycle(show_id, "music")
+
+    # Retire any files that have exceeded their lifecycle before building candidates
+    raw_files = [f for f in show_dir.iterdir()
+                 if f.is_file() and f.suffix.lower() in {".flac", ".mp3", ".wav"}]
+    audio_files = []
+    for f in raw_files:
+        if _should_retire(f, lifecycle):
+            plays = _read_plays(f).get("play_count", 0)
+            log(f"  Retiring bumper {f.name} (played {plays}×)")
+            _retire(f)
+        else:
+            audio_files.append(f)
+
     if not audio_files:
         return None
 
@@ -531,6 +672,117 @@ def pipe_track(filepath: Path, encoder: subprocess.Popen, start_time: float = 0,
 # MAIN LOOP - TALK FIRST
 # =============================================================================
 
+def _kill_encoder(proc: subprocess.Popen | None) -> None:
+    """Terminate an encoder process and close its stdin to release the Icecast mount."""
+    if proc is None:
+        return
+    try:
+        if proc.stdin:
+            proc.stdin.close()
+    except Exception:
+        pass
+    if proc.poll() is None:
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=2)
+        except Exception:
+            pass
+
+
+import fcntl as _fcntl
+
+# PID lock file — ensures only one streamer owns the Icecast mount at a time.
+# We hold an exclusive flock on this file for the entire lifetime of the process.
+# A newer instance trying to acquire the lock will block until this process exits,
+# guaranteeing clean handoff rather than racing kills.
+_PIDLOCK_PATH = Path("/run/writ-fm.pid")
+_pidlock_fd = None
+
+
+def _acquire_instance_lock() -> bool:
+    """Acquire exclusive ownership of the PID lockfile.
+
+    Blocks until any prior instance releases the lock (i.e. exits cleanly).
+    Returns True on success. Does NOT block indefinitely — the old instance
+    has TimeoutStopSec=30 to exit; if the lock is not acquired within 35 s we
+    bail so systemd can retry.
+    """
+    global _pidlock_fd
+    import time as _time
+
+    deadline = _time.monotonic() + 35
+    try:
+        fd = open(_PIDLOCK_PATH, "w")
+    except Exception as e:
+        log(f"Warning: cannot open PID lock file: {e}")
+        return True  # Non-fatal — proceed without the lock
+
+    # Non-blocking first attempt; if it fails, busy-wait with retries.
+    while True:
+        try:
+            _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+            # Success — write our PID and keep the fd open to hold the lock
+            fd.write(str(os.getpid()) + "\n")
+            fd.flush()
+            _pidlock_fd = fd
+            return True
+        except BlockingIOError:
+            if _time.monotonic() >= deadline:
+                log("Warning: PID lock timeout — another instance may still be running")
+                fd.close()
+                return False
+            _time.sleep(0.2)
+        except Exception as e:
+            log(f"Warning: PID lock error: {e}")
+            fd.close()
+            return True  # Non-fatal
+
+
+def _release_instance_lock() -> None:
+    global _pidlock_fd
+    if _pidlock_fd is not None:
+        try:
+            _fcntl.flock(_pidlock_fd, _fcntl.LOCK_UN)
+            _pidlock_fd.close()
+        except Exception:
+            pass
+        _pidlock_fd = None
+
+
+def _evict_orphaned_encoder() -> None:
+    """Kill any ffmpeg process still holding our Icecast mount from a crashed run.
+
+    We only evict orphaned ENCODERS (ffmpeg), never competing Python instances.
+    Mutual process-killing between two Python instances creates a death loop;
+    the PID lockfile (above) is the correct mechanism for instance exclusivity.
+    """
+    import signal as _signal
+    mount_marker = f"@{ICECAST_HOST}:{ICECAST_PORT}{ICECAST_MOUNT}"
+    killed_any = False
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", mount_marker],
+            capture_output=True, text=True
+        )
+        for p in result.stdout.split():
+            pid = int(p)
+            if pid == os.getpid():
+                continue
+            try:
+                os.kill(pid, _signal.SIGTERM)
+                log(f"Evicted stale Icecast source (pid {pid})")
+                killed_any = True
+            except ProcessLookupError:
+                pass
+    except Exception:
+        pass
+    if killed_any:
+        time.sleep(2)  # Wait for Icecast to register the disconnection
+
+
 def run():
     global running, encoder_proc, force_segment, last_bumper_path
 
@@ -541,6 +793,14 @@ def run():
     log(f"Talk segments: {TALK_SEGMENTS_DIR}")
     log(f"AI bumpers: {AI_BUMPERS_DIR}")
     log(f"Streaming to: {ICECAST_URL}")
+
+    # Block until any previously running instance exits cleanly.
+    # This prevents two simultaneous starts (e.g. systemd double-start on
+    # reset-failed) from racing over the Icecast mount.
+    _acquire_instance_lock()
+
+    # Kill any orphaned encoder ffmpeg left over from an unclean shutdown
+    _evict_orphaned_encoder()
 
     # Load schedule
     if not SCHEDULE_ENABLED:
@@ -557,11 +817,12 @@ def run():
     log("API server started on port 8001")
 
     # Count talk segments
+    _seg_exts = {".wav", ".mp3", ".flac"}
     talk_count = 0
     if TALK_SEGMENTS_DIR.exists():
         for show_dir in TALK_SEGMENTS_DIR.iterdir():
             if show_dir.is_dir():
-                c = len(list(show_dir.glob("*.wav")))
+                c = sum(1 for f in show_dir.iterdir() if f.is_file() and f.suffix.lower() in _seg_exts)
                 talk_count += c
                 if c > 0:
                     log(f"  {show_dir.name}: {c} segments")
@@ -581,6 +842,12 @@ def run():
         log("AI music bumpers: none")
 
     while running:
+        # Explicitly kill previous encoder before starting a new one.
+        # Without this, the old process keeps the Icecast mount and the new
+        # one gets 403 Forbidden on every reconnect attempt.
+        _kill_encoder(encoder_proc)
+        encoder_proc = None
+
         log("Starting encoder...")
         encoder_proc = start_encoder()
 
@@ -599,7 +866,7 @@ def run():
             log(f"  Host: {ctx.host} | Focus: {ctx.topic_focus}")
 
             # Get talk segments for this show
-            talk_queue = get_talk_segments(ctx.show_id)
+            talk_queue = get_talk_segments(ctx.show_id, ctx.talk_lifecycle)
             # Listener responses are already sorted to front; shuffle only the rest
             lr_count = sum(1 for s in talk_queue if "listener_response" in s.name)
             if lr_count < len(talk_queue):
@@ -639,12 +906,20 @@ def run():
                         log("Talk pipe failed, reconnecting...")
                         break
 
-                    # Delete talk segment after playing
-                    try:
-                        talk_seg.unlink()
-                        log(f"    (consumed)")
-                    except Exception:
-                        pass
+                    # Update play count and retire if lifecycle limits exceeded
+                    if CONSUME_SEGMENTS:
+                        meta = _record_play_lifecycle(talk_seg)
+                        plays = meta.get("play_count", 1)
+                        if _should_retire(talk_seg, ctx.talk_lifecycle):
+                            log(f"    (retired after {plays} play{'s' if plays != 1 else ''})")
+                            _retire(talk_seg)
+                        else:
+                            lc = ctx.talk_lifecycle
+                            remaining_plays = (lc.max_plays - plays) if lc.max_plays else "∞"
+                            log(f"    (play {plays}, {remaining_plays} plays remaining)")
+                    else:
+                        _record_play_lifecycle(talk_seg)
+                        log(f"    (kept — consume disabled)")
 
                     record_play(talk_seg, seg_name, "talk", ctx.show_id)
 
@@ -678,11 +953,18 @@ def run():
                                 break
 
                             record_play(bpath, bname, "ai_bumper", ctx.show_id)
-                            try:
-                                bpath.unlink()
-                                log(f"    (consumed)")
-                            except Exception:
-                                pass
+                            if CONSUME_SEGMENTS:
+                                bmeta = _record_play_lifecycle(bpath)
+                                bplays = bmeta.get("play_count", 1)
+                                if _should_retire(bpath, ctx.music_lifecycle):
+                                    log(f"    (bumper retired after {bplays} play{'s' if bplays != 1 else ''})")
+                                    _retire(bpath)
+                                else:
+                                    blc = ctx.music_lifecycle
+                                    brem = (blc.max_plays - bplays) if blc.max_plays else "∞"
+                                    log(f"    (bumper play {bplays}, {brem} remaining)")
+                            else:
+                                _record_play_lifecycle(bpath)
                             last_bumper_path = bpath
 
                         if set_count > 0:
@@ -714,18 +996,35 @@ def run():
                                     pass
 
             else:
-                log(f"  No talk segments for {ctx.show_id}; piping fallback tone to maintain stream")
-                fallback_tone = Path("/root/writ-fm/output/fallback_tone.wav")
-                if fallback_tone.exists():
+                # No talk segments — play AI bumpers if available, otherwise fallback tone
+                ai_bumper = select_ai_bumper(ctx.show_id)
+                if ai_bumper:
+                    bpath, bstart, bdur, bcaption, bdisplay = ai_bumper
+                    bname = bdisplay or clean_name(bpath)
+                    log(f"  No talk segments — playing bumper: {bname}")
                     update_now_playing(
-                        "Holding Pattern", "bumper",
+                        bname, "bumper",
                         show_id=ctx.show_id,
                         show_name=ctx.show_name,
-                        caption="Signal lost... awaiting data.",
+                        host=None,
+                        caption=bcaption,
                     )
-                    pipe_track(fallback_tone, encoder_proc)
+                    pipe_track(bpath, encoder_proc, start_time=bstart, duration=bdur)
+                    record_play(bpath, bname, "ai_bumper", ctx.show_id)
+                    last_bumper_path = bpath
                 else:
-                    time.sleep(10)
+                    log(f"  No talk segments for {ctx.show_id}; piping fallback tone to maintain stream")
+                    fallback_tone = Path("/root/writ-fm/output/fallback_tone.wav")
+                    if fallback_tone.exists():
+                        update_now_playing(
+                            "Holding Pattern", "bumper",
+                            show_id=ctx.show_id,
+                            show_name=ctx.show_name,
+                            caption="Signal lost... awaiting data.",
+                        )
+                        pipe_track(fallback_tone, encoder_proc)
+                    else:
+                        time.sleep(10)
 
             if running and encoder_proc.poll() is None:
                 log("Queue complete, refreshing...")

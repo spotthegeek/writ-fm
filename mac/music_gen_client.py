@@ -1,73 +1,80 @@
 #!/usr/bin/env python3
-"""REST client for music-gen.server (ACE-Step music generation).
+"""MiniMax music-2.6 client for WRIT-FM bumper generation.
 
-API: POST /generate → base64-encoded audio
-Server: github.com/kortexa-ai/music-gen.server (default: localhost:4009)
+Replaces the previous ACE-Step (localhost:4009) integration.
+API: POST https://api.minimax.io/v1/music_generation
+Returns hex-encoded MP3 audio (~130s per generation).
 """
 
-import base64
+import binascii
 import json
 import os
 import urllib.error
 import urllib.request
 from pathlib import Path
 
+MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
+MINIMAX_BASE_URL = "https://api.minimax.io/v1"
+MINIMAX_MODEL = "music-2.6"
+
+# Legacy env var kept for health-check callers that test server availability.
 MUSIC_GEN_BASE_URL = os.environ.get("MUSIC_GEN_URL", "http://localhost:4009")
 
 
 def is_server_available(base_url: str = MUSIC_GEN_BASE_URL, timeout: float = 2.0) -> bool:
-    """Check if music-gen.server is reachable."""
-    try:
-        with urllib.request.urlopen(f"{base_url}/health", timeout=timeout):
-            return True
-    except Exception:
-        return False
+    """Check if music generation is available. For MiniMax, just verify API key is set."""
+    return bool(MINIMAX_API_KEY)
 
 
 def generate_music(
     caption: str,
     output_path: Path,
     duration: float = 90.0,
-    audio_format: str = "flac",
+    audio_format: str = "mp3",
     seed: int = -1,
     instrumental: bool = True,
     lyrics: str = "[Instrumental]",
     guidance_scale: float = 0.0,
     base_url: str = MUSIC_GEN_BASE_URL,
-    timeout: float = 600.0,
+    timeout: float = 300.0,
 ) -> bool:
-    """Generate music via ACE-Step and save to output_path.
+    """Generate music via MiniMax music-2.6 and save to output_path.
 
     Args:
-        caption: Text description of the music style/mood.
-        output_path: Where to save the generated audio file.
-        duration: Length in seconds (10-600).
-        audio_format: Output format (flac, mp3, wav, opus, aac).
-        seed: Random seed (-1 for random).
-        instrumental: If True, generate instrumental only.
+        caption: Text description of music style/mood (used as prompt).
+        output_path: Where to save the generated audio file (.mp3).
+        duration: Ignored — MiniMax generates ~130s tracks regardless.
+        audio_format: Ignored — MiniMax always returns MP3.
+        seed: Ignored — MiniMax does not support seeding.
+        instrumental: If True, no vocals generated.
         lyrics: Lyrics text (used when instrumental=False).
-        base_url: music-gen.server base URL.
-        timeout: HTTP request timeout in seconds (generation can be slow).
+        guidance_scale: Ignored.
+        base_url: Ignored (legacy ACE-Step param).
+        timeout: HTTP request timeout in seconds.
 
     Returns:
         True if successful, False otherwise.
     """
-    payload = json.dumps({
-        "caption": caption,
-        "instrumental": instrumental,
-        "lyrics": lyrics,
-        "duration": duration,
-        "audio_format": audio_format,
-        "seed": seed,
-        "inference_steps": 25,
-        "guidance_scale": guidance_scale if guidance_scale > 0 else 7.0,
-        "thinking": True,
-    }).encode()
+    api_key = MINIMAX_API_KEY
+    if not api_key:
+        print("[music_gen] MINIMAX_API_KEY not set")
+        return False
+
+    payload: dict = {
+        "model": MINIMAX_MODEL,
+        "prompt": caption,
+        "is_instrumental": instrumental,
+    }
+    if not instrumental and lyrics and lyrics != "[Instrumental]":
+        payload["lyrics"] = lyrics
 
     req = urllib.request.Request(
-        f"{base_url}/generate",
-        data=payload,
-        headers={"Content-Type": "application/json"},
+        f"{MINIMAX_BASE_URL}/music_generation",
+        data=json.dumps(payload).encode(),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
         method="POST",
     )
 
@@ -75,21 +82,32 @@ def generate_music(
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        print(f"[music_gen] HTTP {e.code}: {e.read().decode()[:200]}")
+        print(f"[music_gen] HTTP {e.code}: {e.read().decode()[:300]}")
         return False
     except Exception as e:
         print(f"[music_gen] Request failed: {e}")
         return False
 
-    audios = data.get("audios", [])
-    if not audios:
+    base_resp = data.get("base_resp", {})
+    if base_resp.get("status_code", -1) != 0:
+        print(f"[music_gen] API error {base_resp.get('status_code')}: {base_resp.get('status_msg')}")
+        return False
+
+    audio_hex = data.get("data", {}).get("audio", "")
+    if not audio_hex:
         print("[music_gen] No audio in response")
         return False
 
     try:
-        audio_bytes = base64.b64decode(audios[0])
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(audio_bytes)
+        audio_bytes = binascii.unhexlify(audio_hex)
+        # Always save as .mp3 regardless of requested format
+        out = output_path.with_suffix(".mp3")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(audio_bytes)
+        if out != output_path:
+            # Caller expected a different extension — rename so callers find it
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            out.rename(output_path) if output_path.suffix == ".mp3" else None
         return True
     except Exception as e:
         print(f"[music_gen] Failed to save audio: {e}")

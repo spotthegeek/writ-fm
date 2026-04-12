@@ -91,7 +91,11 @@ def run_claude(
                 data=json.dumps({
                     "model": ollama_model,
                     "prompt": prompt,
-                    "stream": False
+                    "stream": False,
+                    "options": {
+                        "num_predict": 8192,
+                        "temperature": 0.8,
+                    },
                 }).encode('utf-8'),
                 headers={'Content-Type': 'application/json'}
             )

@@ -302,21 +302,31 @@ def build_generation_prompt(
         # Panel uses two hosts
         pass
 
+    # For long-form segments, add a hard length reminder at the end of the prompt
+    is_long_form = min_words >= 500
+    length_reminder = (
+        f"\n\nLENGTH REQUIREMENT: You MUST write at least {min_words} words. "
+        f"Do not summarise, do not wrap up early. "
+        f"Keep developing ideas, adding examples, and exploring tangents until you have reached the minimum. "
+        f"A response under {min_words} words is incomplete and will be rejected."
+    ) if is_long_form else ""
+
     prompt = f"""{base}
 
 SEGMENT: {segment_type}
 TOPIC: {topic}
 TARGET LENGTH: {min_words}-{max_words} words
 
-{prompt_template}"""
+{prompt_template}{length_reminder}"""
 
     return prompt
 
 
 def run_generation(prompt: str, segment_type: str) -> str | None:
-    """Run Claude CLI to generate the script."""
+    """Run LLM to generate the script."""
     min_words, max_words = SEGMENT_WORD_TARGETS.get(segment_type, (1500, 2500))
     timeout = 120 if max_words < 200 else 300
+    min_acceptable = int(min_words * 0.8)
 
     script = run_claude(prompt, timeout=timeout)
     if not script:
@@ -324,9 +334,8 @@ def run_generation(prompt: str, segment_type: str) -> str | None:
 
     # Quality gate: check word count
     word_count = len(script.split())
-    min_acceptable = int(min_words * 0.8)
     if word_count < min_acceptable:
-        log(f"Script too short: {word_count} words (need {min_acceptable}+)")
+        log(f"Script too short: {word_count} words (need {min_acceptable}+, target {min_words}-{max_words})")
         return None
 
     return script
@@ -516,14 +525,14 @@ def generate_segment(
         guest_voice=voices.get("guest"),
     )
 
-    # Try generation with one retry
+    # Try generation with up to 2 retries
     script = None
-    for attempt in range(2):
+    for attempt in range(3):
         script = run_generation(prompt, segment_type)
         if script:
             break
-        if attempt == 0:
-            log("  Retrying generation...")
+        if attempt < 2:
+            log(f"  Retrying generation (attempt {attempt + 2}/3)...")
             time.sleep(3)
 
     if not script:
@@ -569,17 +578,29 @@ def generate_segment(
 
     SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
     meta_path = SCRIPTS_DIR / f"talk_{segment_type}_{timestamp}.json"
+    meta = {
+        "type": segment_type,
+        "show_id": show_id,
+        "show_name": show_name,
+        "host": host_id,
+        "topic": topic,
+        "script": script,
+        "word_count": word_count,
+        "duration_seconds": duration,
+        "voices": voices,
+        "generated_at": datetime.now().isoformat(),
+    }
     with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
+
+    # Write a lightweight sidecar next to the audio file for the admin library
+    sidecar = output_path.with_suffix(".json")
+    with open(sidecar, "w") as f:
         json.dump({
             "type": segment_type,
             "show_id": show_id,
-            "show_name": show_name,
-            "host": host_id,
             "topic": topic,
-            "script": script,
             "word_count": word_count,
-            "duration_seconds": duration,
-            "voices": voices,
             "generated_at": datetime.now().isoformat(),
         }, f, indent=2)
 
@@ -738,7 +759,12 @@ def main():
     if args.all:
         generate_all(schedule, args.count)
     elif args.show:
-        generate_for_show(args.show, schedule, args.count, args.segment_type, args.topic)
+        generated = generate_for_show(args.show, schedule, args.count, args.segment_type, args.topic)
+        if generated == 0:
+            log(f"ERROR: 0/{args.count} segments generated successfully")
+            return 1
+        if generated < args.count:
+            log(f"WARNING: Only {generated}/{args.count} segments generated successfully")
     else:
         if args.segment_type or args.topic:
             resolved = schedule.resolve()
