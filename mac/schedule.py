@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 import re
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
@@ -26,16 +27,70 @@ import yaml
 DAY_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 DAY_TO_INDEX = {k: i for i, k in enumerate(DAY_KEYS)}
 INDEX_TO_DAY = {i: k for k, i in DAY_TO_INDEX.items()}
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SHOW_TAXONOMY_PATH = PROJECT_ROOT / "config" / "show_taxonomy.yaml"
 
-VALID_SEGMENT_TYPES = {
+DEFAULT_SEGMENT_TYPES = {
     "deep_dive", "news_analysis", "interview", "panel", "story",
-    "listener_mailbag", "listener_response", "music_essay",
+    "reddit_storytelling", "reddit_post", "youtube", "listener_mailbag", "listener_response", "music_essay",
     "station_id", "show_intro", "show_outro",
 }
 
 
+def _valid_segment_types() -> set[str]:
+    segment_types = set(DEFAULT_SEGMENT_TYPES)
+    segment_types_path = Path(__file__).resolve().parents[1] / "config" / "segment_types.yaml"
+    if segment_types_path.exists():
+        try:
+            payload = yaml.safe_load(segment_types_path.read_text()) or {}
+            segment_types.update((payload.get("segment_types") or {}).keys())
+        except Exception:
+            pass
+    return segment_types
+
+
+def _load_show_taxonomy() -> dict:
+    if not SHOW_TAXONOMY_PATH.exists():
+        return {}
+    try:
+        return yaml.safe_load(SHOW_TAXONOMY_PATH.read_text()) or {}
+    except Exception:
+        return {}
+
+
+def _valid_show_types() -> set[str]:
+    taxonomy = _load_show_taxonomy()
+    return set((taxonomy.get("show_types") or {}).keys()) or {
+        "research", "hybrid", "content_ingest", "music_first",
+        "live_community", "news_current_events", "listener_driven",
+    }
+
+
+def _show_type_config(show_type: str) -> dict[str, Any]:
+    taxonomy = _load_show_taxonomy()
+    show_types = taxonomy.get("show_types") or {}
+    return dict(show_types.get(show_type, {}))
+
+
+def _default_segment_types_for_show_type(show_type: str) -> list[str]:
+    cfg = _show_type_config(show_type)
+    defaults = cfg.get("default_segment_types")
+    if isinstance(defaults, list) and defaults:
+        return [str(s).strip() for s in defaults if str(s).strip()]
+    return ["deep_dive"]
+
+
 class ScheduleError(RuntimeError):
     pass
+
+
+def _station_tz(timezone_name: str | None):
+    if not timezone_name or timezone_name in {"local", "system"}:
+        return None
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise ScheduleError(f"Unknown timezone: {timezone_name!r}") from exc
 
 
 def _parse_time_hhmm(value: str) -> int:
@@ -111,11 +166,17 @@ class Show:
     show_id: str
     name: str
     description: str
+    show_type: str = "research"
     host: str = "liminal_operator"
+    hosts: list[dict[str, Any]] = field(default_factory=list)
+    guests: list[dict[str, Any]] = field(default_factory=list)
+    tts_backend: str = "kokoro"
     topic_focus: str = ""
     segment_types: list[str] = field(default_factory=lambda: ["deep_dive"])
     bumper_style: str = "ambient"
     voices: dict[str, str] = field(default_factory=dict)
+    source_rules: list[dict[str, Any]] = field(default_factory=list)
+    content_lifecycle: dict[str, Any] = field(default_factory=dict)
     # Legacy fields (optional, unused in talk-first mode)
     segment_after_tracks: int = 1
     podcasts_enabled: bool = False
@@ -158,11 +219,17 @@ class ResolvedShow:
     show_id: str
     name: str
     description: str
+    show_type: str
     host: str
+    hosts: list[dict[str, Any]]
+    guests: list[dict[str, Any]]
+    tts_backend: str
     topic_focus: str
     segment_types: list[str]
     bumper_style: str
     voices: dict[str, str]
+    source_rules: list[dict[str, Any]]
+    content_lifecycle: dict[str, Any]
     # Legacy (kept for backward compat)
     segment_after_tracks: int = 1
     podcasts_enabled: bool = False
@@ -175,6 +242,8 @@ class StationSchedule:
     shows: dict[str, Show]
     base: list[ScheduleBlock]
     overrides: list[ScheduleBlock]
+    timezone_name: str = "local"
+    station_name: str = "WRIT-FM"
     podcast_hours: set[int] = field(default_factory=set)
 
     def validate(self) -> None:
@@ -208,19 +277,27 @@ class StationSchedule:
                 raise ScheduleError(f"Schedule references unknown show: {block.show_id!r}")
 
         # Validate show configs
+        valid_segment_types = _valid_segment_types()
         for show in self.shows.values():
             if show.host:
                 # Validate host exists in persona system (soft check - just verify non-empty)
                 pass
             for st in show.segment_types:
-                if st not in VALID_SEGMENT_TYPES:
+                if st not in valid_segment_types:
                     raise ScheduleError(
                         f"Show {show.show_id}: unknown segment type {st!r}. "
-                        f"Valid: {sorted(VALID_SEGMENT_TYPES)}"
+                        f"Valid: {sorted(valid_segment_types)}"
                     )
 
     def resolve(self, now: datetime | None = None) -> ResolvedShow:
-        now = now or datetime.now()
+        tz = _station_tz(self.timezone_name)
+        if now is None:
+            now = datetime.now(tz) if tz else datetime.now()
+        elif tz:
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=tz)
+            else:
+                now = now.astimezone(tz)
 
         for block in self.overrides:
             if block.matches(now):
@@ -229,11 +306,17 @@ class StationSchedule:
                     show_id=show.show_id,
                     name=show.name,
                     description=show.description,
+                    show_type=show.show_type,
                     host=show.host,
+                    hosts=list(show.hosts),
+                    guests=list(show.guests),
+                    tts_backend=show.tts_backend,
                     topic_focus=show.topic_focus,
                     segment_types=list(show.segment_types),
                     bumper_style=show.bumper_style,
                     voices=dict(show.voices),
+                    source_rules=list(show.source_rules),
+                    content_lifecycle=dict(show.content_lifecycle),
                 )
 
         for block in self.base:
@@ -243,11 +326,17 @@ class StationSchedule:
                     show_id=show.show_id,
                     name=show.name,
                     description=show.description,
+                    show_type=show.show_type,
                     host=show.host,
+                    hosts=list(show.hosts),
+                    guests=list(show.guests),
+                    tts_backend=show.tts_backend,
                     topic_focus=show.topic_focus,
                     segment_types=list(show.segment_types),
                     bumper_style=show.bumper_style,
                     voices=dict(show.voices),
+                    source_rules=list(show.source_rules),
+                    content_lifecycle=dict(show.content_lifecycle),
                 )
 
         raise ScheduleError("No matching schedule block for current time (base clock may be invalid)")
@@ -278,18 +367,47 @@ def load_schedule(path: Path) -> StationSchedule:
         description = str(cfg.get("description", "")).strip()
         if not name or not description:
             raise ScheduleError(f"Show {show_id}: missing name/description")
+        show_type = str(cfg.get("show_type", "research")).strip() or "research"
+        if show_type not in _valid_show_types():
+            raise ScheduleError(f"Show {show_id}: unknown show_type {show_type!r}")
 
         # Talk-show fields
         host = str(cfg.get("host", "liminal_operator")).strip()
+        hosts = cfg.get("hosts") if isinstance(cfg.get("hosts"), list) else []
+        guests = cfg.get("guests") if isinstance(cfg.get("guests"), list) else []
+        tts_backend = str(cfg.get("tts_backend", "kokoro")).strip() or "kokoro"
         topic_focus = str(cfg.get("topic_focus", "")).strip()
-        segment_types_raw = cfg.get("segment_types", ["deep_dive"])
-        if not isinstance(segment_types_raw, list):
+        segment_types_raw = cfg.get("segment_types")
+        if segment_types_raw is None or segment_types_raw == []:
+            segment_types = _default_segment_types_for_show_type(show_type)
+        elif not isinstance(segment_types_raw, list):
             raise ScheduleError(f"Show {show_id}: segment_types must be a list")
-        segment_types = [str(s).strip() for s in segment_types_raw]
+        else:
+            segment_types = [str(s).strip() for s in segment_types_raw if str(s).strip()]
         bumper_style = str(cfg.get("bumper_style", "ambient")).strip()
 
         # Voice config
         voices = cfg.get("voices") if isinstance(cfg.get("voices"), dict) else {}
+        source_rules = cfg.get("source_rules") if isinstance(cfg.get("source_rules"), list) else cfg.get("research_sources") if isinstance(cfg.get("research_sources"), list) else []
+        content_lifecycle = cfg.get("content_lifecycle") if isinstance(cfg.get("content_lifecycle"), dict) else {}
+
+        if not hosts:
+            primary = {
+                "id": host,
+                "role": "primary",
+                "tts_backend": tts_backend,
+                "voice_kokoro": voices.get("host", "am_michael"),
+                "voice_minimax": "Deep_Voice_Man",
+            }
+            hosts = [primary]
+            if "guest" in voices:
+                hosts.append({
+                    "id": host,
+                    "role": "guest",
+                    "tts_backend": "kokoro",
+                    "voice_kokoro": voices.get("guest", "af_bella"),
+                    "voice_minimax": "Wise_Woman",
+                })
 
         # Legacy fields (optional)
         segment_after_tracks = int(cfg.get("segment_after_tracks", 1))
@@ -300,11 +418,17 @@ def load_schedule(path: Path) -> StationSchedule:
             show_id=show_id,
             name=name,
             description=description,
+            show_type=show_type,
             host=host,
+            hosts=[dict(item) for item in hosts if isinstance(item, dict)],
+            guests=[dict(item) for item in guests if isinstance(item, dict)],
+            tts_backend=tts_backend,
             topic_focus=topic_focus,
             segment_types=segment_types,
             bumper_style=bumper_style,
             voices={str(k): str(v) for k, v in voices.items()},
+            source_rules=[dict(item) for item in source_rules if isinstance(item, dict)],
+            content_lifecycle=dict(content_lifecycle) if content_lifecycle else {},
             segment_after_tracks=segment_after_tracks,
             podcasts_enabled=podcasts_enabled,
             music=dict(music) if music else {},
@@ -326,6 +450,9 @@ def load_schedule(path: Path) -> StationSchedule:
     sched = payload.get("schedule")
     if not isinstance(sched, dict):
         raise ScheduleError("Missing or invalid `schedule` section")
+    timezone_name = str(payload.get("timezone", "local")).strip() or "local"
+    station_name = str(payload.get("station_name", "WRIT-FM")).strip() or "WRIT-FM"
+    _station_tz(timezone_name)
 
     base_raw = sched.get("base")
     if not isinstance(base_raw, list) or not base_raw:
@@ -355,6 +482,8 @@ def load_schedule(path: Path) -> StationSchedule:
         shows=shows,
         base=base_blocks,
         overrides=override_blocks,
+        timezone_name=timezone_name,
+        station_name=station_name,
         podcast_hours=podcast_hours,
     )
     schedule.validate()
@@ -391,10 +520,13 @@ def _cli() -> int:
             print(f"  {sid:25s} host={show.host:20s} {show.name}")
         return 0
 
-    when = datetime.now()
+    tz = _station_tz(schedule.timezone_name)
+    when = datetime.now(tz) if tz else datetime.now()
     if args.cmd == "now" and args.at:
         try:
             when = datetime.strptime(args.at, "%Y-%m-%d %H:%M")
+            if tz:
+                when = when.replace(tzinfo=tz)
         except Exception as exc:
             raise ScheduleError(f"Invalid --at format: {exc}") from exc
 

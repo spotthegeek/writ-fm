@@ -10,6 +10,11 @@ import sqlite3
 import json
 from pathlib import Path
 from datetime import datetime, timedelta
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / "mac"))
+from time_utils import station_now, station_iso_now
 from typing import Optional
 
 # Default database location
@@ -60,16 +65,16 @@ class PlayHistory:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """
-                INSERT INTO plays (filepath, track_name, artist, vibe, time_period, listeners)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO plays (filepath, track_name, artist, vibe, time_period, listeners, played_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (filepath, track_name, artist, vibe, time_period, listeners),
+                (filepath, track_name, artist, vibe, time_period, listeners, station_iso_now()),
             )
             conn.commit()
 
     def was_played_recently(self, filepath: str, hours: int = 24) -> bool:
         """Check if track was played within the last N hours."""
-        cutoff = datetime.now() - timedelta(hours=hours)
+        cutoff = station_now() - timedelta(hours=hours)
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 """

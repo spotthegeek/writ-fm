@@ -53,6 +53,7 @@ def render_speech(
     output_path: Path,
     voice: str = DEFAULT_VOICE,
     speed: float = 1.0,
+    allow_downloads: bool = False,
 ) -> bool:
     """
     Render text to speech using Kokoro TTS.
@@ -75,10 +76,17 @@ def render_speech(
     escaped_text = text.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
 
     # Build the TTS script
-    tts_script = f'''
+    offline_setup = ''
+    if not allow_downloads:
+        offline_setup = '''
 import os
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
+'''
+
+    tts_script = f'''
+import os
+{offline_setup}
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -112,7 +120,12 @@ print("SUCCESS")
 '''
 
     try:
-        env = {**os.environ, "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"}
+        env = dict(os.environ)
+        if not allow_downloads:
+            env.update({"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"})
+        else:
+            env.pop("HF_HUB_OFFLINE", None)
+            env.pop("TRANSFORMERS_OFFLINE", None)
         result = subprocess.run(
             [str(VENV_PYTHON), "-c", tts_script],
             capture_output=True,

@@ -77,11 +77,15 @@ uv pip install chatterbox-tts torch torchaudio
 # Copy example configs
 cp config/icecast.xml.example config/icecast.xml
 cp mac/config.yaml.example mac/config.yaml
+cp .env.example .env
 
 # Edit mac/config.yaml:
 # - Add your music directories
 # - Set Icecast password (must match icecast.xml)
 ```
+
+When running the station under systemd, the services load `/root/writ-fm/.env`.
+That file is gitignored so you can keep API keys and other local station settings in one place.
 
 ### 4. Add music
 
@@ -149,15 +153,43 @@ The DJ generates various segment types:
 
 ### Change the personality
 
-Edit `mac/content_generator/persona.py` to define your station's identity, DJ name, and speaking style.
+Edit `config/hosts.yaml` to manage the station's host roster, default voices, and prompt-facing character traits.
+
+`mac/content_generator/persona.py` still contains the built-in fallbacks and station lore, but day-to-day host management now lives in config.
 
 ### Modify the schedule
 
 Edit `config/schedule.yaml` to:
 - Add/remove shows
 - Change time slots
-- Adjust music selection parameters (energy, warmth, genres)
-- Assign different TTS voices to different shows
+- Assign hosts to shows from the roster
+- Set the show type, which controls whether the show is research-led, source-led, music-first, or listener-driven
+- Choose which managed segment types a show can generate
+- Add typed source rules for content-led shows, including lookback windows and source selection strategy
+- Set per-show auto-generation thresholds and cadence directly in the show editor
+- Tune per-show content lifecycle and auto-generation behavior
+
+The station name and timezone are both stored in `config/schedule.yaml`, and can now be edited from the admin UI under Station Settings.
+
+The admin UI also includes a `Taxonomy` tab for editing topic-focus and bumper-style pools.
+
+The Scheduler page now includes a per-show `Generate Now` action that triggers the same enabled talk/music auto-generation paths for that show.
+
+Manual generation now includes an `Include topic` toggle. When disabled, the generator skips topic selection and relies purely on the segment type prompt template (useful for station IDs and intros/outros).
+
+All timestamps in the admin UI, scheduler logs, and generated metadata follow the station timezone from `config/schedule.yaml`.
+
+### Manage segment types
+
+Edit `config/segment_types.yaml` or use the admin UI Segment Types tab to:
+- Create custom segment types
+- Set word-count ranges
+- Edit prompt templates
+- Mark a segment as single-voice or multi-voice
+
+The default registry now includes two Reddit-specific segment types:
+- `reddit_storytelling` for story-based subreddits like `/r/nosleep` and `/r/writingprompts`
+- `reddit_post` for summary/discussion segments that fold in comments and linked material
 
 ### Use different TTS voices
 
@@ -165,7 +197,32 @@ Kokoro includes 28 voices (see `mac/kokoro/tts.py`):
 - American: `am_michael`, `af_heart`, `am_fenrir`...
 - British: `bf_emma`, `bm_daniel`...
 
-Assign voices per-show in `config/schedule.yaml`.
+Assign default voices per host in `config/hosts.yaml`, then attach those hosts to shows in `config/schedule.yaml`.
+
+The admin UI now keeps cached voice samples on disk and exposes them in two places:
+- The Generate form has play/stop sample buttons next to voice selectors
+- The Hosts tab is split into `Hosts & Speakers` and `Voices`, so you can audition any selectable voice in one place
+
+Voice samples are stored under `output/voice_samples/` and are generated once per voice. Kokoro and MiniMax both use the cached samples directly for playback.
+
+### Generate from source material
+
+The admin UI manual Generate tab now supports source-aware talk generation:
+- `Web URL` pulls article text into the prompt as background material
+- `Reddit` ignores `Topic`
+- `YouTube` ingests the video's audio directly into the library and stores metadata/captions alongside it
+- Story-heavy subreddits such as `/r/nosleep`, `/r/prorevenge`, and `/r/writingprompt(s)` are automatically treated as `reddit_storytelling`
+- Other Reddit threads use `reddit_post` and can incorporate selected comments and linked article content
+- MiniMax long-form finalization is opt-in and asks for confirmation before spending the extra credits
+
+### Library management
+
+The Library view now supports:
+- Copying or moving segments and bumpers between shows
+- Resetting play counts for existing items
+- Seeing the current expiry window for each item based on the owning show's lifecycle rules
+- A compact per-item Actions menu so the list stays readable
+- Filtering the library between all, talk, and music items, plus deleting only the currently visible items for a show
 
 ## Automated Operation
 
@@ -201,14 +258,16 @@ The operator loop checks stream health, decides which shows need content, genera
 │   ├── chatterbox/            # Chatterbox TTS wrapper
 │   ├── kokoro/                # Kokoro TTS wrapper
 │   ├── content_generator/
-│   │   ├── talk_generator.py            # Talk segment generator (Claude + Kokoro)
+│   │   ├── talk_generator.py            # Talk segment generator (managed segment types + multi-voice)
 │   │   ├── music_bumper_generator.py    # AI music bumper generator (ACE-Step)
 │   │   ├── listener_response_generator.py # Listener message → audio
 │   │   ├── persona.py                   # Station identity
 │   │   └── helpers.py                   # Shared utilities
 │   └── voice_reference/       # Voice samples for cloning
 ├── config/
+│   ├── hosts.yaml             # Global hosts / speakers roster
 │   ├── schedule.yaml          # Weekly show schedule
+│   ├── segment_types.yaml     # Managed segment definitions
 │   └── icecast.xml.example    # Icecast template
 ├── output/
 │   ├── segments/              # Generated DJ audio (by period)

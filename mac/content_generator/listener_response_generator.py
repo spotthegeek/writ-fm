@@ -43,6 +43,7 @@ MESSAGES_FILE = Path.home() / ".writ" / "messages.json"
 
 sys.path.insert(0, str(PROJECT_ROOT / "mac"))
 from schedule import load_schedule
+from time_utils import station_now, station_iso_now
 
 # Short segments for quick turnaround
 WORD_TARGET_SINGLE = (100, 200)   # One message: short personal reply
@@ -89,7 +90,7 @@ def mark_messages_read(timestamps: list[str]) -> None:
     """Mark specific messages as read by timestamp."""
     messages = load_messages()
     ts_set = set(timestamps)
-    now = datetime.now().isoformat()
+    now = station_iso_now()
     for m in messages:
         if m.get("timestamp") in ts_set:
             m["read"] = True
@@ -114,7 +115,7 @@ def format_messages_for_prompt(messages: list[dict]) -> str:
         if ts:
             try:
                 msg_time = datetime.fromisoformat(ts)
-                delta = datetime.now() - msg_time
+                delta = station_now() - msg_time
                 if delta.days > 0:
                     time_note = f" (sent {delta.days} day{'s' if delta.days > 1 else ''} ago)"
                 elif delta.seconds > 3600:
@@ -256,7 +257,7 @@ def process_messages(max_batch: int = MAX_BATCH) -> int:
         # Output path
         show_dir = OUTPUT_DIR / show_id
         show_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = station_now().strftime("%Y%m%d_%H%M%S")
         output_path = show_dir / f"listener_response_{timestamp}.wav"
 
         log("  Rendering audio...")
@@ -278,7 +279,7 @@ def process_messages(max_batch: int = MAX_BATCH) -> int:
                 "word_count": word_count,
                 "duration_seconds": duration,
                 "voice": voice,
-                "generated_at": datetime.now().isoformat(),
+                "generated_at": station_iso_now(),
             }, indent=2))
         else:
             log("  TTS rendering failed")

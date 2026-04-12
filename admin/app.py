@@ -13,14 +13,16 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 from fastapi import FastAPI, HTTPException, BackgroundTasks
@@ -34,8 +36,13 @@ import scheduler as _sched
 # Paths
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 CONFIG_DIR = PROJECT_ROOT / "config"
 SCHEDULE_PATH = CONFIG_DIR / "schedule.yaml"
+HOSTS_PATH = CONFIG_DIR / "hosts.yaml"
+SEGMENT_TYPES_PATH = CONFIG_DIR / "segment_types.yaml"
+SHOW_TAXONOMY_PATH = CONFIG_DIR / "show_taxonomy.yaml"
 TALK_SEGMENTS_DIR = PROJECT_ROOT / "output" / "talk_segments"
 BUMPERS_DIR = PROJECT_ROOT / "output" / "music_bumpers"
 SCRIPTS_DIR = PROJECT_ROOT / "output" / "scripts"
@@ -44,6 +51,16 @@ STREAMER_API = os.environ.get("WRIT_STREAMER_API", "http://localhost:8001")
 
 AUDIO_EXTS = {".wav", ".mp3", ".flac"}
 JOBS_DIR = PROJECT_ROOT / "output" / "jobs"
+
+from mac.voice_samples import (
+    KOKORO_VOICES,
+    MINIMAX_VOICES,
+    ensure_voice_sample,
+    ensure_voice_samples,
+    sample_media_type,
+    sample_path,
+    voice_catalog,
+)
 
 # ---------------------------------------------------------------------------
 # Persistent job store
@@ -79,7 +96,7 @@ _jobs: dict[str, dict] = _load_jobs()
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
-app = FastAPI(title="WRIT-FM Admin", version="1.0")
+app = FastAPI(title="Station Admin", version="1.0")
 
 @app.on_event("startup")
 def _start_scheduler():
@@ -106,7 +123,118 @@ def save_schedule(data: dict):
         yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
 
-def get_hosts_from_persona() -> dict:
+def _validate_timezone_name(timezone_name: str) -> str:
+    tz = (timezone_name or "local").strip() or "local"
+    if tz not in {"local", "system"}:
+        try:
+            ZoneInfo(tz)
+        except ZoneInfoNotFoundError as exc:
+            raise HTTPException(400, f"Unknown timezone: {tz!r}") from exc
+    return tz
+
+
+def _station_tz():
+    try:
+        schedule = load_schedule()
+        tz_name = _validate_timezone_name(schedule.get("timezone", "local"))
+        if tz_name in {"local", "system"}:
+            return None
+        return ZoneInfo(tz_name)
+    except Exception:
+        return None
+
+
+def _station_now() -> datetime:
+    tz = _station_tz()
+    return datetime.now(tz) if tz else datetime.now()
+
+
+def _station_iso_now() -> str:
+    return _station_now().isoformat()
+
+
+def _station_from_timestamp(ts: float) -> datetime:
+    tz = _station_tz()
+    return datetime.fromtimestamp(ts, tz) if tz else datetime.fromtimestamp(ts)
+
+
+def load_hosts_config() -> dict:
+    """Load host definitions from config/hosts.yaml."""
+    if not HOSTS_PATH.exists():
+        return {"hosts": {}}
+    with open(HOSTS_PATH) as f:
+        return yaml.safe_load(f) or {"hosts": {}}
+
+
+def save_hosts_config(data: dict):
+    with open(HOSTS_PATH, "w") as f:
+        yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+def load_segment_types_config() -> dict:
+    """Load managed segment type definitions from config/segment_types.yaml."""
+    if not SEGMENT_TYPES_PATH.exists():
+        return {"segment_types": {}}
+    with open(SEGMENT_TYPES_PATH) as f:
+        return yaml.safe_load(f) or {"segment_types": {}}
+
+
+def save_segment_types_config(data: dict):
+    with open(SEGMENT_TYPES_PATH, "w") as f:
+        yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+def load_show_taxonomy() -> dict:
+    if not SHOW_TAXONOMY_PATH.exists():
+        return {
+            "show_types": {},
+            "topic_focuses": [],
+            "bumper_styles": [],
+            "source_types": [],
+        }
+    with open(SHOW_TAXONOMY_PATH) as f:
+        return yaml.safe_load(f) or {
+            "show_types": {},
+            "topic_focuses": [],
+            "bumper_styles": [],
+            "source_types": [],
+        }
+
+
+def save_show_taxonomy(data: dict):
+    with open(SHOW_TAXONOMY_PATH, "w") as f:
+        yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+def _normalise_taxonomy_items(values: list[str] | None) -> list[str]:
+    seen = set()
+    out = []
+    for value in values or []:
+        item = str(value).strip()
+        if item and item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
+def _hosts_yaml_to_api(hid: str, h: dict) -> dict:
+    """Normalise a raw hosts.yaml entry into the API response shape."""
+    return {
+        "id": hid,
+        "name": h.get("name", hid),
+        "bio": h.get("identity", ""),
+        "voice_style": h.get("voice_style", ""),
+        "philosophy": h.get("philosophy", ""),
+        "anti_patterns": h.get("anti_patterns", ""),
+        "tts_voice": h.get("tts_voice", "am_michael"),
+        "voice_minimax": h.get("voice_minimax", "Deep_Voice_Man"),
+        "tts_backend": h.get("tts_backend", "kokoro"),
+        "topics": h.get("topics", []),
+        "speaking_pace_wpm": h.get("speaking_pace_wpm", 130),
+    }
+
+
+def get_hosts_from_persona() -> dict[str, dict]:
     """Read host definitions from persona.py."""
     try:
         sys.path.insert(0, str(PROJECT_ROOT / "mac" / "content_generator"))
@@ -120,11 +248,407 @@ def get_hosts_from_persona() -> dict:
                 "tts_voice": h.get("tts_voice", "am_michael"),
                 "topics": h.get("topics", []),
                 "speaking_pace_wpm": h.get("speaking_pace_wpm", 130),
-            }
+        }
             for hid, h in persona.HOSTS.items()
         }
     except Exception as e:
         return {}
+
+
+def get_all_hosts() -> dict[str, dict]:
+    """Return the merged host roster with YAML overrides taking precedence."""
+    hosts = get_hosts_from_persona()
+    yaml_hosts = load_hosts_config().get("hosts", {})
+    for hid, host in yaml_hosts.items():
+        hosts[hid] = _hosts_yaml_to_api(hid, host)
+    return hosts
+
+
+def _default_host_assignment(host_id: str, role: str = "primary") -> dict:
+    roster = get_all_hosts()
+    host = roster.get(host_id, {})
+    return {
+        "id": host_id,
+        "role": role,
+        "tts_backend": host.get("tts_backend", "kokoro"),
+        "voice_kokoro": host.get("tts_voice", "am_michael"),
+        "voice_minimax": host.get("voice_minimax", "Deep_Voice_Man"),
+    }
+
+
+DEFAULT_SEGMENT_TYPES = {
+    "show_intro": {
+        "name": "Show Intro",
+        "description": "Short opening that sets the mood and welcomes listeners.",
+        "word_count_min": 80,
+        "word_count_max": 150,
+        "multi_voice": False,
+        "prompt_template": (
+            "Write an 80-150 word opening for the show.\n"
+            "Welcome listeners. Set the mood. Hint at what's ahead without being specific.\n"
+            "Ground the listener in time and space - what hour is it, what kind of night.\n"
+            "Output ONLY the spoken text."
+        ),
+    },
+    "show_outro": {
+        "name": "Show Outro",
+        "description": "Short closing that leaves the listener with a final thought.",
+        "word_count_min": 60,
+        "word_count_max": 120,
+        "multi_voice": False,
+        "prompt_template": (
+            "Write a 60-120 word show closing.\n"
+            "Thank the listener for staying. Acknowledge the time spent together.\n"
+            "Hint at what's next on the station. Leave them with something to carry.\n"
+            "Output ONLY the spoken text."
+        ),
+    },
+    "station_id": {
+        "name": "Station ID",
+        "description": "Very short station identification between longer segments.",
+        "word_count_min": 15,
+        "word_count_max": 30,
+        "multi_voice": False,
+        "prompt_template": (
+            "Write a short, direct station ID for {show_name} on {station_name}.\n"
+            "Use one sentence. Be plain and on-air, not poetic.\n"
+            "Mention the show name and station name if it fits naturally.\n"
+            "Do not invent imagery or a backstory.\n"
+            "Output ONLY the spoken text. No quotes, headers, or explanations."
+        ),
+    },
+    "deep_dive": {
+        "name": "Deep Dive",
+        "description": "Long-form reflective exploration of a single topic.",
+        "word_count_min": 1500,
+        "word_count_max": 2500,
+        "multi_voice": False,
+        "prompt_template": (
+            "Write an extended exploration of this topic. Go deep.\n"
+            "Build your central idea through stories, examples, tangents.\n"
+            "Let one thought lead naturally to another. Circle back to earlier threads.\n"
+            "Include specific details: years, names, places when relevant.\n"
+            "Structure: open with a hook, develop through 3-4 connected ideas, land somewhere unexpected.\n"
+            "Use [pause] for natural rhythm. Output ONLY the spoken words."
+        ),
+    },
+    "news_analysis": {
+        "name": "News Analysis",
+        "description": "Late-night analysis built from current headlines.",
+        "word_count_min": 1500,
+        "word_count_max": 2000,
+        "multi_voice": False,
+        "prompt_template": (
+            "Analyze these headlines through a late-night lens.\n"
+            "Don't just report - interpret. What patterns do you see? What's being missed?\n"
+            "Connect current events to deeper themes. Ask the questions daytime anchors don't.\n"
+            "Be thoughtful, not reactive. Skeptical but not cynical.\n\n"
+            "HEADLINES:\n"
+            "{headlines}\n\n"
+            "Use [pause] for natural rhythm. Output ONLY the spoken words."
+        ),
+    },
+    "interview": {
+        "name": "Interview",
+        "description": "Primary host interviews a guest or recurring character.",
+        "word_count_min": 2000,
+        "word_count_max": 3000,
+        "multi_voice": True,
+        "prompt_template": (
+            "Write a simulated interview where {primary_host_name} talks with {guest_name}.\n"
+            "Format with HOST: and GUEST: markers on separate lines.\n"
+            "The guest is a fictional/composite character, not a real living person being impersonated.\n"
+            "The conversation should feel natural - interruptions, tangents, moments of surprise.\n"
+            "Build to genuine insight or revelation.\n"
+            "Use [pause] for natural rhythm. Output ONLY the spoken dialogue."
+        ),
+    },
+    "panel": {
+        "name": "Panel",
+        "description": "Two voices explore a topic from different angles.",
+        "word_count_min": 2000,
+        "word_count_max": 3000,
+        "multi_voice": True,
+        "prompt_template": (
+            "Write a discussion between {primary_host_name} and {secondary_host_name} on this topic.\n"
+            "Format with HOST_A: and HOST_B: markers on separate lines.\n"
+            "They have different perspectives but mutual respect.\n"
+            "The conversation should build - start with disagreement, find nuance, reach unexpected common ground.\n"
+            "Include moments of genuine surprise and humor.\n"
+            "Use [pause] for natural rhythm. Output ONLY the spoken dialogue."
+        ),
+    },
+    "story": {
+        "name": "Story",
+        "description": "Narrative storytelling segment.",
+        "word_count_min": 1500,
+        "word_count_max": 2500,
+        "multi_voice": False,
+        "prompt_template": (
+            "Tell a story. It can be true, apocryphal, or mythological - but tell it like it happened.\n"
+            "Good stories have specific details: the color of the room, the year, the weather.\n"
+            "Build tension. Let the listener wonder where this is going.\n"
+            "The ending should reframe everything that came before.\n"
+            "Use [pause] for dramatic effect. Output ONLY the spoken words."
+        ),
+    },
+    "reddit_storytelling": {
+        "name": "Reddit Storytelling",
+        "description": "Read a Reddit post as a story, with light performance cues.",
+        "word_count_min": 1200,
+        "word_count_max": 2200,
+        "multi_voice": False,
+        "prompt_template": (
+            "Read the Reddit post as a story, not a summary.\n"
+            "Stay close to the original wording and arc. Do not add commentary or analysis.\n"
+            "Use light performance cues sparingly where they fit the story: [pause], [sigh], [laugh], [chuckle].\n"
+            "If the post is already a story, preserve its pacing and tone.\n"
+            "Do not discuss comments, external links, or your own reaction.\n"
+            "Output ONLY the spoken words."
+        ),
+    },
+    "reddit_post": {
+        "name": "Reddit Post",
+        "description": "Radio retelling and discussion of a Reddit thread, including comments.",
+        "word_count_min": 1400,
+        "word_count_max": 2200,
+        "multi_voice": False,
+        "prompt_template": (
+            "Turn this Reddit thread into a compelling on-air segment.\n"
+            "Open by grounding the listener in the subreddit and what kind of post this is.\n"
+            "Retell the original post clearly and vividly in radio-friendly language.\n"
+            "Bring in a handful of revealing, funny, skeptical, or emotionally resonant comments.\n"
+            "If the post links to outside material, weave in the useful parts without sounding like you're reading a webpage.\n"
+            "Distinguish between the original post, the community reaction, and the host's own interpretation.\n"
+            "Output ONLY the spoken words."
+        ),
+    },
+    "youtube": {
+        "name": "YouTube",
+        "description": "Radio segment built from a YouTube video's audio, captions, and metadata.",
+        "word_count_min": 1400,
+        "word_count_max": 2400,
+        "multi_voice": False,
+        "prompt_template": (
+            "Turn this YouTube video into a compelling on-air segment.\n"
+            "Ground the listener in the channel, the title, and what kind of video this is.\n"
+            "Use the transcript, audio-derived notes, and metadata as your primary source material.\n"
+            "Summarize the key beats, arguments, or story clearly and vividly.\n"
+            "If there is no usable transcript, work from the title, description, chapters, and metadata.\n"
+            "Keep the narration radio-friendly. Output ONLY the spoken words."
+        ),
+    },
+    "listener_mailbag": {
+        "name": "Listener Mailbag",
+        "description": "Invented listener letters and thoughtful responses.",
+        "word_count_min": 1500,
+        "word_count_max": 2000,
+        "multi_voice": False,
+        "prompt_template": (
+            "Write a segment responding to invented listener messages.\n"
+            "Create 2-3 messages from listeners (with first names and cities).\n"
+            "Each message should touch on something real - a memory, a question, a feeling.\n"
+            "Respond to each with genuine warmth and thoughtfulness.\n"
+            "Format: read the message, then respond. Natural transitions between letters.\n"
+            "Use [pause] for natural rhythm. Output ONLY the spoken words."
+        ),
+    },
+    "music_essay": {
+        "name": "Music Essay",
+        "description": "Long-form essay about a song, artist, scene, or musical idea.",
+        "word_count_min": 1500,
+        "word_count_max": 2500,
+        "multi_voice": False,
+        "prompt_template": (
+            "Write an extended essay about music.\n"
+            "This is not a review. It's a love letter, an excavation, a meditation.\n"
+            "Pick a specific angle: a single song, a studio, a year, a collaboration, a genre's birth.\n"
+            "Use vivid, sensory language. Make the listener hear what you're describing.\n"
+            "Be specific with details but universal with feeling.\n"
+            "Use [pause] for natural rhythm. Output ONLY the spoken words."
+        ),
+    },
+}
+
+
+def get_segment_type_definitions() -> dict[str, dict]:
+    data = load_segment_types_config().get("segment_types", {})
+    merged = {key: dict(value) for key, value in DEFAULT_SEGMENT_TYPES.items()}
+    for sid, config in data.items():
+        if sid in merged:
+            merged[sid] = {**merged[sid], **(config or {})}
+        else:
+            merged[sid] = config or {}
+    return merged
+
+
+def _segment_type_to_api(segment_type_id: str, config: dict) -> dict:
+    return {
+        "id": segment_type_id,
+        "name": config.get("name", segment_type_id.replace("_", " ").title()),
+        "description": config.get("description", ""),
+        "word_count_min": config.get("word_count_min", 1500),
+        "word_count_max": config.get("word_count_max", 2500),
+        "multi_voice": bool(config.get("multi_voice", False)),
+        "prompt_template": config.get("prompt_template", ""),
+    }
+
+
+def _show_type_to_api(show_type_id: str, config: dict) -> dict:
+    return {
+        "id": show_type_id,
+        "name": config.get("name", show_type_id.replace("_", " ").title()),
+        "description": config.get("description", ""),
+        "uses_topic_focus": bool(config.get("uses_topic_focus", False)),
+        "uses_source_rules": bool(config.get("uses_source_rules", False)),
+        "uses_bumper_style": bool(config.get("uses_bumper_style", True)),
+        "default_segment_types": list(config.get("default_segment_types", [])),
+    }
+
+
+def get_show_type_definitions() -> dict[str, dict]:
+    taxonomy = load_show_taxonomy().get("show_types", {})
+    defaults = {
+        "research": {
+            "name": "Research Based",
+            "description": "Curated editorial shows driven by topic focus and prompt research.",
+            "uses_topic_focus": True,
+            "uses_source_rules": True,
+            "uses_bumper_style": True,
+            "default_segment_types": ["deep_dive", "interview", "story"],
+        },
+        "hybrid": {
+            "name": "Hybrid",
+            "description": "Research-led shows that can also ingest external source rules.",
+            "uses_topic_focus": True,
+            "uses_source_rules": True,
+            "uses_bumper_style": True,
+            "default_segment_types": ["deep_dive", "interview", "panel", "reddit_post", "youtube"],
+        },
+        "content_ingest": {
+            "name": "Content Ingest",
+            "description": "Feed-driven shows built from Reddit, YouTube, and web sources.",
+            "uses_topic_focus": False,
+            "uses_source_rules": True,
+            "uses_bumper_style": True,
+            "default_segment_types": ["reddit_post", "reddit_storytelling", "youtube"],
+        },
+        "music_first": {
+            "name": "Music First",
+            "description": "Mostly music bumpers and IDs, with short editorial inserts.",
+            "uses_topic_focus": False,
+            "uses_source_rules": False,
+            "uses_bumper_style": True,
+            "default_segment_types": ["station_id", "show_intro", "show_outro"],
+        },
+        "live_community": {
+            "name": "Live / Community",
+            "description": "Listener-facing and conversational shows with lighter automation.",
+            "uses_topic_focus": False,
+            "uses_source_rules": True,
+            "uses_bumper_style": True,
+            "default_segment_types": ["listener_mailbag", "panel", "interview"],
+        },
+        "news_current_events": {
+            "name": "News / Current Events",
+            "description": "Source-driven current events shows built from the latest feeds and posts.",
+            "uses_topic_focus": False,
+            "uses_source_rules": True,
+            "uses_bumper_style": True,
+            "default_segment_types": ["news_analysis", "deep_dive", "panel"],
+        },
+        "listener_driven": {
+            "name": "Listener Driven",
+            "description": "Shows built from listener prompts, calls, mailbag letters, and feedback.",
+            "uses_topic_focus": False,
+            "uses_source_rules": True,
+            "uses_bumper_style": True,
+            "default_segment_types": ["listener_mailbag", "listener_response", "interview"],
+        },
+    }
+    merged = dict(defaults)
+    for sid, cfg in taxonomy.items():
+        merged[sid] = {**merged.get(sid, {}), **(cfg or {})}
+    return merged
+
+
+def _default_segment_types_for_show_type(show_type: str) -> list[str]:
+    cfg = get_show_type_definitions().get(show_type, {})
+    defaults = cfg.get("default_segment_types")
+    if isinstance(defaults, list) and defaults:
+        return [str(s).strip() for s in defaults if str(s).strip()]
+    return ["deep_dive"]
+
+
+def _normalize_source_rule(rule: dict | None) -> dict:
+    rule = rule or {}
+    rule_type = str(rule.get("type") or rule.get("source_type") or "url").strip().lower() or "url"
+    value = str(
+        rule.get("value")
+        or rule.get("url")
+        or rule.get("source_value")
+        or rule.get("description")
+        or ""
+    ).strip()
+    lookback = rule.get("lookback_days", 7)
+    try:
+        lookback = max(1, int(lookback))
+    except Exception:
+        lookback = 7
+    strategy = str(rule.get("selection_strategy") or rule.get("strategy") or "latest").strip().lower() or "latest"
+    segment_type = str(rule.get("segment_type") or "").strip()
+    return {
+        "type": rule_type,
+        "value": value,
+        "lookback_days": lookback,
+        "selection_strategy": strategy,
+        "segment_type": segment_type,
+    }
+
+
+def _normalize_source_rules(rules: list[dict] | None) -> list[dict]:
+    out = []
+    for rule in rules or []:
+        if isinstance(rule, dict):
+            normalized = _normalize_source_rule(rule)
+            if normalized["value"]:
+                out.append(normalized)
+    return out
+
+
+def get_taxonomy_api() -> dict[str, Any]:
+    taxonomy = load_show_taxonomy()
+    show_types = get_show_type_definitions()
+    return {
+        "show_types": {
+            sid: _show_type_to_api(sid, cfg)
+            for sid, cfg in show_types.items()
+        },
+        "topic_focuses": list(taxonomy.get("topic_focuses", [])),
+        "bumper_styles": list(taxonomy.get("bumper_styles", [])),
+        "source_types": list(taxonomy.get("source_types", [])),
+    }
+
+
+class ShowTaxonomyUpdate(BaseModel):
+    topic_focuses: list[str] = []
+    bumper_styles: list[str] = []
+
+
+@app.put("/api/show-taxonomy")
+def update_show_taxonomy(update: ShowTaxonomyUpdate):
+    data = load_show_taxonomy()
+    data["topic_focuses"] = _normalise_taxonomy_items(update.topic_focuses)
+    data["bumper_styles"] = _normalise_taxonomy_items(update.bumper_styles)
+    save_show_taxonomy(data)
+    return get_taxonomy_api()
+
+
+def get_segment_types_api() -> dict[str, dict]:
+    return {
+        sid: _segment_type_to_api(sid, config)
+        for sid, config in get_segment_type_definitions().items()
+    }
 
 
 def segment_inventory() -> dict[str, list[dict]]:
@@ -140,15 +664,28 @@ def segment_inventory() -> dict[str, list[dict]]:
             if f.is_file() and f.suffix.lower() in AUDIO_EXTS:
                 plays_meta = _read_plays_meta(f)
                 gen_meta = _read_gen_meta(f)
+                duration_seconds = _audio_duration_seconds(f, gen_meta)
+                created_at = _station_datetime_from_iso(gen_meta.get("created_at") or gen_meta.get("generated_at"))
+                if created_at is None:
+                    try:
+                        created_at = _station_from_timestamp(f.stat().st_mtime)
+                    except Exception:
+                        created_at = _station_now()
+                expiry = _expiry_info(f, show_dir.name, "talk", plays_meta)
                 files.append({
                     "name": f.name,
                     "show_id": show_dir.name,
                     "size_kb": round(f.stat().st_size / 1024),
-                    "modified": datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
+                    "duration_seconds": duration_seconds,
+                    "duration_label": _format_duration(duration_seconds),
+                    "created_at": created_at.isoformat(),
+                    "created_label": created_at.strftime("%Y-%m-%d %H:%M"),
+                    "modified": _station_from_timestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
                     "path": str(f.relative_to(PROJECT_ROOT)),
                     "play_count": plays_meta.get("play_count", 0),
                     "first_played": plays_meta.get("first_played_at", "")[:16],
                     "last_played": plays_meta.get("last_played_at", "")[:16],
+                    **expiry,
                     "prompt": gen_meta.get("topic", ""),
                     "segment_type": gen_meta.get("type", ""),
                     "word_count": gen_meta.get("word_count", 0),
@@ -197,6 +734,112 @@ def _read_gen_meta(f: Path) -> dict:
     return {}
 
 
+def _format_duration(seconds: float | int | None) -> str:
+    if seconds is None:
+        return ""
+    total = max(0, int(round(float(seconds))))
+    minutes, seconds = divmod(total, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
+
+
+def _audio_duration_seconds(f: Path, gen_meta: dict | None = None) -> float | None:
+    meta = gen_meta or {}
+    duration = meta.get("duration_seconds")
+    if duration not in (None, ""):
+        try:
+            return float(duration)
+        except Exception:
+            pass
+
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "quiet",
+                "-show_entries", "format=duration",
+                "-of", "csv=p=0",
+                str(f),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return float(result.stdout.strip())
+    except Exception:
+        pass
+    return None
+
+
+def _station_datetime_from_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None
+
+
+def _show_lifecycle(show_id: str, content_type: str) -> dict[str, Any]:
+    data = load_schedule()
+    show = data.get("shows", {}).get(show_id, {})
+    lifecycle = show.get("content_lifecycle", {}) if isinstance(show.get("content_lifecycle", {}), dict) else {}
+    current = lifecycle.get(content_type, {}) if isinstance(lifecycle.get(content_type, {}), dict) else {}
+    return {
+        "max_plays": current.get("max_plays"),
+        "max_days": current.get("max_days"),
+    }
+
+
+def _expiry_info(audio_path: Path, show_id: str, content_type: str, plays_meta: dict | None = None) -> dict[str, Any]:
+    lifecycle = _show_lifecycle(show_id, content_type)
+    max_plays = lifecycle.get("max_plays")
+    max_days = lifecycle.get("max_days")
+    meta = plays_meta or _read_plays_meta(audio_path)
+    play_count = int(meta.get("play_count", 0) or 0)
+    created_at = _station_datetime_from_iso(meta.get("created_at") or meta.get("generated_at"))
+    if created_at is None:
+        try:
+            created_at = _station_from_timestamp(audio_path.stat().st_mtime)
+        except Exception:
+            created_at = _station_now()
+
+    expiry_at = None
+    if max_days is not None:
+        try:
+            expiry_at = created_at + timedelta(days=int(max_days))
+        except Exception:
+            expiry_at = None
+
+    remaining_plays = None
+    if max_plays is not None:
+        try:
+            remaining_plays = max(0, int(max_plays) - play_count)
+        except Exception:
+            remaining_plays = None
+
+    parts = []
+    if max_plays is not None:
+        if remaining_plays == 0:
+            parts.append("expires by play count")
+        elif remaining_plays is not None:
+            parts.append(f"{remaining_plays} plays left")
+    if expiry_at is not None:
+        parts.append(f"expires {expiry_at.strftime('%Y-%m-%d %H:%M')}")
+    if not parts:
+        parts.append("never expires")
+
+    return {
+        "expires_label": " · ".join(parts),
+        "expires_at": expiry_at.isoformat() if expiry_at else "",
+        "remaining_plays": remaining_plays if remaining_plays is not None else "",
+        "lifecycle_max_plays": max_plays if max_plays is not None else "",
+        "lifecycle_max_days": max_days if max_days is not None else "",
+    }
+
+
 def bumper_inventory() -> dict[str, list[dict]]:
     inv: dict[str, list[dict]] = {}
     if not BUMPERS_DIR.exists():
@@ -209,14 +852,27 @@ def bumper_inventory() -> dict[str, list[dict]]:
             if f.is_file() and f.suffix.lower() in AUDIO_EXTS:
                 plays_meta = _read_plays_meta(f)
                 gen_meta = _read_gen_meta(f)
+                duration_seconds = _audio_duration_seconds(f, gen_meta)
+                created_at = _station_datetime_from_iso(gen_meta.get("created_at") or gen_meta.get("generated_at"))
+                if created_at is None:
+                    try:
+                        created_at = _station_from_timestamp(f.stat().st_mtime)
+                    except Exception:
+                        created_at = _station_now()
+                expiry = _expiry_info(f, show_dir.name, "music", plays_meta)
                 files.append({
                     "name": f.name,
                     "show_id": show_dir.name,
                     "size_kb": round(f.stat().st_size / 1024),
-                    "modified": datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
+                    "duration_seconds": duration_seconds,
+                    "duration_label": _format_duration(duration_seconds),
+                    "created_at": created_at.isoformat(),
+                    "created_label": created_at.strftime("%Y-%m-%d %H:%M"),
+                    "modified": _station_from_timestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
                     "play_count": plays_meta.get("play_count", 0),
                     "first_played": plays_meta.get("first_played_at", "")[:16],
                     "last_played": plays_meta.get("last_played_at", "")[:16],
+                    **expiry,
                     "prompt": gen_meta.get("caption", gen_meta.get("topic", "")),
                     "display_name": gen_meta.get("display_name", ""),
                     "generated_at": gen_meta.get("generated_at", ""),
@@ -261,7 +917,7 @@ def get_status():
         "total_segments": total_segments,
         "total_bumpers": total_bumpers,
         "segments_per_show": {k: len(v) for k, v in segments.items()},
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": _station_iso_now(),
     }
 
 
@@ -284,42 +940,69 @@ def _normalize_show(show_id: str, show: dict) -> dict:
     """Fill in defaults for optional/new fields."""
     s = dict(show)
     s["id"] = show_id
+    show_types = get_show_type_definitions()
+    s["show_type"] = s.get("show_type") or "research"
+    if s["show_type"] not in show_types:
+        s["show_type"] = "research"
+    all_hosts = get_all_hosts()
     # Normalize hosts to list format
     if "hosts" not in s:
-        s["hosts"] = [{
-            "id": s.get("host", "liminal_operator"),
-            "role": "primary",
-            "voice_kokoro": s.get("voices", {}).get("host", "am_michael"),
-            "voice_minimax": "Deep_Voice_Man",
-            "tts_backend": s.get("tts_backend", "kokoro"),
-        }]
+        primary_id = s.get("host", "liminal_operator")
+        primary = _default_host_assignment(primary_id, "primary")
+        primary["tts_backend"] = s.get("tts_backend", primary["tts_backend"])
+        primary["voice_kokoro"] = s.get("voices", {}).get("host", primary["voice_kokoro"])
+        s["hosts"] = [primary]
         if "voices" in s and "guest" in s["voices"]:
-            s["hosts"].append({
-                "id": "guest",
-                "role": "guest",
-                "voice_kokoro": s["voices"]["guest"],
-                "voice_minimax": "Wise_Woman",
-                "tts_backend": "kokoro",
+            guest = _default_host_assignment(primary_id, "guest")
+            guest["voice_kokoro"] = s["voices"]["guest"]
+            s["hosts"].append(guest)
+    else:
+        normalized_hosts = []
+        for idx, host in enumerate(s.get("hosts", [])):
+            host_id = host.get("id", "liminal_operator")
+            role = host.get("role", "primary" if idx == 0 else "co-host")
+            defaults = _default_host_assignment(host_id, role)
+            normalized_hosts.append({
+                **defaults,
+                **host,
             })
+        s["hosts"] = normalized_hosts
     if "research_topic" not in s:
         s["research_topic"] = ""
     if "research_sources" not in s:
         s["research_sources"] = []
+    if "source_rules" not in s:
+        s["source_rules"] = list(s.get("research_sources", []))
+    s["source_rules"] = _normalize_source_rules(s.get("source_rules", []))
+    s["research_sources"] = _normalize_source_rules(s.get("research_sources", [])) or list(s.get("research_sources", []))
+    if not s.get("segment_types"):
+        s["segment_types"] = _default_segment_types_for_show_type(s["show_type"])
     if "guests" not in s:
         s["guests"] = []
+    if "content_lifecycle" not in s:
+        s["content_lifecycle"] = {}
+    for idx, host in enumerate(s["hosts"]):
+        host_id = host.get("id")
+        roster = all_hosts.get(host_id, {})
+        if not host.get("display_name"):
+            host["display_name"] = roster.get("name", host_id)
     return s
 
 
 class ShowUpdate(BaseModel):
     name: str
     description: str
+    show_type: str = "research"
     hosts: list[dict]
     topic_focus: str
     research_topic: str = ""
     research_sources: list[dict] = []
+    source_rules: list[dict] = []
     guests: list[dict] = []
     segment_types: list[str]
     bumper_style: str
+    content_lifecycle: dict = {}
+    generation: dict = {}
 
 
 @app.put("/api/shows/{show_id}")
@@ -328,17 +1011,36 @@ def update_show(show_id: str, update: ShowUpdate):
     shows = data.get("shows", {})
     if show_id not in shows:
         raise HTTPException(404, f"Show '{show_id}' not found")
+    if not update.hosts:
+        raise HTTPException(400, "Shows must have at least one host")
+    show_types = set(get_show_type_definitions().keys())
+    if update.show_type not in show_types:
+        raise HTTPException(400, f"Unknown show type '{update.show_type}'")
+    roster_ids = set(get_all_hosts().keys())
+    segment_type_ids = set(get_segment_types_api().keys())
+    for host in update.hosts:
+        if host.get("id") not in roster_ids:
+            raise HTTPException(400, f"Unknown host '{host.get('id')}'")
+    segment_types = update.segment_types or _default_segment_types_for_show_type(update.show_type)
+    for segment_type_id in segment_types:
+        if segment_type_id not in segment_type_ids:
+            raise HTTPException(400, f"Unknown segment type '{segment_type_id}'")
+    source_rules = _normalize_source_rules(update.source_rules or update.research_sources)
 
     show = dict(shows[show_id])
     show["name"] = update.name
     show["description"] = update.description
+    show["show_type"] = update.show_type
     show["topic_focus"] = update.topic_focus
     show["research_topic"] = update.research_topic
-    show["research_sources"] = update.research_sources
+    show["research_sources"] = source_rules
+    show["source_rules"] = source_rules
     show["guests"] = update.guests
-    show["segment_types"] = update.segment_types
+    show["segment_types"] = segment_types
     show["bumper_style"] = update.bumper_style
     show["hosts"] = update.hosts
+    show["content_lifecycle"] = update.content_lifecycle
+    show["generation"] = update.generation
 
     # Keep legacy fields for backward compat with streamer
     primary = next((h for h in update.hosts if h.get("role") == "primary"), update.hosts[0] if update.hosts else {})
@@ -362,17 +1064,36 @@ def create_show(show_id: str, update: ShowUpdate):
     shows = data.get("shows", {})
     if show_id in shows:
         raise HTTPException(400, f"Show '{show_id}' already exists")
+    if not update.hosts:
+        raise HTTPException(400, "Shows must have at least one host")
+    show_types = set(get_show_type_definitions().keys())
+    if update.show_type not in show_types:
+        raise HTTPException(400, f"Unknown show type '{update.show_type}'")
+    roster_ids = set(get_all_hosts().keys())
+    segment_type_ids = set(get_segment_types_api().keys())
+    for host in update.hosts:
+        if host.get("id") not in roster_ids:
+            raise HTTPException(400, f"Unknown host '{host.get('id')}'")
+    segment_types = update.segment_types or _default_segment_types_for_show_type(update.show_type)
+    for segment_type_id in segment_types:
+        if segment_type_id not in segment_type_ids:
+            raise HTTPException(400, f"Unknown segment type '{segment_type_id}'")
+    source_rules = _normalize_source_rules(update.source_rules or update.research_sources)
 
     show = {
         "name": update.name,
         "description": update.description,
+        "show_type": update.show_type,
         "topic_focus": update.topic_focus,
         "research_topic": update.research_topic,
-        "research_sources": update.research_sources,
+        "research_sources": source_rules,
+        "source_rules": source_rules,
         "guests": update.guests,
-        "segment_types": update.segment_types,
+        "segment_types": segment_types,
         "bumper_style": update.bumper_style,
         "hosts": update.hosts,
+        "content_lifecycle": update.content_lifecycle,
+        "generation": update.generation,
     }
     primary = next((h for h in update.hosts if h.get("role") == "primary"), update.hosts[0] if update.hosts else {})
     show["host"] = primary.get("id", "liminal_operator")
@@ -420,10 +1141,37 @@ class ScheduleUpdate(BaseModel):
 @app.put("/api/schedule")
 def update_schedule(update: ScheduleUpdate):
     data = load_schedule()
-    data["timezone"] = update.timezone
+    data["timezone"] = _validate_timezone_name(update.timezone)
     data["schedule"] = {"base": update.base, "overrides": update.overrides}
     save_schedule(data)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# API: Station Settings
+# ---------------------------------------------------------------------------
+
+@app.get("/api/settings")
+def get_settings():
+    data = load_schedule()
+    return {
+        "timezone": data.get("timezone", "local"),
+        "station_name": data.get("station_name", "WRIT-FM"),
+    }
+
+
+class SettingsUpdate(BaseModel):
+    timezone: str = "local"
+    station_name: str = "WRIT-FM"
+
+
+@app.put("/api/settings")
+def update_settings(update: SettingsUpdate):
+    data = load_schedule()
+    data["timezone"] = _validate_timezone_name(update.timezone)
+    data["station_name"] = (update.station_name or "WRIT-FM").strip() or "WRIT-FM"
+    save_schedule(data)
+    return {"ok": True, "timezone": data["timezone"], "station_name": data["station_name"]}
 
 
 # ---------------------------------------------------------------------------
@@ -432,12 +1180,315 @@ def update_schedule(update: ScheduleUpdate):
 
 @app.get("/api/hosts")
 def get_hosts():
-    return get_hosts_from_persona()
+    return get_all_hosts()
+
+
+class HostUpdate(BaseModel):
+    name: str
+    bio: str = ""
+    voice_style: str = ""
+    philosophy: str = ""
+    anti_patterns: str = ""
+    tts_backend: str = "kokoro"
+    tts_voice: str = "am_michael"
+    voice_minimax: str = "Deep_Voice_Man"
+    speaking_pace_wpm: int = 130
+    topics: list[str] = []
+
+
+def _host_update_to_yaml(update: HostUpdate) -> dict:
+    return {
+        "name": update.name,
+        "identity": update.bio,
+        "voice_style": update.voice_style,
+        "philosophy": update.philosophy,
+        "anti_patterns": update.anti_patterns,
+        "tts_backend": update.tts_backend,
+        "tts_voice": update.tts_voice,
+        "voice_minimax": update.voice_minimax,
+        "speaking_pace_wpm": update.speaking_pace_wpm,
+        "topics": update.topics,
+    }
+
+
+@app.post("/api/hosts/{host_id}")
+def create_host(host_id: str, update: HostUpdate):
+    data = load_hosts_config()
+    hosts = data.get("hosts", {})
+    if host_id in hosts:
+        raise HTTPException(400, f"Host '{host_id}' already exists")
+    hosts[host_id] = _host_update_to_yaml(update)
+    data["hosts"] = hosts
+    save_hosts_config(data)
+    return {"ok": True, "host_id": host_id}
+
+
+@app.put("/api/hosts/{host_id}")
+def update_host(host_id: str, update: HostUpdate):
+    data = load_hosts_config()
+    hosts = data.get("hosts", {})
+    if host_id not in hosts:
+        raise HTTPException(404, f"Host '{host_id}' not found")
+    hosts[host_id] = _host_update_to_yaml(update)
+    data["hosts"] = hosts
+    save_hosts_config(data)
+    return {"ok": True, "host_id": host_id}
+
+
+@app.delete("/api/hosts/{host_id}")
+def delete_host(host_id: str):
+    schedule = load_schedule()
+    for show_id, show in schedule.get("shows", {}).items():
+        for host in show.get("hosts", []):
+            if host.get("id") == host_id:
+                raise HTTPException(409, f"Host '{host_id}' is still assigned to show '{show_id}'")
+        if show.get("host") == host_id:
+            raise HTTPException(409, f"Host '{host_id}' is still assigned to show '{show_id}'")
+    data = load_hosts_config()
+    hosts = data.get("hosts", {})
+    if host_id not in hosts:
+        raise HTTPException(404, f"Host '{host_id}' not found")
+    del hosts[host_id]
+    data["hosts"] = hosts
+    save_hosts_config(data)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# API: TTS Preview
+# ---------------------------------------------------------------------------
+
+_PREVIEW_CACHE: dict[tuple, Path] = {}
+
+def _preview_text() -> str:
+    station_name = load_schedule().get("station_name", "the station")
+    station_name = str(station_name).strip() or "the station"
+    return f"This is {station_name}. The frequency between frequencies."
+
+
+@app.post("/api/tts/preview")
+def tts_preview(body: dict, background_tasks: BackgroundTasks):
+    """Generate a short TTS sample for voice auditioning.
+
+    Body: { backend: "kokoro"|"minimax", voice: "...", text?: "..." }
+    Returns audio file (WAV for Kokoro, MP3 for MiniMax).
+    """
+    import importlib.util
+    import tempfile
+
+    backend = body.get("backend", "kokoro")
+    voice = body.get("voice", "am_michael")
+    text = body.get("text", _preview_text())
+
+    # Serve from cache if available
+    cache_key = (backend, voice)
+    if cache_key in _PREVIEW_CACHE and _PREVIEW_CACHE[cache_key].exists():
+        cached = _PREVIEW_CACHE[cache_key]
+        mt = "audio/wav" if cached.suffix == ".wav" else "audio/mpeg"
+        return FileResponse(str(cached), media_type=mt, filename=f"preview{cached.suffix}")
+
+    if backend == "kokoro":
+        spec = importlib.util.spec_from_file_location(
+            "kokoro_tts", PROJECT_ROOT / "mac" / "kokoro" / "tts.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        tmp = Path(tempfile.mktemp(suffix=".wav", prefix="writ_preview_"))
+        ok = mod.render_speech(text, tmp, voice=voice)
+        if not ok or not tmp.exists():
+            tmp.unlink(missing_ok=True)
+            raise HTTPException(500, "Kokoro TTS preview failed")
+
+        _PREVIEW_CACHE[cache_key] = tmp
+        return FileResponse(str(tmp), media_type="audio/wav", filename="preview.wav")
+
+    elif backend == "minimax":
+        api_key = os.environ.get("MINIMAX_API_KEY", "")
+        if not api_key:
+            raise HTTPException(503, "MINIMAX_API_KEY not set")
+
+        spec = importlib.util.spec_from_file_location(
+            "minimax_tts", PROJECT_ROOT / "mac" / "minimax_tts.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        # Inject env so the module picks up the key at load time
+        os.environ.setdefault("MINIMAX_API_KEY", api_key)
+        spec.loader.exec_module(mod)
+
+        tmp = Path(tempfile.mktemp(suffix=".mp3", prefix="writ_preview_"))
+        ok = mod.generate_speech(text, tmp, voice_id=voice)
+        if not ok or not tmp.exists():
+            tmp.unlink(missing_ok=True)
+            raise HTTPException(500, "MiniMax TTS preview failed")
+
+        _PREVIEW_CACHE[cache_key] = tmp
+        return FileResponse(str(tmp), media_type="audio/mpeg", filename="preview.mp3")
+
+    else:
+        raise HTTPException(400, f"Unknown TTS backend: {backend!r}")
+
+
+# ---------------------------------------------------------------------------
+# API: Voice Samples
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/voice-samples")
+def get_voice_samples():
+    return voice_catalog()
+
+
+@app.post("/api/voice-samples/ensure")
+def ensure_voice_samples_api(body: dict | None = None):
+    body = body or {}
+    force = bool(body.get("force", False))
+    backends = body.get("backends") or ["kokoro", "minimax"]
+    created = ensure_voice_samples(backends=backends, force=force)
+    return {"ok": True, "created": created}
+
+
+@app.get("/api/voice-samples/audio/{backend}/{voice}")
+def stream_voice_sample(backend: str, voice: str):
+    path = sample_path(backend, voice)
+    if not path.exists():
+        raise HTTPException(404, f"Voice sample not found for {backend}:{voice}")
+    return FileResponse(str(path), media_type=sample_media_type(path))
+
+
+# ---------------------------------------------------------------------------
+# API: Segment Types
+# ---------------------------------------------------------------------------
+
+@app.get("/api/segment-types")
+def get_segment_types():
+    return get_segment_types_api()
+
+
+@app.get("/api/show-taxonomy")
+def get_show_taxonomy():
+    return get_taxonomy_api()
+
+
+class SegmentTypeUpdate(BaseModel):
+    name: str
+    description: str = ""
+    word_count_min: int = 1500
+    word_count_max: int = 2500
+    multi_voice: bool = False
+    prompt_template: str
+
+
+def _segment_type_update_to_yaml(update: SegmentTypeUpdate) -> dict:
+    return {
+        "name": update.name,
+        "description": update.description,
+        "word_count_min": update.word_count_min,
+        "word_count_max": update.word_count_max,
+        "multi_voice": update.multi_voice,
+        "prompt_template": update.prompt_template,
+    }
+
+
+@app.post("/api/segment-types/{segment_type_id}")
+def create_segment_type(segment_type_id: str, update: SegmentTypeUpdate):
+    if update.word_count_max < update.word_count_min:
+        raise HTTPException(400, "word_count_max must be >= word_count_min")
+    data = load_segment_types_config()
+    segment_types = data.get("segment_types", {})
+    if segment_type_id in segment_types:
+        raise HTTPException(400, f"Segment type '{segment_type_id}' already exists")
+    segment_types[segment_type_id] = _segment_type_update_to_yaml(update)
+    data["segment_types"] = segment_types
+    save_segment_types_config(data)
+    return {"ok": True, "segment_type_id": segment_type_id}
+
+
+@app.put("/api/segment-types/{segment_type_id}")
+def update_segment_type(segment_type_id: str, update: SegmentTypeUpdate):
+    if update.word_count_max < update.word_count_min:
+        raise HTTPException(400, "word_count_max must be >= word_count_min")
+    data = load_segment_types_config()
+    segment_types = data.get("segment_types", {})
+    segment_types[segment_type_id] = _segment_type_update_to_yaml(update)
+    data["segment_types"] = segment_types
+    save_segment_types_config(data)
+    return {"ok": True, "segment_type_id": segment_type_id}
+
+
+@app.delete("/api/segment-types/{segment_type_id}")
+def delete_segment_type(segment_type_id: str):
+    schedule = load_schedule()
+    for show_id, show in schedule.get("shows", {}).items():
+        if segment_type_id in (show.get("segment_types") or []):
+            raise HTTPException(409, f"Segment type '{segment_type_id}' is still assigned to show '{show_id}'")
+
+    data = load_segment_types_config()
+    segment_types = data.get("segment_types", {})
+    if segment_type_id not in segment_types:
+        raise HTTPException(404, f"Segment type '{segment_type_id}' not found")
+    del segment_types[segment_type_id]
+    data["segment_types"] = segment_types
+    save_segment_types_config(data)
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
 # API: Library
 # ---------------------------------------------------------------------------
+
+def _library_base(kind: str) -> tuple[Path, str]:
+    kind = (kind or "").strip().lower()
+    if kind in {"segment", "segments", "talk"}:
+        return TALK_SEGMENTS_DIR, "talk"
+    if kind in {"bumper", "bumpers", "music"}:
+        return BUMPERS_DIR, "music"
+    raise HTTPException(400, f"Unknown library kind: {kind!r}")
+
+
+def _library_target(show_id: str, kind: str, filename: str) -> Path:
+    base, _ = _library_base(kind)
+    return base / show_id / filename
+
+
+def _unique_library_destination(dest: Path) -> Path:
+    if not dest.exists():
+        return dest
+    stem = dest.stem
+    suffix = dest.suffix
+    parent = dest.parent
+    for i in range(1, 1000):
+        candidate = parent / f"{stem}_copy{i}{suffix}"
+        if not candidate.exists():
+            return candidate
+    raise HTTPException(409, f"Unable to find a free destination name for {dest.name}")
+
+
+def _library_copy_sidecars(src: Path, dest: Path, target_show_id: str, fresh_plays: bool = True) -> None:
+    audio_sidecar = src.with_suffix(".json")
+    if audio_sidecar.exists():
+        try:
+            meta = json.loads(audio_sidecar.read_text())
+        except Exception:
+            meta = {}
+        meta["show_id"] = target_show_id
+        meta["copied_at"] = _station_iso_now()
+        dest.with_suffix(".json").write_text(json.dumps(meta, indent=2))
+
+    plays_sidecar = src.parent / (src.name + ".plays.json")
+    if plays_sidecar.exists() or fresh_plays:
+        try:
+            meta = json.loads(plays_sidecar.read_text()) if plays_sidecar.exists() else {}
+        except Exception:
+            meta = {}
+        if fresh_plays:
+            meta = {
+                "play_count": 0,
+                "created_at": _station_iso_now(),
+            }
+        else:
+            meta["play_count"] = int(meta.get("play_count", 0) or 0)
+        dest.parent.joinpath(dest.name + ".plays.json").write_text(json.dumps(meta, indent=2))
 
 @app.get("/api/library/segments")
 def get_segments():
@@ -473,47 +1524,115 @@ def stream_audio(show_id: str, filename: str, type: str = "segment"):
     path = base / show_id / filename
     if not path.exists():
         raise HTTPException(404, "File not found")
-    return FileResponse(str(path))
+    suffix = path.suffix.lower()
+    media_type = {
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+        ".m4a": "audio/mp4",
+        ".aac": "audio/aac",
+        ".ogg": "audio/ogg",
+    }.get(suffix, "application/octet-stream")
+    return FileResponse(str(path), media_type=media_type)
+
+
+class LibraryTransferRequest(BaseModel):
+    target_show_id: str
+
+
+def _copy_or_move_library_item(kind: str, show_id: str, filename: str, target_show_id: str, move: bool = False) -> dict:
+    base, _ = _library_base(kind)
+    shows = load_schedule().get("shows", {})
+    if target_show_id not in shows:
+        raise HTTPException(404, f"Target show '{target_show_id}' not found")
+
+    src = base / show_id / filename
+    if not src.exists():
+        raise HTTPException(404, "File not found")
+
+    dest_dir = base / target_show_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = _unique_library_destination(dest_dir / filename)
+
+    if move:
+        shutil.move(str(src), str(dest))
+        src_sidecar = src.with_suffix(".json")
+        if src_sidecar.exists():
+            shutil.move(str(src_sidecar), str(dest.with_suffix(".json")))
+        src_plays = src.parent / (src.name + ".plays.json")
+        if src_plays.exists():
+            shutil.move(str(src_plays), str(dest.parent / (dest.name + ".plays.json")))
+    else:
+        shutil.copy2(src, dest)
+        _library_copy_sidecars(src, dest, target_show_id, fresh_plays=True)
+
+    sidecar = dest.with_suffix(".json")
+    if sidecar.exists():
+        try:
+            meta = json.loads(sidecar.read_text())
+            meta["show_id"] = target_show_id
+            sidecar.write_text(json.dumps(meta, indent=2))
+        except Exception:
+            pass
+
+    return {"ok": True, "target_show_id": target_show_id, "filename": dest.name}
+
+
+@app.post("/api/library/{kind}/{show_id}/{filename}/copy")
+def copy_library_item(kind: str, show_id: str, filename: str, body: LibraryTransferRequest):
+    return _copy_or_move_library_item(kind, show_id, filename, body.target_show_id, move=False)
+
+
+@app.post("/api/library/{kind}/{show_id}/{filename}/move")
+def move_library_item(kind: str, show_id: str, filename: str, body: LibraryTransferRequest):
+    return _copy_or_move_library_item(kind, show_id, filename, body.target_show_id, move=True)
+
+
+@app.post("/api/library/{kind}/{show_id}/{filename}/reset-plays")
+def reset_library_plays(kind: str, show_id: str, filename: str):
+    base, _ = _library_base(kind)
+    path = base / show_id / filename
+    if not path.exists():
+        raise HTTPException(404, "File not found")
+    sidecar = path.parent / (path.name + ".plays.json")
+    try:
+        meta = json.loads(sidecar.read_text()) if sidecar.exists() else {}
+    except Exception:
+        meta = {}
+    meta["play_count"] = 0
+    meta.pop("first_played_at", None)
+    meta.pop("last_played_at", None)
+    if "created_at" not in meta:
+        meta["created_at"] = _station_iso_now()
+    sidecar.write_text(json.dumps(meta, indent=2))
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
 # API: Generation
 # ---------------------------------------------------------------------------
 
-SEGMENT_TYPES = [
-    "show_intro", "show_outro", "station_id",
-    "deep_dive", "news_analysis", "interview", "panel",
-    "story", "listener_mailbag", "music_essay",
-]
-
 TOPIC_FOCUSES = [
     "philosophy", "music_history", "current_events", "culture",
     "soul_music", "night_philosophy", "listeners",
 ]
 
-KOKORO_VOICES = [
-    "am_michael", "am_onyx", "am_fenrir", "am_echo", "am_eric",
-    "am_liam", "am_adam", "am_puck",
-    "af_heart", "af_bella", "af_sky", "af_nova", "af_sarah",
-    "af_nicole", "af_jessica", "af_alloy",
-    "bm_daniel", "bm_george", "bm_fable", "bm_lewis",
-    "bf_alice", "bf_emma", "bf_isabella", "bf_lily",
-]
-
-MINIMAX_VOICES = [
-    "Deep_Voice_Man", "Wise_Woman", "Calm_Woman", "Friendly_Person",
-    "Confident_Man", "Elegant_Man", "Patient_Man", "Casual_Guy",
-    "Inspirational_Girl", "Lively_Girl",
-]
-
 
 @app.get("/api/generate/options")
 def get_generate_options():
+    segment_types = get_segment_types_api()
+    taxonomy = get_taxonomy_api()
+    voices = voice_catalog()
     return {
-        "segment_types": SEGMENT_TYPES,
-        "topic_focuses": TOPIC_FOCUSES,
-        "kokoro_voices": KOKORO_VOICES,
-        "minimax_voices": MINIMAX_VOICES,
+        "segment_types": list(segment_types.keys()),
+        "segment_type_defs": segment_types,
+        "topic_focuses": taxonomy["topic_focuses"],
+        "bumper_styles": taxonomy["bumper_styles"],
+        "show_types": taxonomy["show_types"],
+        "kokoro_voices": [v["voice"] for v in voices["kokoro"]],
+        "minimax_voices": [v["voice"] for v in voices["minimax"]],
+        "kokoro_voice_defs": voices["kokoro"],
+        "minimax_voice_defs": voices["minimax"],
+        "source_types": taxonomy["source_types"],
         "shows": list(load_schedule().get("shows", {}).keys()),
     }
 
@@ -523,9 +1642,13 @@ class GenerateRequest(BaseModel):
     content_type: str = "talk"  # "talk" or "music"
     segment_type: str = "random"
     topic: str = ""
+    include_topic: bool = True
+    source_type: str = ""      # "", "url", "reddit", "youtube"
+    source_value: str = ""
     count: int = 1
     # Override TTS for this run
     tts_backend: str = ""   # "kokoro", "minimax", or "" to use show default
+    minimax_long_async: bool = False
     host_voice: str = ""    # override primary host voice
     # Guest for this run
     guest_name: str = ""
@@ -544,8 +1667,11 @@ def start_generation(req: GenerateRequest, background_tasks: BackgroundTasks):
         "content_type": req.content_type,
         "segment_type": req.segment_type,
         "topic": req.topic,
+        "include_topic": req.include_topic,
+        "source_type": req.source_type,
+        "source_value": req.source_value,
         "log": [],
-        "created_at": datetime.now().isoformat(),
+        "created_at": _station_iso_now(),
         "completed_at": None,
     }
     background_tasks.add_task(_run_generation_job, job_id, req)
@@ -565,7 +1691,7 @@ def get_job(job_id: str):
 
 
 def _log_job(job_id: str, msg: str):
-    ts = datetime.now().strftime("%H:%M:%S")
+    ts = _station_now().strftime("%H:%M:%S")
     line = f"[{ts}] {msg}"
     _jobs[job_id]["log"].append(line)
     print(line)  # also to systemd journal
@@ -587,11 +1713,14 @@ def _run_generation_job(job_id: str, req: GenerateRequest):
         # Build env for the generation subprocess
         env = dict(os.environ)
         env["OLLAMA_URL"] = env.get("OLLAMA_URL", "http://ollama.area4.net:11434")
-        env["OLLAMA_MODEL"] = env.get("OLLAMA_MODEL", "gemma3:12b")
+        env["OLLAMA_MODEL"] = env.get("OLLAMA_MODEL", "llama3.2:3b")
         env["MINIMAX_API_KEY"] = env.get("MINIMAX_API_KEY", "")
+        env["MINIMAX_TOKEN_PLAN_API_KEY"] = env.get("MINIMAX_TOKEN_PLAN_API_KEY", "")
+        env["MINIMAX_MUSIC_MODEL"] = env.get("MINIMAX_MUSIC_MODEL", "music-2.6")
 
         # Determine TTS backend
         tts_backend = req.tts_backend or show.get("tts_backend", "kokoro")
+        is_youtube_ingest = req.source_type == "youtube" and req.content_type != "music"
 
         # Build command
         if req.content_type == "music":
@@ -615,22 +1744,46 @@ def _run_generation_job(job_id: str, req: GenerateRequest):
                    "--show", req.show_id,
                    "--count", str(req.count)]
 
-            if req.segment_type and req.segment_type != "random":
-                cmd += ["--type", req.segment_type]
-            if req.topic:
+            resolved_segment_type = req.segment_type
+            if req.source_type == "reddit" and resolved_segment_type == "random":
+                resolved_segment_type = "reddit_post"
+                _log_job(job_id, "Source type 'reddit' selected with random segment type; using 'reddit_post'.")
+            elif req.source_type == "youtube" and resolved_segment_type == "random":
+                resolved_segment_type = "youtube"
+                _log_job(job_id, "Source type 'youtube' selected with random segment type; using 'youtube'.")
+
+            if resolved_segment_type and resolved_segment_type != "random":
+                cmd += ["--type", resolved_segment_type]
+            if req.include_topic and req.topic and not is_youtube_ingest:
                 cmd += ["--topic", req.topic]
+            if not req.include_topic and not is_youtube_ingest:
+                cmd += ["--no-topic"]
+            if req.source_type:
+                cmd += ["--source-type", req.source_type]
+            if req.source_value:
+                cmd += ["--source-value", req.source_value]
 
             # Pass TTS backend via env
-            env["WRIT_TTS_BACKEND"] = tts_backend
-            if req.host_voice:
-                env["WRIT_HOST_VOICE"] = req.host_voice
-            if req.guest_name:
-                env["WRIT_GUEST_NAME"] = req.guest_name
-                env["WRIT_GUEST_VOICE_KOKORO"] = req.guest_voice_kokoro
-                env["WRIT_GUEST_VOICE_MINIMAX"] = req.guest_voice_minimax
-                env["WRIT_GUEST_TTS_BACKEND"] = req.guest_tts_backend
+            if not is_youtube_ingest:
+                env["WRIT_TTS_BACKEND"] = tts_backend
+                if req.minimax_long_async:
+                    env["WRIT_MINIMAX_LONG_ASYNC"] = "1"
+                if req.host_voice:
+                    env["WRIT_HOST_VOICE"] = req.host_voice
+                if req.guest_name:
+                    env["WRIT_GUEST_NAME"] = req.guest_name
+                    env["WRIT_GUEST_VOICE_KOKORO"] = req.guest_voice_kokoro
+                    env["WRIT_GUEST_VOICE_MINIMAX"] = req.guest_voice_minimax
+                    env["WRIT_GUEST_TTS_BACKEND"] = req.guest_tts_backend
 
-            _log_job(job_id, f"TTS backend: {tts_backend}")
+            if is_youtube_ingest:
+                _log_job(job_id, "YouTube ingest selected; skipping Topic, Hosts & TTS controls.")
+            else:
+                _log_job(job_id, f"TTS backend: {tts_backend}")
+            if req.minimax_long_async and not is_youtube_ingest:
+                _log_job(job_id, "MiniMax long-form async: enabled (Kokoro validation first)")
+            if req.source_type and req.source_value:
+                _log_job(job_id, f"Source: {req.source_type} — {req.source_value[:120]}")
 
         _log_job(job_id, f"Running: {' '.join(cmd[-6:])}")
 
@@ -660,7 +1813,7 @@ def _run_generation_job(job_id: str, req: GenerateRequest):
         _log_job(job_id, f"ERROR: {e}")
         _jobs[job_id]["status"] = "failed"
 
-    _jobs[job_id]["completed_at"] = datetime.now().isoformat()
+    _jobs[job_id]["completed_at"] = _station_iso_now()
     _save_job(_jobs[job_id])
 
 
@@ -688,8 +1841,8 @@ def get_scheduler_status():
     show_status = {}
     for show_id, show in shows.items():
         gen = show.get("generation", {})
-        talk_cfg = {**_sched.DEFAULT_TALK_CONFIG, **gen.get("talk", {})}
-        music_cfg = {**_sched.DEFAULT_MUSIC_CONFIG, **gen.get("music", {})}
+        talk_cfg = {**_sched.DEFAULT_TALK_CONFIG, **(gen.get("talk") or {})}
+        music_cfg = {**_sched.DEFAULT_MUSIC_CONFIG, **(gen.get("music") or {})}
         last = _sched.state.last_run_per_show.get(show_id, {})
         show_status[show_id] = {
             "talk": {
@@ -790,7 +1943,7 @@ def expand_topic(body: dict):
 
     try:
         ollama_url = os.environ.get("OLLAMA_URL", "http://ollama.area4.net:11434")
-        ollama_model = os.environ.get("OLLAMA_MODEL", "gemma3:12b")
+        ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
         import urllib.request as _ur
         payload = json.dumps({"model": ollama_model, "prompt": prompt, "stream": False}).encode()
         req = _ur.Request(f"{ollama_url}/api/generate", data=payload,
@@ -810,6 +1963,12 @@ def trigger_generation(show_id: str, content_type: str):
     if content_type not in ("talk", "music"):
         raise HTTPException(400, "content_type must be 'talk' or 'music'")
     msg = _sched.trigger_now(show_id, content_type, _jobs)
+    return {"ok": True, "message": msg}
+
+
+@app.post("/api/scheduler/trigger/{show_id}")
+def trigger_generation_show(show_id: str):
+    msg = _sched.trigger_now(show_id, "show", _jobs)
     return {"ok": True, "message": msg}
 
 
@@ -842,7 +2001,7 @@ def admin_ui():
     html_path = Path(__file__).parent / "index.html"
     if html_path.exists():
         return HTMLResponse(html_path.read_text())
-    return HTMLResponse("<h1>WRIT-FM Admin</h1><p>index.html not found.</p>")
+    return HTMLResponse("<h1>Station Admin</h1><p>index.html not found.</p>")
 
 
 if __name__ == "__main__":

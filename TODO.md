@@ -1,136 +1,84 @@
-# WRIT-FM Project To-Do List
+# WRIT-FM Status & TODO
 
-## Current Status (as of 2026-04-12)
-The core pipeline is working end-to-end. Icecast2 is running, the streamer
-broadcasts 24/7, talk segments generate via Ollama + Kokoro TTS, music bumpers
-generate via MiniMax music-2.6, and the admin UI is fully operational at
-port 8080.
+## Current Status (2026-04-12)
 
----
+The station is live and the core system is working end to end:
 
-## Admin UI — Pending Features
+- Icecast, streamer, admin UI, talk generation, bumper generation, and scheduler are in place
+- Host management is centralized in `config/hosts.yaml` and exposed in the admin UI
+- Segment types are now managed in `config/segment_types.yaml` and exposed in the admin UI
+- Show editing uses roster-backed hosts and managed segment types
+- Show editing now also saves per-show auto-generation thresholds and cadence
+- Talk generation loads managed prompt templates and supports multi-voice generation for Kokoro
+- Content lifecycle settings now persist correctly from the admin UI into `schedule.yaml`
+- Manual generation now supports source-aware prompts for web URLs and Reddit threads/subreddits
+- Manual generation also supports direct YouTube audio ingest via `yt-dlp`
+- Reddit generation is split into `reddit_storytelling` and `reddit_post`, with `Topic` ignored for both
+- YouTube source runs auto-route to the new `youtube` segment type
+- Show types now split editorial shows from source-led shows; auto-generation should continue to move toward rule-based source selection per show
+- Taxonomy editing now exists in the admin UI for topic focuses and bumper styles
+- Library management now supports cross-show copy/move and play-count resets
+- Library actions are now tucked behind a compact menu to keep the list readable
+- Library view now has talk/music filters and per-show bulk delete for visible items
+- Scheduler cards now include a per-show Generate Now button for exercising the auto-generation path
+- Story subreddits like `/r/nosleep` automatically route to `reddit_storytelling`
+- MiniMax long-form async is now opt-in and confirmation-gated in the admin UI
+- Voice samples are cached on disk for Kokoro and MiniMax, with play/stop audition buttons in the admin UI
+- Manual generation includes an `Include topic` toggle to disable topic selection entirely
+- Logs, metadata, and scheduler timestamps now align to the station timezone
 
-### Host Management
-- [ ] Dedicated "Hosts / Speakers" section in admin UI (currently hosts only editable
-      inside each show's modal)
-- [ ] Global host roster: name, bio, personality description, default TTS backend,
-      Kokoro voice, MiniMax voice
-- [ ] Ability to create/edit/delete host personas independently of shows
-- [ ] Assign hosts to shows from the global roster
+## Completed Recently
 
-### TTS Voice Preview
-- [ ] Preview button next to voice selectors in host/speaker management UI
-      — plays a short sample sentence in the selected voice via the TTS API
-- [ ] Same preview in the Manual Generate UI so you can audition configured
-      hosts/speakers before committing to a generation run
-- [ ] Both Kokoro and MiniMax voices should be previewable
+### Milestone 3
 
-### Segment Type Management
-- [ ] Dedicated segment type manager in admin UI (currently a fixed checkbox list
-      in the Show modal)
-- [ ] Ability to define custom segment types beyond the built-in set
-- [ ] Per-type: name, target word count range, prompt template, whether it supports
-      multi-voice (panel/interview) or single-voice
-- [ ] Show modal segment type picker updates dynamically from this managed list
+- Hosts tab with CRUD
+- Global roster-backed host assignment in show editor
+- Kokoro + MiniMax preview endpoints and UI controls
+- Fixes for host assignment validation and voice-preview/backend mismatch
 
-### Live Show Control
-- [ ] Live showrun view: see what is currently playing and the forward queue
-      (next N segments + bumpers scheduled to play)
-- [ ] Ability to reorder upcoming audio in the queue
-- [ ] Skip current playing audio (sends signal to streamer to advance immediately)
-- [ ] Ability to inject a specific file from the library into the front of the queue
-- [ ] Requires a richer IPC mechanism between admin (port 8080) and streamer (port 8001)
+### Milestone 4
 
-### Topic Focus & Bumper Style — Clarification
-**Topic Focus** — *actively used, worth exposing in the UI.*
-It selects which topic pool (`TOPIC_POOLS` in `talk_generator.py`) is used to pick
-random segment topics when no explicit topic is given. Current pools: `philosophy`,
-`music_history`, `current_events`, `culture`, `soul_music`, `night_philosophy`,
-`listeners`. Should be editable in the Show modal (already has a dropdown — but the
-pool contents themselves are hardcoded and should be editable too).
-- [ ] Make topic pool contents editable per-show in admin (add/remove/edit topic strings)
+- Segment Types tab with CRUD
+- Managed segment definitions in `config/segment_types.yaml`
+- Dynamic segment type picker in show editor and generate form
+- Prompt templates and word-count targets loaded from managed config
+- Multi-voice generation controlled by segment type metadata
+- Panel/interview generation now uses the show's configured host roster
+- Station Settings tab for global station name and timezone management
+- Source-aware manual generation in the admin UI
+- `reddit_post` and `reddit_storytelling` Reddit segment types
+- `youtube` source ingest for direct video audio capture plus metadata/captions
+- Cached voice sample playback and split Hosts/Voices admin sub-tabs
 
-**Bumper Style** — *currently cosmetic, not wired up.*
-The field exists in `schedule.yaml` and is loaded into `ProgramContext`, but
-`music_bumper_generator.py` ignores it — per-show hardcoded caption pools determine
-music style instead. To make it meaningful:
-- [ ] Wire `bumper_style` into `music_bumper_generator.py` to filter/weight the
-      caption pool (e.g. only pick captions tagged as matching the style)
-- [ ] OR replace per-show hardcoded pools with style-tagged caption library that
-      `bumper_style` selects from
-- [ ] Update Show modal Bumper Style dropdown to reflect actual effect
+## Outstanding Work
 
----
+### Pipeline / TTS
 
-## Generation Pipeline — Pending
+- Fully wire MiniMax as a first-class talk-generation backend in all generation paths
+- Add MiniMax emotion/sound markers to prompts
+- Implement true MiniMax multi-voice rendering instead of primary-voice fallback
 
-### MiniMax TTS Integration
-- [ ] Wire `WRIT_TTS_BACKEND=minimax` routing in `talk_generator.py` — env var
-      is passed from admin but the generator currently always uses Kokoro
-- [ ] Add MiniMax emotion/sound markers to prompts: `[laugh]`, `[sigh]`, `[cough]`,
-      `[clears throat]` for more natural output (MiniMax speech-2.8-hd supports these)
+### Generation Quality
 
-### Music Bumpers
-- [ ] Generate initial bumper inventory for 7 shows (only `dawn_chorus` has bumpers)
-- [ ] Enable auto-scheduler for all shows once initial inventory is seeded
-- [ ] Consider wiring `bumper_style` into caption pool selection (see above)
+- Make topic pool contents editable from config/admin rather than hardcoded
+- Wire `bumper_style` into music bumper prompt selection
+- Review and tune default prompt templates now that they are editable
+- Consider using show-level `research_sources` automatically in scheduled generation, not just manual runs
 
-### Content Lifecycle
-- [ ] Set `WRIT_CONSUME_SEGMENTS=1` in `writ-fm.service` when done testing
-      (currently 0 — files are kept after play)
-- [ ] Configure `content_lifecycle` blocks in `schedule.yaml` per show once
-      happy with inventory replenishment rates
+### Inventory / Production Readiness
 
----
+- Seed missing music bumper inventory for all shows
+- Turn on `WRIT_CONSUME_SEGMENTS=1` in production once satisfied with inventory replenishment
+- Tune `content_lifecycle` and auto-generation thresholds per show
 
-## Infrastructure — Pending
+### Live Ops / Admin
 
-### Git
-- [ ] Push latest commit (`6fb40af`) to remote
+- Build live queue / showrun view
+- Skip current audio
+- Reorder queue
+- Inject specific library items into the queue
 
-### MiniMax API Costs
-- [ ] Monitor usage — music generation (~130s per track) and TTS both cost credits
+## Notes
 
-### Local Music Generation
-- [ ] ACE-Step (`music-gen.server`) not set up — all music is MiniMax cloud
-- [ ] If local generation is desired: clone `music-gen.server`, download checkpoints,
-      start service, restore localhost:4009 path in `music_gen_client.py`
-
----
-
-## Completed ✓
-
-### Infrastructure
-- System dependencies (icecast2, ffmpeg, espeak-ng, uv)
-- Project cloned, Python 3.11 venv, Kokoro TTS with CUDA
-- Icecast2 running, source password `hackme`
-- Both systemd services registered and running
-
-### Pipeline
-- End-to-end: LLM → script → Kokoro TTS → streamer → Icecast → stream
-- MiniMax TTS client (`mac/minimax_tts.py`), correct base URL + model `speech-2.8-hd`
-- MiniMax music client fixed (was using wrong domain `minimaxi.chat` → `minimax.io`)
-- Music bumpers playing between talk segments
-- `WRIT_CONSUME_SEGMENTS` flag for testing vs production mode
-- Content lifecycle system: sidecar `.plays.json` tracking, max_plays/max_days enforcement
-
-### Admin UI (port 8080)
-- FastAPI backend with full REST API
-- Dashboard, Shows, Schedule, Generate, Library tabs
-- Show editor: hosts, TTS, voices, lifecycle, research sources, segment types
-- Manual generation: Talk Segment + Music Bumper, streaming log, timer, form lock
-- Topic "✦ Expand" button (LLM expands hint → full prompt)
-- Guest/Call-in behind checkbox toggle
-- Auto-generate scheduler: inventory floors, cadence, trigger-now per show
-- Activity log: persisted across restarts, shows manual + scheduler + history
-- Library: inline preview, play counts, generation prompt expand, word count, refresh
-- Content lifecycle config in show modal (max_plays, max_days per content type)
-
-### Generation Fixes
-- Ollama `num_predict: 8192` — prevents truncated scripts
-- Stronger length instruction in prompts + 3 retries for long-form segments
-- `talk_generator.py` exits 1 on total failure (was always exiting 0)
-- `music_bumper_generator.py` `is_server_available()` no longer times out
-- `.json` sidecar written next to each audio file for library metadata
-- Library falls back to `output/scripts/` for pre-sidecar files
-- Custom `--caption` / `--vocal` CLI flags on music bumper generator
+- `SESSION_SUMMARY.md` is now historical migration context only.
+- `MILESTONES.md` is the canonical milestone tracker.

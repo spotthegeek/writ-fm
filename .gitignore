@@ -17,10 +17,14 @@ output/music/
 output/podcasts/
 output/now_playing.json
 output/generation.log
+output/jobs/
+output/source_cache/
+output/voice_samples/
 
 # Dev files
 command.txt
 README-dev.md
+.env
 
 # Local config with secrets
 mac/config.yaml

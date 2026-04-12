@@ -27,6 +27,8 @@ dependencies = [
     "omegaconf>=2.3.0",
     "torchcodec>=0.9.1",
     "qrcode>=8.0",
+    "kokoro>=0.9.4",
+    "yt-dlp>=2025.1.15",
 ]
 
 [project.optional-dependencies]

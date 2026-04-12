@@ -7,13 +7,18 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import time
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from datetime import datetime
 from pathlib import Path
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "mac"))
+from time_utils import station_now
 
 DEFAULT_NEWS_FEEDS = (
     "https://feeds.bbci.co.uk/news/rss.xml",
@@ -26,13 +31,13 @@ _NEWS_CACHE: dict[str, object] = {"timestamp": 0.0, "items": []}
 
 
 def log(msg: str) -> None:
-    ts = datetime.now().strftime("%H:%M:%S")
+    ts = station_now().strftime("%H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
 
 
 def get_time_of_day(hour: int | None = None, profile: str = "default") -> str:
     if hour is None:
-        hour = datetime.now().hour
+        hour = station_now().hour
 
     if profile == "extended":
         if 6 <= hour < 10:
@@ -57,11 +62,25 @@ def get_time_of_day(hour: int | None = None, profile: str = "default") -> str:
 
 
 def preprocess_for_tts(text: str, *, include_cough: bool = True) -> str:
+    # Drop standalone stage-direction lines before handing text to TTS.
+    lines = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("(") and line.endswith(")"):
+            continue
+        lines.append(raw_line)
+    text = "\n".join(lines)
+
+    # Remove any remaining bracketed production cues except the few we translate.
+    text = re.sub(r"\[(?!pause\]|chuckle\]|cough\])[^\]]+\]", " ", text, flags=re.IGNORECASE)
     text = text.replace("[pause]", "...")
     text = text.replace("[chuckle]", "heh...")
+    text = text.replace("[laugh]", "heh...")
+    text = text.replace("[sigh]", "hmm...")
     if include_cough:
         text = text.replace("[cough]", "ahem...")
     text = text.replace('"', "")
+    text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
 
@@ -79,12 +98,14 @@ def run_claude(
     model: str | None = None,
     min_length: int = 0,
     strip_quotes: bool = True,
+    temperature: float = 0.8,
+    num_predict: int = 8192,
 ) -> str | None:
     # 1. Try Ollama (if configured)
     import json
     ollama_url = os.environ.get("OLLAMA_URL")
     if ollama_url:
-        ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.3")
+        ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
         try:
             req = urllib.request.Request(
                 f"{ollama_url.rstrip('/')}/api/generate",
@@ -93,8 +114,8 @@ def run_claude(
                     "prompt": prompt,
                     "stream": False,
                     "options": {
-                        "num_predict": 8192,
-                        "temperature": 0.8,
+                        "num_predict": num_predict,
+                        "temperature": temperature,
                     },
                 }).encode('utf-8'),
                 headers={'Content-Type': 'application/json'}
@@ -128,6 +149,8 @@ def run_claude(
         pass
 
     # 3. Fallback to Gemini CLI
+    if shutil.which("gemini") is None:
+        return None
     args = ["gemini", "--approval-mode", "plan", "-p", prompt]
     if model:
         args.extend(["--model", model])

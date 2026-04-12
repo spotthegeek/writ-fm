@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WRIT-FM Admin</title>
+<title>Station Admin</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   body { background: #0f1117; color: #e2e8f0; font-family: 'Courier New', monospace; }
@@ -53,7 +53,7 @@
 <!-- Header -->
 <div class="border-b border-gray-800 px-6 py-3 flex items-center justify-between">
   <div class="flex items-center gap-3">
-    <div class="text-indigo-400 font-bold text-lg tracking-widest">WRIT-FM</div>
+    <div id="station-wordmark" class="text-indigo-400 font-bold text-lg tracking-widest">Station</div>
     <div class="text-gray-600 text-sm">Admin Console</div>
   </div>
   <div id="status-bar" class="flex items-center gap-3 text-xs text-gray-500">
@@ -70,6 +70,10 @@
 <div class="flex gap-1 px-6 pt-4">
   <button class="tab-btn active px-4 py-2 text-sm rounded" onclick="showTab('dashboard')">Dashboard</button>
   <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('shows')">Shows</button>
+  <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('hosts')">Hosts</button>
+  <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('segments')">Segments</button>
+  <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('taxonomy')">Taxonomy</button>
+  <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('settings')">Settings</button>
   <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('schedule')">Schedule</button>
   <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('generate')">Generate</button>
   <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('library')">Library</button>
@@ -124,6 +128,102 @@
   <div id="shows-list" class="space-y-2"></div>
 </div>
 
+<!-- ===== HOSTS ===== -->
+<div id="tab-hosts" class="hidden">
+  <div class="flex justify-between items-center mb-4">
+    <h2 class="text-sm font-bold text-gray-300">Hosts</h2>
+    <div class="flex gap-2">
+      <button class="btn btn-primary" onclick="openHostModal(null)">+ New Host</button>
+      <button class="btn btn-ghost text-xs" onclick="refreshVoiceSamples()">↺ Refresh Samples</button>
+    </div>
+  </div>
+  <div class="flex gap-2 mb-4">
+    <button class="tab-btn active px-3 py-1.5 text-xs rounded" onclick="switchHostsTab('hosts', this)">Hosts &amp; Speakers</button>
+    <button class="tab-btn px-3 py-1.5 text-xs rounded" onclick="switchHostsTab('voices', this)">Voices</button>
+  </div>
+  <div id="hoststab-hosts">
+    <div id="hosts-list" class="space-y-2"></div>
+  </div>
+  <div id="hoststab-voices" class="hidden">
+    <div class="text-xs text-gray-500 mb-3">Play the cached sample for any selectable voice. Samples are generated once and stored on disk.</div>
+    <div id="voices-list" class="space-y-4"></div>
+  </div>
+</div>
+
+<!-- ===== SEGMENT TYPES ===== -->
+<div id="tab-segments" class="hidden">
+  <div class="flex justify-between items-center mb-4">
+    <h2 class="text-sm font-bold text-gray-300">Segment Types</h2>
+    <button class="btn btn-primary" onclick="openSegmentTypeModal(null)">+ New Segment Type</button>
+  </div>
+  <div id="segment-types-list" class="space-y-2"></div>
+</div>
+
+<!-- ===== TAXONOMY ===== -->
+<div id="tab-taxonomy" class="hidden">
+  <div class="flex justify-between items-center mb-4">
+    <h2 class="text-sm font-bold text-gray-300">Show Taxonomy</h2>
+    <button class="btn btn-primary" onclick="saveTaxonomy()">Save Taxonomy</button>
+  </div>
+  <div class="grid grid-cols-2 gap-4">
+    <div class="card p-4">
+      <div class="section-title">Topic Focuses</div>
+      <div class="text-xs text-gray-500 mb-3">Used by research and hybrid shows as topic pools.</div>
+      <div id="taxonomy-topic-list" class="space-y-2"></div>
+      <button class="btn btn-ghost text-xs mt-3" onclick="addTaxonomyItem('taxonomy-topic-list')">+ Add Topic Focus</button>
+    </div>
+    <div class="card p-4">
+      <div class="section-title">Bumper Styles</div>
+      <div class="text-xs text-gray-500 mb-3">Used when selecting bumper moods/styles for a show.</div>
+      <div id="taxonomy-bumper-list" class="space-y-2"></div>
+      <button class="btn btn-ghost text-xs mt-3" onclick="addTaxonomyItem('taxonomy-bumper-list')">+ Add Bumper Style</button>
+    </div>
+  </div>
+  <div class="card p-4 mt-4">
+    <div class="section-title">Show Types</div>
+    <div id="taxonomy-show-types" class="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs"></div>
+  </div>
+</div>
+
+<!-- ===== SETTINGS ===== -->
+<div id="tab-settings" class="hidden">
+  <div class="flex justify-between items-center mb-4">
+    <h2 class="text-sm font-bold text-gray-300">Station Settings</h2>
+    <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+  </div>
+  <div class="card p-4 max-w-2xl">
+    <div class="section-title">Station Identity</div>
+    <div class="text-xs text-gray-500 mb-3">Used by prompts, station IDs, the scheduler, streamer, and admin schedule views.</div>
+    <div class="grid grid-cols-[1fr_auto] gap-3 items-end mb-4">
+      <div>
+        <label class="text-xs text-gray-400 block mb-1">Station Name</label>
+        <input id="settings-station-name" class="input" placeholder="WRIT-FM" />
+      </div>
+      <button class="btn btn-ghost" onclick="loadSettings()">↺ Refresh</button>
+    </div>
+    <div class="section-title">Timezone</div>
+    <div class="text-xs text-gray-500 mb-3">Use an IANA timezone like <code>Australia/Adelaide</code>.</div>
+    <div class="grid grid-cols-[1fr_auto] gap-3 items-end">
+      <div>
+        <label class="text-xs text-gray-400 block mb-1">Station Timezone</label>
+        <input id="settings-timezone" class="input" list="timezone-suggestions" placeholder="Australia/Adelaide" />
+        <datalist id="timezone-suggestions">
+          <option value="Australia/Adelaide"></option>
+          <option value="Australia/Sydney"></option>
+          <option value="Australia/Melbourne"></option>
+          <option value="Australia/Perth"></option>
+          <option value="Europe/London"></option>
+          <option value="America/New_York"></option>
+          <option value="America/Los_Angeles"></option>
+          <option value="UTC"></option>
+        </datalist>
+      </div>
+      <div></div>
+    </div>
+    <div id="settings-status" class="text-xs text-gray-600 mt-3"></div>
+  </div>
+</div>
+
 <!-- ===== SCHEDULE ===== -->
 <div id="tab-schedule" class="hidden">
   <div class="flex justify-between items-center mb-4">
@@ -154,8 +254,26 @@
 
   <!-- Auto-Generate Schedules sub-tab -->
   <div id="gentab-schedules" class="hidden">
-    <div class="text-xs text-gray-500 mb-4">Configure automatic generation for each show. The scheduler checks inventory every 5 minutes and generates content when below the minimum threshold.</div>
+    <div class="text-xs text-gray-500 mb-4">Configure automatic generation for each show. The scheduler checks inventory every 5 minutes and generates content when below the minimum threshold. If a show has no saved generation block yet, <b>Generate Now</b> will still use that show type&apos;s defaults for testing.</div>
     <div id="sched-cards" class="space-y-3"></div>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+      <div class="card p-4">
+        <div class="flex justify-between items-center mb-3">
+          <div class="section-title mb-0">Running Jobs</div>
+          <button class="btn btn-ghost text-xs" onclick="loadSchedulerStatus()">↺ Refresh</button>
+        </div>
+        <div id="sched-active-jobs" class="space-y-2 text-xs text-gray-300"></div>
+        <div class="section-title mt-4 mb-2">Recent Jobs</div>
+        <div id="sched-recent-jobs" class="space-y-2 text-xs text-gray-300"></div>
+      </div>
+      <div class="card p-4">
+        <div class="flex justify-between items-center mb-3">
+          <div class="section-title mb-0">Scheduler Activity</div>
+          <button class="btn btn-ghost text-xs" onclick="loadSchedulerActivity()">↺ Refresh</button>
+        </div>
+        <div id="sched-activity-log" class="log-area" style="height:300px"></div>
+      </div>
+    </div>
   </div>
 
   <!-- Activity Log sub-tab -->
@@ -191,17 +309,38 @@
             <div class="space-y-3">
               <div>
                 <label class="text-xs text-gray-400 block mb-1">Segment Type</label>
-                <select id="gen-type" class="input">
+                <select id="gen-type" class="input" onchange="onGenTypeChange()">
                   <option value="random">Random (from show's types)</option>
                 </select>
               </div>
-              <div>
-                <label class="text-xs text-gray-400 block mb-1">Topic <span class="text-gray-600">(leave blank for auto)</span></label>
+              <div class="flex items-center justify-between mb-1" id="gen-topic-toggle">
+                <label class="text-xs text-gray-400 block">Topic <span class="text-gray-600">(leave blank for auto)</span></label>
+                <label class="text-xs text-gray-500 flex items-center gap-1 cursor-pointer">
+                  <input id="gen-include-topic" type="checkbox" class="accent-indigo-500" checked onchange="toggleGenTopic()" />
+                  Include topic
+                </label>
+              </div>
+              <div id="gen-topic-row">
                 <div class="flex gap-2">
                   <input id="gen-topic" class="input" placeholder="e.g. pirate radio history..." oninput="onTopicInput()" />
                   <button id="gen-expand-btn" class="btn btn-ghost text-xs shrink-0 px-2" onclick="expandTopic()" disabled title="Type 2+ words to enable">✦ Expand</button>
                 </div>
                 <div id="gen-expand-status" class="text-xs text-gray-600 mt-1 hidden"></div>
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 block mb-1">Source</label>
+                <div class="grid grid-cols-[160px,1fr] gap-2">
+                  <select id="gen-source-type" class="input" onchange="updateGenSourceUI()">
+                    <option value="">None</option>
+                    <option value="url">Web URL</option>
+                    <option value="reddit">Reddit</option>
+                    <option value="youtube">YouTube</option>
+                  </select>
+                  <input id="gen-source-value" class="input" placeholder="Paste a URL, Reddit thread, or subreddit" />
+                </div>
+                <div id="gen-source-help" class="text-xs text-gray-600 mt-1">
+                  Optional. Add a source for the model to build from instead of generating from topic alone.
+                </div>
               </div>
             </div>
           </div>
@@ -215,10 +354,10 @@
                 <label class="text-xs text-gray-400 block mb-1">Track Type</label>
                 <select id="gen-music-vocal" class="input">
                   <option value="instrumental">Instrumental</option>
-                  <option value="vocal">Vocal (AI lyrics)</option>
+                  <option value="vocal">Vocal (AI lyrics from style prompt)</option>
                 </select>
               </div>
-              <div class="text-xs text-gray-600">Generated via MiniMax music-2.6 · ~130s per track · saves as MP3</div>
+              <div class="text-xs text-gray-600">Generated via MiniMax music-2.6 · ~130s per track · for vocal tracks, lyrics are generated from the style prompt before rendering</div>
             </div>
           </div>
           <div>
@@ -233,17 +372,29 @@
         <div class="space-y-3">
           <div>
             <label class="text-xs text-gray-400 block mb-1">TTS Backend</label>
-            <select id="gen-tts" class="input">
+            <select id="gen-tts" class="input" onchange="updateGenHostVoiceOptions()">
               <option value="">Use show default</option>
               <option value="kokoro">Kokoro (local)</option>
               <option value="minimax">MiniMax (cloud)</option>
             </select>
           </div>
+          <div id="gen-minimax-long-row" class="flex items-start gap-2">
+            <label class="flex items-start gap-2 cursor-pointer text-xs text-gray-400">
+              <input type="checkbox" id="gen-minimax-long" class="accent-indigo-500 mt-0.5">
+              <span>
+                Finalize long-form with MiniMax async after Kokoro validation
+                <span class="block text-gray-600 mt-1">Sparingly used for long Reddit / deep-dive pieces. If off, long segments stay on Kokoro.</span>
+              </span>
+            </label>
+          </div>
           <div>
             <label class="text-xs text-gray-400 block mb-1">Host Voice Override</label>
-            <select id="gen-host-voice" class="input">
-              <option value="">Use show default</option>
-            </select>
+            <div class="flex gap-2">
+              <select id="gen-host-voice" class="input flex-1" onchange="syncGenHostVoiceSampleButton()">
+                <option value="">Use show default</option>
+              </select>
+              <button id="gen-host-voice-btn" class="btn btn-ghost text-xs px-3 shrink-0" onclick="previewVoiceGen()" title="Play voice sample">▶</button>
+            </div>
           </div>
         </div>
       </div>
@@ -265,11 +416,17 @@
           <div class="grid grid-cols-2 gap-2">
             <div>
               <label class="text-xs text-gray-400 block mb-1">Guest Voice (Kokoro)</label>
-              <select id="gen-guest-voice-kokoro" class="input"></select>
+              <div class="flex gap-2">
+                <select id="gen-guest-voice-kokoro" class="input flex-1" onchange="syncVoiceSampleButtonFromSelect('gen-guest-voice-kokoro', 'gen-guest-voice-kokoro-btn', 'kokoro')"></select>
+                <button id="gen-guest-voice-kokoro-btn" class="btn btn-ghost text-xs px-3 shrink-0" onclick="previewGuestVoice('kokoro', 'gen-guest-voice-kokoro', 'gen-guest-voice-kokoro-btn')" title="Play voice sample">▶</button>
+              </div>
             </div>
             <div>
               <label class="text-xs text-gray-400 block mb-1">Guest Voice (MiniMax)</label>
-              <select id="gen-guest-voice-minimax" class="input"></select>
+              <div class="flex gap-2">
+                <select id="gen-guest-voice-minimax" class="input flex-1" onchange="syncVoiceSampleButtonFromSelect('gen-guest-voice-minimax', 'gen-guest-voice-minimax-btn', 'minimax')"></select>
+                <button id="gen-guest-voice-minimax-btn" class="btn btn-ghost text-xs px-3 shrink-0" onclick="previewGuestVoice('minimax', 'gen-guest-voice-minimax', 'gen-guest-voice-minimax-btn')" title="Play voice sample">▶</button>
+              </div>
             </div>
           </div>
           <div>
@@ -292,6 +449,7 @@
           <div class="flex items-center gap-3">
             <span id="gen-timer" class="text-xs text-yellow-400 hidden"></span>
             <div id="job-status-pill"></div>
+            <button class="btn btn-ghost text-xs px-3 py-1" onclick="copyGenerationLog()">Copy</button>
           </div>
         </div>
         <div id="gen-log" class="log-area">Ready. Configure settings and click Generate.</div>
@@ -309,9 +467,22 @@
 <!-- ===== LIBRARY ===== -->
 <div id="tab-library" class="hidden">
   <div class="flex justify-between items-center mb-4">
-    <div class="flex gap-3">
-      <button class="btn btn-ghost text-xs active" onclick="switchLibrary('segments', this)">Talk Segments</button>
-      <button class="btn btn-ghost text-xs" onclick="switchLibrary('bumpers', this)">Music Bumpers</button>
+    <div>
+      <div class="flex gap-2 items-center flex-wrap">
+        <label class="text-xs text-gray-500 flex items-center gap-2">
+          <span>Filter</span>
+          <select id="library-filter-select" class="input text-xs py-1 px-2 min-w-[220px]" onchange="setLibraryFilter(this.value)">
+            <option value="all">All items</option>
+            <option value="segments">Talk segments</option>
+            <option value="bumpers">Music bumpers</option>
+          </select>
+        </label>
+        <button class="btn btn-ghost text-xs" onclick="clearLibraryFilter()">Clear filters</button>
+        <span class="mx-2 text-gray-700">|</span>
+        <button class="btn btn-ghost text-xs active" data-library-tab-btn onclick="switchLibrary('segments', this)">Talk Segments</button>
+        <button class="btn btn-ghost text-xs" data-library-tab-btn onclick="switchLibrary('bumpers', this)">Music Bumpers</button>
+      </div>
+      <div id="library-status" class="text-xs text-gray-500 mt-2"></div>
     </div>
     <button class="btn btn-ghost text-xs" onclick="loadLibrary()">↺ Refresh</button>
   </div>
@@ -324,6 +495,153 @@
 </div>
 
 </div><!-- /px-6 -->
+
+<!-- Shared TTS preview audio element -->
+<audio id="preview-audio" preload="none"></audio>
+<!-- Shared cached voice sample player -->
+<audio id="voice-sample-audio" preload="none"></audio>
+
+<!-- ===== SEGMENT TYPE MODAL ===== -->
+<div id="segment-type-modal" class="modal-overlay hidden">
+  <div class="modal" style="width:780px">
+    <h2 class="text-base font-bold mb-4" id="segment-type-modal-title">Edit Segment Type</h2>
+    <input id="segment-type-modal-id" type="hidden" />
+
+    <div class="space-y-4">
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">Segment Type ID <span class="text-gray-600">(slug, no spaces)</span></label>
+          <input id="segment-type-modal-slug" class="input" placeholder="deep_dive" />
+        </div>
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">Display Name</label>
+          <input id="segment-type-modal-name" class="input" placeholder="Deep Dive" />
+        </div>
+      </div>
+
+      <div>
+        <label class="text-xs text-gray-400 block mb-1">Description</label>
+        <input id="segment-type-modal-description" class="input" placeholder="Short explanation shown in the admin UI" />
+      </div>
+
+      <div class="grid grid-cols-3 gap-3">
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">Min Words</label>
+          <input id="segment-type-modal-min" type="number" min="1" value="1500" class="input" />
+        </div>
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">Max Words</label>
+          <input id="segment-type-modal-max" type="number" min="1" value="2500" class="input" />
+        </div>
+        <div class="flex items-end">
+          <label class="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
+            <input id="segment-type-modal-multi" type="checkbox" class="accent-indigo-500">
+            <span>Multi-voice segment</span>
+          </label>
+        </div>
+      </div>
+
+      <div>
+        <label class="text-xs text-gray-400 block mb-1">Prompt Template</label>
+        <textarea id="segment-type-modal-prompt" class="input resize-none" style="height:220px" placeholder="You can reference placeholders like {headlines}, {primary_host_name}, {secondary_host_name}, and {guest_name}."></textarea>
+      </div>
+    </div>
+
+    <div class="flex justify-end gap-3 mt-6">
+      <button class="btn btn-ghost" onclick="closeSegmentTypeModal()">Cancel</button>
+      <button class="btn btn-danger hidden" id="segment-type-modal-delete-btn" onclick="deleteSegmentType()">Delete Type</button>
+      <button class="btn btn-primary" onclick="saveSegmentType()">Save Segment Type</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== HOST MODAL ===== -->
+<div id="host-modal" class="modal-overlay hidden">
+  <div class="modal" style="width:720px">
+    <h2 class="text-base font-bold mb-4" id="host-modal-title">Edit Host</h2>
+    <input id="host-modal-id" type="hidden" />
+
+    <div class="space-y-4">
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">Host ID <span class="text-gray-600">(slug, no spaces)</span></label>
+          <input id="host-modal-slug" class="input" placeholder="liminal_operator" />
+        </div>
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">Display Name</label>
+          <input id="host-modal-name" class="input" placeholder="The Liminal Operator" />
+        </div>
+      </div>
+
+      <div>
+        <label class="text-xs text-gray-400 block mb-1">Bio / Identity <span class="text-gray-600">(used in LLM prompts)</span></label>
+        <textarea id="host-modal-bio" class="input resize-none" style="height:120px" placeholder="Who is this host? Write in second person: 'You are...'"></textarea>
+      </div>
+
+      <div>
+        <label class="text-xs text-gray-400 block mb-1">Voice Style <span class="text-gray-600">(delivery instructions for the LLM)</span></label>
+        <textarea id="host-modal-voice-style" class="input resize-none" style="height:80px" placeholder="Measured pace. No rush. Use [pause] liberally..."></textarea>
+      </div>
+
+      <details class="text-xs">
+        <summary class="cursor-pointer text-gray-500 hover:text-gray-300 select-none mb-2">▸ Advanced character fields (philosophy, anti-patterns)</summary>
+        <div class="space-y-3 mt-2">
+          <div>
+            <label class="text-xs text-gray-400 block mb-1">Philosophy</label>
+            <textarea id="host-modal-philosophy" class="input resize-none" style="height:80px" placeholder="Core beliefs that shape how this host sees the world..."></textarea>
+          </div>
+          <div>
+            <label class="text-xs text-gray-400 block mb-1">Anti-patterns <span class="text-gray-600">(what to never do)</span></label>
+            <textarea id="host-modal-anti" class="input resize-none" style="height:80px" placeholder="NEVER:&#10;- Say 'Hey there!'&#10;- Use morning-DJ energy"></textarea>
+          </div>
+        </div>
+      </details>
+
+      <div class="grid grid-cols-3 gap-3">
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">Default TTS Backend</label>
+          <select id="host-modal-tts-backend" class="input">
+            <option value="kokoro">Kokoro (local)</option>
+            <option value="minimax">MiniMax (cloud)</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">Speaking Pace (wpm)</label>
+          <input id="host-modal-pace" type="number" min="80" max="220" value="130" class="input" />
+        </div>
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">Topics <span class="text-gray-600">(comma-separated)</span></label>
+          <input id="host-modal-topics" class="input" placeholder="philosophy, music_history" />
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">Kokoro Voice</label>
+          <div class="flex gap-2">
+            <select id="host-modal-voice-kokoro" class="input flex-1" onchange="syncVoiceSampleButtonFromSelect('host-modal-voice-kokoro', 'host-modal-voice-kokoro-btn', 'kokoro')"></select>
+            <button id="host-modal-voice-kokoro-btn" class="btn btn-ghost text-xs px-3 shrink-0" onclick="previewHostVoice('kokoro', 'host-modal-voice-kokoro', 'host-modal-voice-kokoro-btn')" title="Play voice sample">▶</button>
+          </div>
+        </div>
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">MiniMax Voice</label>
+          <div class="flex gap-2">
+            <select id="host-modal-voice-minimax" class="input flex-1" onchange="syncVoiceSampleButtonFromSelect('host-modal-voice-minimax', 'host-modal-voice-minimax-btn', 'minimax')"></select>
+            <button id="host-modal-voice-minimax-btn" class="btn btn-ghost text-xs px-3 shrink-0" onclick="previewHostVoice('minimax', 'host-modal-voice-minimax', 'host-modal-voice-minimax-btn')" title="Play voice sample">▶</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="host-preview-status" class="text-xs text-gray-600 hidden"></div>
+    </div>
+
+    <div class="flex justify-end gap-3 mt-6">
+      <button class="btn btn-ghost" onclick="closeHostModal()">Cancel</button>
+      <button class="btn btn-danger hidden" id="host-modal-delete-btn" onclick="deleteHost()">Delete Host</button>
+      <button class="btn btn-primary" onclick="saveHost()">Save Host</button>
+    </div>
+  </div>
+</div>
 
 <!-- ===== SHOW MODAL ===== -->
 <div id="show-modal" class="modal-overlay hidden">
@@ -350,30 +668,28 @@
 
       <div class="grid grid-cols-2 gap-3">
         <div>
-          <label class="text-xs text-gray-400 block mb-1">Topic Focus</label>
-          <select id="modal-topic-focus" class="input"></select>
+          <label class="text-xs text-gray-400 block mb-1">Show Type</label>
+          <select id="modal-show-type" class="input" onchange="onShowTypeChange(this.value)"></select>
         </div>
-        <div>
+        <div id="modal-bumper-wrap">
           <label class="text-xs text-gray-400 block mb-1">Bumper Style</label>
-          <select id="modal-bumper-style" class="input">
-            <option value="ambient">Ambient</option>
-            <option value="jazz">Jazz</option>
-            <option value="soul">Soul</option>
-            <option value="downtempo">Downtempo</option>
-            <option value="indie">Indie</option>
-            <option value="electronic">Electronic</option>
-            <option value="folk">Folk</option>
-          </select>
+          <select id="modal-bumper-style" class="input"></select>
         </div>
       </div>
 
-      <div>
+      <div id="modal-topic-wrap">
+        <label class="text-xs text-gray-400 block mb-1">Topic Focus</label>
+        <select id="modal-topic-focus" class="input"></select>
+      </div>
+
+      <div id="modal-research-topic-wrap">
         <label class="text-xs text-gray-400 block mb-1">Research Topic <span class="text-gray-600">(used as primary script focus)</span></label>
         <input id="modal-research-topic" class="input" placeholder="e.g. AI consciousness and the philosophy of mind" />
       </div>
 
-      <div>
-        <label class="text-xs text-gray-400 block mb-1">Research Sources</label>
+      <div id="modal-source-wrap">
+        <label class="text-xs text-gray-400 block mb-1">Source Rules</label>
+        <div id="modal-source-hint" class="text-xs text-gray-500 mb-2"></div>
         <div id="modal-sources" class="space-y-2 mb-2"></div>
         <button class="btn btn-ghost text-xs" onclick="addSource()">+ Add Source</button>
       </div>
@@ -430,6 +746,69 @@
           </div>
         </div>
       </div>
+      <div>
+        <div class="section-title">Auto Generation <span class="text-gray-600 text-xs normal-case font-normal ml-1">— saved with the show</span></div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <div class="text-xs text-gray-400">Talk Segments</div>
+              <label class="flex items-center gap-1 text-xs text-gray-500">
+                <input id="modal-talk-enabled" type="checkbox" class="accent-indigo-500">
+                Auto
+              </label>
+            </div>
+            <div class="grid grid-cols-3 gap-2">
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Min</label>
+                <input id="modal-talk-min" type="number" min="0" class="input" placeholder="5">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Target</label>
+                <input id="modal-talk-target" type="number" min="0" class="input" placeholder="15">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Cadence</label>
+                <select id="modal-talk-cadence" class="input">
+                  <option value="continuous">continuous</option>
+                  <option value="hourly">hourly</option>
+                  <option value="daily">daily</option>
+                  <option value="weekly">weekly</option>
+                  <option value="monthly">monthly</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <div class="text-xs text-gray-400">Music Bumpers</div>
+              <label class="flex items-center gap-1 text-xs text-gray-500">
+                <input id="modal-music-enabled" type="checkbox" class="accent-indigo-500">
+                Auto
+              </label>
+            </div>
+            <div class="grid grid-cols-3 gap-2">
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Min</label>
+                <input id="modal-music-min" type="number" min="0" class="input" placeholder="3">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Target</label>
+                <input id="modal-music-target" type="number" min="0" class="input" placeholder="8">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Cadence</label>
+                <select id="modal-music-cadence" class="input">
+                  <option value="continuous">continuous</option>
+                  <option value="hourly">hourly</option>
+                  <option value="daily">daily</option>
+                  <option value="weekly">weekly</option>
+                  <option value="monthly">monthly</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="flex justify-end gap-3 mt-6">
@@ -446,12 +825,19 @@
 // ============================================================
 let allShows = {};
 let allHosts = {};
+let allSegmentTypes = {};
+let stationSettings = {};
 let genOptions = {};
+let showTaxonomy = {show_types:{}, topic_focuses:[], bumper_styles:[], source_types:[]};
+let voiceSamplesCatalog = {kokoro: [], minimax: []};
 let currentSchedule = {base: [], overrides: []};
+let libraryFilter = 'all';
 let activeJobId = null;
 let jobPollTimer = null;
+let schedPollTimer = null;
 const SHOW_COLORS = ['#4f46e5','#0891b2','#059669','#d97706','#dc2626','#7c3aed','#0284c7','#65a30d'];
 let showColorMap = {};
+let libraryFilterOptionsReady = false;
 
 // ============================================================
 // Tab management
@@ -464,9 +850,21 @@ function showTab(name) {
   });
   if (name === 'dashboard') loadDashboard();
   if (name === 'shows') loadShows();
+  if (name === 'hosts') loadHosts();
+  if (name === 'segments') loadSegmentTypes();
+  if (name === 'taxonomy') loadTaxonomyTab();
+  if (name === 'settings') loadSettings();
   if (name === 'schedule') loadScheduleTab();
   if (name === 'generate') loadGenerateTab();
   if (name === 'library') loadLibrary();
+}
+
+function switchHostsTab(name, btn) {
+  document.getElementById('hoststab-hosts').classList.toggle('hidden', name !== 'hosts');
+  document.getElementById('hoststab-voices').classList.toggle('hidden', name !== 'voices');
+  document.querySelectorAll('#tab-hosts .tab-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  if (name === 'voices') renderVoiceSamples();
 }
 
 // ============================================================
@@ -476,6 +874,190 @@ async function api(path, opts={}) {
   const r = await fetch('/api' + path, opts);
   if (!r.ok) throw new Error(await r.text());
   return r.json();
+}
+
+function showTypeDefs() {
+  return showTaxonomy?.show_types || {};
+}
+
+function showTypeDef(id) {
+  return showTypeDefs()[id] || showTypeDefs().research || {
+    name: id,
+    description: '',
+    uses_topic_focus: true,
+    uses_source_rules: true,
+    uses_bumper_style: true,
+  };
+}
+
+function renderShowTypeOptions(selected='research') {
+  return Object.entries(showTypeDefs()).map(([id, st]) =>
+    `<option value="${id}" ${id===selected?'selected':''}>${st.name}</option>`
+  ).join('');
+}
+
+function applyShowTypeDefaults(showType, force=false) {
+  const defs = showTypeDef(showType);
+  const boxes = [...document.querySelectorAll('.seg-type-cb')];
+  if (!boxes.length) return;
+  const checked = boxes.filter(cb => cb.checked);
+  if (!force && checked.length) return;
+  const defaults = new Set(defs.default_segment_types || []);
+  if (!defaults.size) return;
+  boxes.forEach(cb => { cb.checked = defaults.has(cb.value); });
+}
+
+function renderTopicFocusOptions(selected='') {
+  return (showTaxonomy.topic_focuses || []).map(f =>
+    `<option value="${f}" ${f===selected?'selected':''}>${f}</option>`
+  ).join('');
+}
+
+function renderBumperStyleOptions(selected='ambient') {
+  return (showTaxonomy.bumper_styles || ['ambient','jazz','soul','downtempo','indie','electronic','folk']).map(f =>
+    `<option value="${f}" ${f===selected?'selected':''}>${f}</option>`
+  ).join('');
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function libraryActionOptionsHtml(currentShow, selectId) {
+  return Object.entries(allShows).map(([id, s]) =>
+    `<option value="${id}" ${id===currentShow?'selected':''}>${escapeHtml(s.name || id)}</option>`
+  ).join('');
+}
+
+function libraryActionMenuHtml(kind, show, name, eid) {
+  const selectId = `${eid}_target`;
+  const title = kind === 'segments' ? 'Segment' : 'Bumper';
+  return `
+    <div class="flex items-center gap-2 flex-wrap text-xs text-gray-500">
+      <span class="uppercase tracking-widest text-[10px] text-gray-600">${title} actions</span>
+      <select id="${selectId}" class="input text-xs" style="width:170px">
+        ${libraryActionOptionsHtml(show, selectId)}
+      </select>
+      <button class="btn btn-ghost text-xs px-3" data-library-kind="${escapeHtml(kind)}" data-library-action="copy" data-library-show="${escapeHtml(show)}" data-library-name="${escapeHtml(name)}" data-library-target="${selectId}" onclick="libraryActionFromButton(this)">Copy</button>
+      <button class="btn btn-ghost text-xs px-3" data-library-kind="${escapeHtml(kind)}" data-library-action="move" data-library-show="${escapeHtml(show)}" data-library-name="${escapeHtml(name)}" data-library-target="${selectId}" onclick="libraryActionFromButton(this)">Move</button>
+      <button class="btn btn-ghost text-xs px-3" data-library-kind="${escapeHtml(kind)}" data-library-action="reset" data-library-show="${escapeHtml(show)}" data-library-name="${escapeHtml(name)}" onclick="libraryActionFromButton(this)">Reset plays</button>
+    </div>`;
+}
+
+function libraryActionFromButton(btn) {
+  const kind = btn.dataset.libraryKind;
+  const action = btn.dataset.libraryAction;
+  const show = btn.dataset.libraryShow;
+  const name = btn.dataset.libraryName;
+  const targetSelectId = btn.dataset.libraryTarget || null;
+  return libraryAction(kind, action, show, name, targetSelectId);
+}
+
+function previewFromButton(btn) {
+  const eid = btn.dataset.previewEid;
+  const src = btn.dataset.previewSrc;
+  if (eid && src) togglePreview(eid, src);
+}
+
+function deleteLibraryFromButton(btn) {
+  const kind = btn.dataset.deleteKind;
+  const show = btn.dataset.deleteShow;
+  const name = btn.dataset.deleteName;
+  if (kind === 'segment') return deleteSegment(show, name);
+  if (kind === 'bumper') return deleteBumper(show, name);
+}
+
+function voiceLabel(backend, voice) {
+  const entries = voiceSamplesCatalog?.[backend] || [];
+  const entry = entries.find(v => v.voice === voice);
+  return entry?.label || voice;
+}
+
+async function loadTaxonomyTab() {
+  showTaxonomy = await api('/show-taxonomy').catch(() => ({show_types:{}, topic_focuses:[], bumper_styles:[], source_types:[]}));
+  renderTaxonomyTab();
+}
+
+function renderTaxonomyTab() {
+  const topicRoot = document.getElementById('taxonomy-topic-list');
+  const bumperRoot = document.getElementById('taxonomy-bumper-list');
+  const showTypesRoot = document.getElementById('taxonomy-show-types');
+  if (topicRoot) {
+    const items = showTaxonomy.topic_focuses || [];
+    topicRoot.innerHTML = items.map(v => taxonomyRowHtml(v, 'taxonomy-topic-list')).join('') || '<div class="text-xs text-gray-600">No topic focuses defined.</div>';
+  }
+  if (bumperRoot) {
+    const items = showTaxonomy.bumper_styles || [];
+    bumperRoot.innerHTML = items.map(v => taxonomyRowHtml(v, 'taxonomy-bumper-list')).join('') || '<div class="text-xs text-gray-600">No bumper styles defined.</div>';
+  }
+  if (showTypesRoot) {
+    showTypesRoot.innerHTML = Object.entries(showTypeDefs()).map(([id, st]) => `
+      <div class="border border-gray-800 rounded p-3">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="font-bold">${escapeHtml(st.name)}</span>
+          <span class="text-gray-500">${escapeHtml(id)}</span>
+        </div>
+        <div class="text-gray-500 mb-1">${escapeHtml(st.description || '')}</div>
+        <div class="text-gray-600">Topic focus: ${st.uses_topic_focus ? 'yes' : 'no'} · Source rules: ${st.uses_source_rules ? 'yes' : 'no'} · Bumper style: ${st.uses_bumper_style ? 'yes' : 'no'}</div>
+      </div>
+    `).join('');
+  }
+}
+
+function taxonomyRowHtml(value, containerId) {
+  return `
+    <div class="flex gap-2 items-center taxonomy-row">
+      <input class="input taxonomy-value" value="${escapeHtml(value)}" />
+      <button class="btn btn-ghost text-xs px-2" onclick="removeTaxonomyItem(this)">✕</button>
+    </div>`;
+}
+
+function addTaxonomyItem(containerId) {
+  const root = document.getElementById(containerId);
+  if (!root) return;
+  const row = document.createElement('div');
+  row.className = 'flex gap-2 items-center taxonomy-row';
+  row.innerHTML = '<input class="input taxonomy-value" value="" /><button class="btn btn-ghost text-xs px-2" onclick="removeTaxonomyItem(this)">✕</button>';
+  root.appendChild(row);
+}
+
+function removeTaxonomyItem(btn) {
+  btn.closest('.taxonomy-row')?.remove();
+}
+
+function getTaxonomyItems(containerId) {
+  return [...document.querySelectorAll(`#${containerId} .taxonomy-value`)].map(i => i.value.trim()).filter(Boolean);
+}
+
+async function saveTaxonomy() {
+  const body = {
+    topic_focuses: getTaxonomyItems('taxonomy-topic-list'),
+    bumper_styles: getTaxonomyItems('taxonomy-bumper-list'),
+  };
+  const updated = await api('/show-taxonomy', {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  showTaxonomy = updated;
+  renderTaxonomyTab();
+  alert('Show taxonomy saved.');
+}
+
+function renderVoiceOptions(backend, voices, selected = '', allowBlank = false, blankLabel = 'Use show default') {
+  const options = [];
+  if (allowBlank) {
+    options.push(`<option value="">${blankLabel}</option>`);
+  }
+  (voices || []).forEach(v => {
+    options.push(`<option value="${v}" ${v === selected ? 'selected' : ''}>${voiceLabel(backend, v)}</option>`);
+  });
+  return options.join('');
 }
 
 // ============================================================
@@ -492,11 +1074,20 @@ async function updateStatusBar() {
     st.textContent = '⬤ Streamer';
     st.style.color = s.streamer ? '#86efac' : '#fca5a5';
     const t = s.now_playing?.track;
-    np.textContent = t ? '▶ ' + t : '';
+    const show = s.now_playing?.show || s.now_playing?.show_name;
+    const label = show ? `▶ ${show}${t ? ' · ' + t : ''}` : (t ? '▶ ' + t : '');
+    np.textContent = label;
+    np.title = label;
   } catch(e) {}
 }
 setInterval(updateStatusBar, 8000);
 updateStatusBar();
+
+function updateStationBranding(stationName) {
+  const name = (stationName || 'Station').trim() || 'Station';
+  document.getElementById('station-wordmark').textContent = name;
+  document.title = `${name} Admin`;
+}
 
 // ============================================================
 // Dashboard
@@ -514,7 +1105,7 @@ async function loadDashboard() {
     const np = s.now_playing;
     document.getElementById('dash-now-playing').innerHTML = np?.track
       ? `<div class="font-bold">${np.track}</div>
-         <div class="text-gray-500 text-xs mt-1">${np.type || ''} · ${np.show_name || ''}</div>
+         <div class="text-gray-500 text-xs mt-1">${np.type || ''} · ${np.show || np.show_name || ''}</div>
          <div class="text-gray-600 text-xs mt-1">${np.listeners ?? 0} listeners</div>`
       : '<div class="text-gray-600">No active stream</div>';
 
@@ -534,8 +1125,26 @@ loadDashboard();
 // Shows
 // ============================================================
 async function loadShows() {
-  allShows = await api('/shows');
-  allHosts = await api('/hosts');
+  try {
+    if (!Object.keys(genOptions).length) {
+      try {
+        genOptions = await api('/generate/options');
+      } catch(e) {
+        genOptions = {};
+      }
+    }
+    allShows = await api('/shows');
+    allHosts = await api('/hosts');
+    showTaxonomy = await api('/show-taxonomy').catch(() => ({show_types:{}, topic_focuses:[], bumper_styles:[], source_types:[]}));
+    try {
+      allSegmentTypes = await api('/segment-types');
+    } catch(e) {
+      allSegmentTypes = {};
+    }
+  } catch(e) {
+    document.getElementById('shows-list').innerHTML = `<div class="text-red-400 text-sm">Failed to load shows: ${e.message}</div>`;
+    return;
+  }
   const colors = Object.keys(allShows);
   colors.forEach((id, i) => { showColorMap[id] = SHOW_COLORS[i % SHOW_COLORS.length]; });
 
@@ -546,12 +1155,13 @@ async function loadShows() {
           <div class="w-3 h-3 rounded-full" style="background:${showColorMap[id]}"></div>
           <span class="font-bold text-sm">${show.name}</span>
           <span class="text-gray-600 text-xs">${id}</span>
-          <span class="pill pill-blue">${show.topic_focus}</span>
+          <span class="pill pill-yellow">${showTypeDef(show.show_type || 'research').name}</span>
+          ${show.topic_focus ? `<span class="pill pill-blue">${show.topic_focus}</span>` : ''}
         </div>
         <div class="text-gray-500 text-xs mb-2">${show.description}</div>
         <div class="flex flex-wrap gap-1">
           ${(show.hosts||[]).map(h=>`<span class="pill" style="background:#1e2d4a;color:#93c5fd">${h.id} (${h.role})</span>`).join('')}
-          ${(show.segment_types||[]).map(t=>`<span class="pill pill-purple">${t}</span>`).join('')}
+          ${(show.segment_types||[]).map(t=>`<span class="pill pill-purple">${allSegmentTypes[t]?.name || t}</span>`).join('')}
         </div>
         ${show.research_topic ? `<div class="text-xs text-indigo-400 mt-1">📌 ${show.research_topic}</div>` : ''}
       </div>
@@ -571,28 +1181,24 @@ function openShowModal(showId) {
   document.getElementById('modal-research-topic').value = show?.research_topic || '';
   document.getElementById('modal-delete-btn').classList.toggle('hidden', isNew);
 
-  // Topic focus options
-  const topicSel = document.getElementById('modal-topic-focus');
-  const topics = ['philosophy','music_history','current_events','culture','soul_music','night_philosophy','listeners'];
-  topicSel.innerHTML = topics.map(t => `<option value="${t}" ${t===show?.topic_focus?'selected':''}>${t}</option>`).join('');
-
-  // Bumper style
-  document.getElementById('modal-bumper-style').value = show?.bumper_style || 'ambient';
+  renderShowModalFields(show || {});
 
   // Sources
-  renderSources(show?.research_sources || []);
+  renderSources(show?.source_rules || show?.research_sources || []);
 
   // Segment types
-  const allTypes = ['show_intro','show_outro','station_id','deep_dive','news_analysis','interview','panel','story','listener_mailbag','music_essay'];
   const selected = show?.segment_types || [];
-  document.getElementById('modal-segment-types').innerHTML = allTypes.map(t => `
+  document.getElementById('modal-segment-types').innerHTML = Object.entries(allSegmentTypes).map(([id, st]) => `
     <label class="flex items-center gap-1 cursor-pointer">
-      <input type="checkbox" value="${t}" ${selected.includes(t)?'checked':''} class="seg-type-cb accent-indigo-500">
-      <span class="text-xs text-gray-300">${t}</span>
+      <input type="checkbox" value="${id}" ${selected.includes(id)?'checked':''} class="seg-type-cb accent-indigo-500">
+      <span class="text-xs text-gray-300">${st.name}</span>
+      ${st.multi_voice ? '<span class="text-[10px] text-purple-300">(multi)</span>' : ''}
     </label>`).join('');
+  applyShowTypeDefaults(show?.show_type || 'research', isNew);
 
   // Hosts
-  renderHosts(show?.hosts || [{id:'liminal_operator',role:'primary',voice_kokoro:'am_michael',voice_minimax:'Deep_Voice_Man',tts_backend:'kokoro'}]);
+  const defaultHostId = Object.keys(allHosts)[0] || 'liminal_operator';
+  renderHosts(show?.hosts || [{id:defaultHostId,role:'primary',voice_kokoro:allHosts[defaultHostId]?.tts_voice||'am_michael',voice_minimax:allHosts[defaultHostId]?.voice_minimax||'Deep_Voice_Man',tts_backend:allHosts[defaultHostId]?.tts_backend||'kokoro'}]);
 
   // Guests
   renderGuests(show?.guests || []);
@@ -605,27 +1211,135 @@ function openShowModal(showId) {
   document.getElementById('modal-music-max-plays').value = musicLc.max_plays ?? '';
   document.getElementById('modal-music-max-days').value = musicLc.max_days ?? '';
 
+  renderGenerationFields(show || {});
+
   document.getElementById('show-modal').classList.remove('hidden');
+}
+
+function defaultGenerationConfig(showType) {
+  const defaults = {
+    talk: {enabled: showType !== 'music_first', min_inventory: 5, target_inventory: 15, cadence: 'continuous'},
+    music: {enabled: showType === 'music_first', min_inventory: 3, target_inventory: 8, cadence: 'weekly'},
+  };
+  if (['content_ingest', 'hybrid', 'news_current_events', 'live_community', 'listener_driven'].includes(showType)) {
+    defaults.talk.enabled = true;
+  }
+  return defaults;
+}
+
+function renderGenerationFields(show) {
+  const showType = show?.show_type || 'research';
+  const existing = show?.generation || {};
+  const defaults = defaultGenerationConfig(showType);
+  const talk = { ...defaults.talk, ...(existing.talk || {}) };
+  const music = { ...defaults.music, ...(existing.music || {}) };
+  const set = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = value ?? '';
+  };
+  const check = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.checked = !!value;
+  };
+  check('modal-talk-enabled', talk.enabled);
+  set('modal-talk-min', talk.min_inventory);
+  set('modal-talk-target', talk.target_inventory);
+  set('modal-talk-cadence', talk.cadence || 'continuous');
+  check('modal-music-enabled', music.enabled);
+  set('modal-music-min', music.min_inventory);
+  set('modal-music-target', music.target_inventory);
+  set('modal-music-cadence', music.cadence || 'weekly');
+}
+
+function renderShowModalFields(show) {
+  const showType = show?.show_type || document.getElementById('modal-show-type')?.value || 'research';
+  const defs = showTypeDef(showType);
+  const showTypeSel = document.getElementById('modal-show-type');
+  const topicWrap = document.getElementById('modal-topic-wrap');
+  const researchTopicWrap = document.getElementById('modal-research-topic-wrap');
+  const sourceWrap = document.getElementById('modal-source-wrap');
+  const bumperWrap = document.getElementById('modal-bumper-wrap');
+  const sourceHint = document.getElementById('modal-source-hint');
+  const topicSel = document.getElementById('modal-topic-focus');
+
+  if (showTypeSel) {
+    showTypeSel.innerHTML = renderShowTypeOptions(showType);
+    showTypeSel.value = showType;
+  }
+  topicWrap.classList.toggle('hidden', !defs.uses_topic_focus);
+  researchTopicWrap.classList.toggle('hidden', !defs.uses_topic_focus);
+  sourceWrap.classList.toggle('hidden', !defs.uses_source_rules);
+  bumperWrap.classList.toggle('hidden', !defs.uses_bumper_style);
+  sourceHint.textContent = defs.uses_source_rules
+    ? 'Add source rules here. These can point at Reddit, YouTube, web URLs, RSS feeds, and more. For content-led shows, these are what the scheduler will draw from.'
+    : 'This show type does not use source rules by default.';
+
+  topicSel.innerHTML = renderTopicFocusOptions(show?.topic_focus || '');
+  document.getElementById('modal-bumper-style').innerHTML = renderBumperStyleOptions(show?.bumper_style || 'ambient');
+}
+
+function onShowTypeChange(showType) {
+  renderShowModalFields({show_type: showType});
+  applyShowTypeDefaults(showType, true);
+  renderGenerationFields({show_type: showType});
 }
 
 function closeModal() { document.getElementById('show-modal').classList.add('hidden'); }
 
 function renderSources(sources) {
-  document.getElementById('modal-sources').innerHTML = sources.map((s,i) => `
-    <div class="flex gap-2 items-center">
-      <select class="input source-type" style="width:110px" onchange="updateSource(${i})">
-        <option value="rss" ${s.type==='rss'?'selected':''}>RSS Feed</option>
-        <option value="url" ${s.type==='url'?'selected':''}>URL</option>
-        <option value="topic" ${s.type==='topic'?'selected':''}>Topic</option>
+  const sourceTypes = showTaxonomy.source_types || [
+    {id:'url', name:'Web URL'},
+    {id:'reddit_subreddit', name:'Reddit Subreddit'},
+    {id:'reddit_thread', name:'Reddit Thread'},
+    {id:'youtube_channel', name:'YouTube Channel'},
+    {id:'youtube_playlist', name:'YouTube Playlist'},
+    {id:'youtube_video', name:'YouTube Video'},
+    {id:'rss', name:'RSS Feed'},
+  ];
+  document.getElementById('modal-sources').innerHTML = sources.map((s,i) => {
+    const sourceType = s.type || s.source_type || 'url';
+    const sourceValue = s.value || s.url || s.source_value || s.description || '';
+    return `
+    <div class="grid grid-cols-[180px,1fr,100px,130px,140px,auto] gap-2 items-center source-row">
+      <select class="input source-type" onchange="syncSourceRowHint(this.closest('.source-row'))">
+        ${sourceTypes.map(t => `<option value="${t.id}" ${t.id===sourceType?'selected':''}>${t.name}</option>`).join('')}
       </select>
-      <input class="input source-value" value="${s.url||s.description||''}" placeholder="${s.type==='topic'?'Topic description...':'https://...'}" />
+      <input class="input source-value" value="${sourceValue}" placeholder="Paste a URL, subreddit, channel, or playlist" />
+      <input class="input source-lookback" type="number" min="1" value="${s.lookback_days || 7}" placeholder="days" title="Lookback window in days" />
+      <select class="input source-strategy">
+        <option value="latest" ${ (s.selection_strategy || 'latest') === 'latest' ? 'selected' : ''}>Latest</option>
+        <option value="top" ${s.selection_strategy === 'top' ? 'selected' : ''}>Top</option>
+        <option value="popular" ${s.selection_strategy === 'popular' ? 'selected' : ''}>Popular</option>
+        <option value="random" ${s.selection_strategy === 'random' ? 'selected' : ''}>Random</option>
+      </select>
+      <input class="input source-segment" value="${s.segment_type || ''}" placeholder="segment type" />
       <button class="btn btn-ghost text-xs px-2" onclick="removeSource(${i})">✕</button>
-    </div>`).join('');
+    </div>`;
+  }).join('');
+  [...document.querySelectorAll('#modal-sources .source-row')].forEach(syncSourceRowHint);
+}
+
+function syncSourceRowHint(row) {
+  if (!row) return;
+  const type = row.querySelector('.source-type')?.value || 'url';
+  const valueEl = row.querySelector('.source-value');
+  if (!valueEl) return;
+  if (type === 'reddit_subreddit') valueEl.placeholder = 'r/nosleep or /r/nosleep';
+  else if (type === 'reddit_thread') valueEl.placeholder = 'Reddit thread URL';
+  else if (type === 'youtube_channel') valueEl.placeholder = 'YouTube channel URL';
+  else if (type === 'youtube_playlist') valueEl.placeholder = 'YouTube playlist URL';
+  else if (type === 'youtube_video') valueEl.placeholder = 'YouTube video URL';
+  else if (type === 'rss') valueEl.placeholder = 'RSS feed URL';
+  else valueEl.placeholder = 'Paste a URL, subreddit, channel, or playlist';
 }
 
 function addSource() {
   const sources = getSources();
-  sources.push({type:'rss', url:''});
+  const showType = document.getElementById('modal-show-type')?.value || 'research';
+  const defaultType = ['content_ingest', 'hybrid', 'news_current_events', 'live_community', 'listener_driven'].includes(showType)
+    ? 'reddit_subreddit'
+    : 'url';
+  sources.push({type:defaultType, value:'', lookback_days:7, selection_strategy:'latest', segment_type:''});
   renderSources(sources);
 }
 
@@ -639,7 +1353,16 @@ function getSources() {
   return [...document.querySelectorAll('#modal-sources > div')].map(row => {
     const type = row.querySelector('.source-type').value;
     const val = row.querySelector('.source-value').value.trim();
-    return type==='topic' ? {type, description:val} : {type, url:val};
+    const lookback_days = parseInt(row.querySelector('.source-lookback').value) || 7;
+    const selection_strategy = row.querySelector('.source-strategy').value;
+    const segment_type = row.querySelector('.source-segment').value.trim();
+    return {
+      type,
+      value: val,
+      lookback_days,
+      selection_strategy,
+      segment_type,
+    };
   });
 }
 
@@ -651,9 +1374,8 @@ function renderHosts(hosts) {
   document.getElementById('modal-hosts').innerHTML = hosts.map((h,i) => `
     <div class="card p-3 space-y-2">
       <div class="flex gap-2 items-center">
-        <select class="input host-id" style="width:160px">
+        <select class="input host-id" style="width:200px" onchange="syncHostRowDefaults(this.closest('.card'))">
           ${hostIds.map(id=>`<option value="${id}" ${id===h.id?'selected':''}>${allHosts[id]?.name||id}</option>`).join('')}
-          <option value="custom" ${!hostIds.includes(h.id)?'selected':''}>Custom...</option>
         </select>
         <select class="input host-role" style="width:100px">
           ${HOST_ROLES.map(r=>`<option value="${r}" ${r===h.role?'selected':''}>${r}</option>`).join('')}
@@ -683,11 +1405,28 @@ function renderHosts(hosts) {
 
 function addHost() {
   const hosts = getHosts();
-  hosts.push({id:'liminal_operator',role:'co-host',voice_kokoro:'am_michael',voice_minimax:'Deep_Voice_Man',tts_backend:'kokoro'});
+  const firstHostId = Object.keys(allHosts)[0] || 'liminal_operator';
+  hosts.push({
+    id:firstHostId,
+    role:'co-host',
+    voice_kokoro:allHosts[firstHostId]?.tts_voice || 'am_michael',
+    voice_minimax:allHosts[firstHostId]?.voice_minimax || 'Deep_Voice_Man',
+    tts_backend:allHosts[firstHostId]?.tts_backend || 'kokoro'
+  });
   renderHosts(hosts);
 }
 
 function removeHost(i) { const h=getHosts(); h.splice(i,1); renderHosts(h); }
+
+function syncHostRowDefaults(row) {
+  if (!row) return;
+  const hostId = row.querySelector('.host-id').value;
+  const host = allHosts[hostId];
+  if (!host) return;
+  row.querySelector('.host-tts').value = host.tts_backend || 'kokoro';
+  row.querySelector('.host-voice-kokoro').value = host.tts_voice || 'am_michael';
+  row.querySelector('.host-voice-minimax').value = host.voice_minimax || 'Deep_Voice_Man';
+}
 
 function getHosts() {
   return [...document.querySelectorAll('#modal-hosts > div')].map(row => ({
@@ -728,20 +1467,36 @@ async function saveShow() {
   const newId = document.getElementById('modal-id-input').value.trim().toLowerCase().replace(/\s+/g,'_');
   if (!newId) return alert('Show ID required');
 
+  const showType = document.getElementById('modal-show-type').value || 'research';
+  const defs = showTypeDef(showType);
   const segTypes = [...document.querySelectorAll('.seg-type-cb:checked')].map(c=>c.value);
+  const sourceRules = defs.uses_source_rules ? getSources() : [];
+  const hosts = getHosts();
+  if (!hosts.length) return alert('Assign at least one host.');
+  if (!segTypes.length) return alert('Select at least one segment type.');
   const talkMaxPlays = document.getElementById('modal-talk-max-plays').value;
   const talkMaxDays = document.getElementById('modal-talk-max-days').value;
   const musicMaxPlays = document.getElementById('modal-music-max-plays').value;
   const musicMaxDays = document.getElementById('modal-music-max-days').value;
+  const talkGenEnabled = document.getElementById('modal-talk-enabled').checked;
+  const talkGenMin = document.getElementById('modal-talk-min').value;
+  const talkGenTarget = document.getElementById('modal-talk-target').value;
+  const talkGenCadence = document.getElementById('modal-talk-cadence').value;
+  const musicGenEnabled = document.getElementById('modal-music-enabled').checked;
+  const musicGenMin = document.getElementById('modal-music-min').value;
+  const musicGenTarget = document.getElementById('modal-music-target').value;
+  const musicGenCadence = document.getElementById('modal-music-cadence').value;
   const body = {
     name: document.getElementById('modal-name').value.trim(),
     description: document.getElementById('modal-description').value.trim(),
-    topic_focus: document.getElementById('modal-topic-focus').value,
-    research_topic: document.getElementById('modal-research-topic').value.trim(),
-    research_sources: getSources(),
+    show_type: showType,
+    topic_focus: defs.uses_topic_focus ? document.getElementById('modal-topic-focus').value : '',
+    research_topic: defs.uses_topic_focus ? document.getElementById('modal-research-topic').value.trim() : '',
+    research_sources: sourceRules,
+    source_rules: sourceRules,
     segment_types: segTypes,
-    bumper_style: document.getElementById('modal-bumper-style').value,
-    hosts: getHosts(),
+    bumper_style: defs.uses_bumper_style ? document.getElementById('modal-bumper-style').value : '',
+    hosts,
     guests: getGuests(),
     content_lifecycle: {
       talk: {
@@ -751,6 +1506,20 @@ async function saveShow() {
       music: {
         ...(musicMaxPlays ? {max_plays: parseInt(musicMaxPlays)} : {}),
         ...(musicMaxDays  ? {max_days:  parseInt(musicMaxDays)}  : {}),
+      },
+    },
+    generation: {
+      talk: {
+        enabled: talkGenEnabled,
+        ...(talkGenMin ? {min_inventory: parseInt(talkGenMin)} : {}),
+        ...(talkGenTarget ? {target_inventory: parseInt(talkGenTarget)} : {}),
+        ...(talkGenCadence ? {cadence: talkGenCadence} : {}),
+      },
+      music: {
+        enabled: musicGenEnabled,
+        ...(musicGenMin ? {min_inventory: parseInt(musicGenMin)} : {}),
+        ...(musicGenTarget ? {target_inventory: parseInt(musicGenTarget)} : {}),
+        ...(musicGenCadence ? {cadence: musicGenCadence} : {}),
       },
     },
   };
@@ -853,6 +1622,8 @@ async function saveSchedule() {
 async function loadGenerateTab() {
   genOptions = await api('/generate/options');
   allShows = await api('/shows');
+  allSegmentTypes = genOptions.segment_type_defs || {};
+  voiceSamplesCatalog = await api('/voice-samples').catch(() => ({kokoro: [], minimax: []}));
   // Ensure manual sub-tab is visible by default
   switchGenTab('manual', document.querySelector('#tab-generate .tab-btn'));
 
@@ -862,18 +1633,18 @@ async function loadGenerateTab() {
 
   const typeSel = document.getElementById('gen-type');
   typeSel.innerHTML = '<option value="random">Random (from show\'s types)</option>' +
-    genOptions.segment_types.map(t=>`<option value="${t}">${t}</option>`).join('');
-
-  const hostVoiceSel = document.getElementById('gen-host-voice');
-  hostVoiceSel.innerHTML = '<option value="">Use show default</option>' +
-    genOptions.kokoro_voices.map(v=>`<option value="${v}">${v}</option>`).join('');
+    genOptions.segment_types.map(t=>`<option value="${t}">${allSegmentTypes[t]?.name || t}</option>`).join('');
 
   const gvk = document.getElementById('gen-guest-voice-kokoro');
-  gvk.innerHTML = genOptions.kokoro_voices.map(v=>`<option value="${v}" ${v==='af_bella'?'selected':''}>${v}</option>`).join('');
+  gvk.innerHTML = renderVoiceOptions('kokoro', genOptions.kokoro_voices, 'af_bella');
 
   const gvm = document.getElementById('gen-guest-voice-minimax');
-  gvm.innerHTML = genOptions.minimax_voices.map(v=>`<option value="${v}" ${v==='Wise_Woman'?'selected':''}>${v}</option>`).join('');
+  gvm.innerHTML = renderVoiceOptions('minimax', genOptions.minimax_voices, 'Wise_Woman');
 
+  updateGenSourceUI();
+  updateGenHostVoiceOptions();
+  syncVoiceSampleButtonFromSelect('gen-guest-voice-kokoro', 'gen-guest-voice-kokoro-btn', 'kokoro');
+  syncVoiceSampleButtonFromSelect('gen-guest-voice-minimax', 'gen-guest-voice-minimax-btn', 'minimax');
   loadJobs();
 }
 
@@ -977,8 +1748,9 @@ function onGenShowChange() {
   const showId = document.getElementById('gen-show').value;
   const show = allShows[showId];
   if (!show) return;
+  const includeTopic = document.getElementById('gen-include-topic')?.checked !== false;
   // Pre-fill topic from show config
-  if (show.research_topic && !document.getElementById('gen-topic').value) {
+  if (includeTopic && show.research_topic && !document.getElementById('gen-topic').value) {
     document.getElementById('gen-topic').value = show.research_topic;
   }
   // Set TTS default
@@ -986,6 +1758,173 @@ function onGenShowChange() {
   if (primary) {
     document.getElementById('gen-tts').value = primary.tts_backend || '';
   }
+  updateGenMinimaxLongUI();
+  const sourceTypeEl = document.getElementById('gen-source-type');
+  const sourceValueEl = document.getElementById('gen-source-value');
+  const sourceRules = Array.isArray(show.source_rules) && show.source_rules.length
+    ? show.source_rules
+    : (Array.isArray(show.research_sources) ? show.research_sources : []);
+  if (!sourceValueEl.value && sourceRules.length) {
+    const first = sourceRules[0] || {};
+    const type = (first.type || first.source_type || '').toLowerCase();
+    const value = (first.value || first.url || first.source_value || '').trim();
+    if (value) {
+      sourceValueEl.value = value;
+      if (type.startsWith('reddit') || value.includes('reddit.com') || value.includes('redd.it')) {
+        sourceTypeEl.value = 'reddit';
+      } else if (type.startsWith('youtube') || value.includes('youtube.com') || value.includes('youtu.be')) {
+        sourceTypeEl.value = 'youtube';
+      } else {
+        sourceTypeEl.value = 'url';
+      }
+    }
+  }
+  updateGenSourceUI();
+  updateGenHostVoiceOptions();
+}
+
+function isExplicitManualSegmentType(type) {
+  return ['station_id', 'show_intro', 'show_outro'].includes((type || '').trim());
+}
+
+function onGenTypeChange() {
+  updateGenSourceUI();
+}
+
+function toggleGenTopic() {
+  const include = document.getElementById('gen-include-topic').checked;
+  const row = document.getElementById('gen-topic-row');
+  const topicEl = document.getElementById('gen-topic');
+  const expandBtn = document.getElementById('gen-expand-btn');
+  const expandStatus = document.getElementById('gen-expand-status');
+  if (include) {
+    row.classList.remove('hidden');
+    topicEl.disabled = false;
+    if (!topicEl.value.trim()) {
+      const showId = document.getElementById('gen-show').value;
+      const show = allShows[showId];
+      if (show?.research_topic) {
+        topicEl.value = show.research_topic;
+      }
+    }
+    expandBtn.disabled = topicEl.value.trim().split(/\s+/).length < 2;
+    expandStatus.classList.add('hidden');
+  } else {
+    topicEl.value = '';
+    row.classList.add('hidden');
+    topicEl.disabled = true;
+    expandBtn.disabled = true;
+    expandStatus.classList.add('hidden');
+  }
+}
+
+function updateGenHostVoiceOptions() {
+  const hostVoiceSel = document.getElementById('gen-host-voice');
+  const backend = document.getElementById('gen-tts').value || 'kokoro';
+  const voices = backend === 'minimax' ? genOptions.minimax_voices : genOptions.kokoro_voices;
+  const prev = hostVoiceSel.value;
+  hostVoiceSel.innerHTML = renderVoiceOptions(backend, voices, prev, true, 'Use show default');
+  updateGenMinimaxLongUI();
+  syncGenHostVoiceSampleButton();
+}
+
+function syncGenHostVoiceSampleButton() {
+  const backend = document.getElementById('gen-tts').value || 'kokoro';
+  syncVoiceSampleButtonFromSelect('gen-host-voice', 'gen-host-voice-btn', backend);
+}
+
+function updateGenSourceUI() {
+  const segmentType = document.getElementById('gen-type').value || 'random';
+  const explicitType = isExplicitManualSegmentType(segmentType);
+  const sourceTypeSel = document.getElementById('gen-source-type');
+  const sourceValueEl = document.getElementById('gen-source-value');
+  const type = document.getElementById('gen-source-type').value;
+  const valueEl = document.getElementById('gen-source-value');
+  const helpEl = document.getElementById('gen-source-help');
+  const topicEl = document.getElementById('gen-topic');
+  const expandBtn = document.getElementById('gen-expand-btn');
+  const topicRow = document.getElementById('gen-topic-row');
+  const ttsCard = document.getElementById('gen-tts-card');
+  const guestToggleRow = document.getElementById('gen-guest-toggle-row');
+  const guestCard = document.getElementById('gen-guest-card');
+  const guestEnabled = document.getElementById('gen-guest-enabled');
+  const includeTopic = document.getElementById('gen-include-topic')?.checked !== false;
+  if (explicitType) {
+    sourceTypeSel.value = '';
+    sourceValueEl.value = '';
+    sourceTypeSel.disabled = true;
+    sourceValueEl.disabled = true;
+    helpEl.textContent = 'Source is ignored for Station ID, Show Intro, and Show Outro.';
+    if (includeTopic) {
+      topicEl.disabled = false;
+      expandBtn.disabled = topicEl.value.trim().split(/\s+/).length < 2;
+      topicRow.classList.remove('hidden');
+    } else {
+      topicRow.classList.add('hidden');
+      topicEl.disabled = true;
+      expandBtn.disabled = true;
+    }
+    ttsCard.classList.remove('hidden');
+    guestToggleRow.classList.remove('hidden');
+    guestCard.classList.toggle('hidden', !guestEnabled.checked);
+    return;
+  }
+  sourceTypeSel.disabled = false;
+  sourceValueEl.disabled = false;
+  if (type === 'reddit') {
+    valueEl.placeholder = 'https://www.reddit.com/r/nosleep/comments/... or /r/nosleep';
+    helpEl.textContent = 'Reddit mode ignores Topic. Use Reddit Storytelling to read the post directly, or Reddit Post for summary/discussion.';
+    topicEl.disabled = true;
+    expandBtn.disabled = true;
+    topicRow.classList.remove('hidden');
+    ttsCard.classList.remove('hidden');
+    guestToggleRow.classList.remove('hidden');
+    return;
+  }
+  if (type === 'youtube') {
+    valueEl.placeholder = 'https://www.youtube.com/watch?v=... or https://youtu.be/...';
+    helpEl.textContent = 'YouTube mode ingests the video audio directly into the library and stores metadata/captions alongside it. Topic is ignored.';
+    topicEl.disabled = true;
+    expandBtn.disabled = true;
+    topicRow.classList.add('hidden');
+    ttsCard.classList.add('hidden');
+    guestToggleRow.classList.add('hidden');
+    guestEnabled.checked = false;
+    guestCard.classList.add('hidden');
+    return;
+  }
+  if (type === 'url') {
+    valueEl.placeholder = 'https://example.com/article';
+    helpEl.textContent = 'Web URL mode extracts article text and folds it into the prompt as source material.';
+    topicEl.disabled = false;
+    expandBtn.disabled = false;
+    return;
+  }
+  valueEl.placeholder = 'Paste a URL, Reddit thread, subreddit, or YouTube link';
+  helpEl.textContent = 'Optional. Add a source for the model to build from instead of generating from topic alone.';
+  if (includeTopic) {
+    topicEl.disabled = false;
+    expandBtn.disabled = topicEl.value.trim().split(/\s+/).length < 2;
+    topicRow.classList.remove('hidden');
+  } else {
+    topicRow.classList.add('hidden');
+    topicEl.disabled = true;
+    expandBtn.disabled = true;
+  }
+  ttsCard.classList.remove('hidden');
+  guestToggleRow.classList.remove('hidden');
+}
+
+function updateGenMinimaxLongUI() {
+  const backend = document.getElementById('gen-tts').value || 'kokoro';
+  const row = document.getElementById('gen-minimax-long-row');
+  row.classList.toggle('hidden', backend !== 'minimax');
+}
+
+function formatStationTime(ts) {
+  if (!ts) return '';
+  if (typeof ts === 'string' && ts.includes('T')) return ts.substring(11, 16);
+  return String(ts).substring(11, 16);
 }
 
 async function startGeneration() {
@@ -993,24 +1932,41 @@ async function startGeneration() {
   if (!showId) return alert('Select a show first.');
 
   const isMusicMode = _genContentType === 'music';
+  const minimaxLongAsync = !isMusicMode && document.getElementById('gen-minimax-long').checked;
+  if (minimaxLongAsync) {
+    const ok = confirm(
+      'Are you sure you want to use MiniMax long-form async?\n\n' +
+      'This will validate the script with Kokoro first, then spend the extra MiniMax credits on the final render.'
+    );
+    if (!ok) return;
+  }
+  const selectedSegmentType = document.getElementById('gen-type').value || 'random';
+  const explicitType = isExplicitManualSegmentType(selectedSegmentType);
+  const includeTopic = document.getElementById('gen-include-topic')?.checked !== false;
   const body = {
     show_id: showId,
     content_type: _genContentType,
-    segment_type: document.getElementById('gen-type').value || 'random',
+    segment_type: selectedSegmentType,
     // For music: reuse topic as caption prompt, tts_backend as vocal flag
     topic: isMusicMode
       ? document.getElementById('gen-music-caption').value.trim()
-      : document.getElementById('gen-topic').value.trim(),
+      : (includeTopic ? document.getElementById('gen-topic').value.trim() : ''),
+    include_topic: includeTopic,
+    source_type: isMusicMode || explicitType ? '' : document.getElementById('gen-source-type').value,
+    source_value: isMusicMode || explicitType ? '' : document.getElementById('gen-source-value').value.trim(),
     count: parseInt(document.getElementById('gen-count').value) || 1,
     tts_backend: isMusicMode
       ? document.getElementById('gen-music-vocal').value  // "instrumental" or "vocal"
       : document.getElementById('gen-tts').value,
-    host_voice: document.getElementById('gen-host-voice').value,
-    guest_name: document.getElementById('gen-guest-name').value.trim(),
-    guest_voice_kokoro: document.getElementById('gen-guest-voice-kokoro').value,
-    guest_voice_minimax: document.getElementById('gen-guest-voice-minimax').value,
-    guest_tts_backend: document.getElementById('gen-guest-tts').value,
+    minimax_long_async: minimaxLongAsync,
   };
+  if (!isMusicMode && body.source_type !== 'youtube') {
+    body.host_voice = document.getElementById('gen-host-voice').value;
+    body.guest_name = document.getElementById('gen-guest-name').value.trim();
+    body.guest_voice_kokoro = document.getElementById('gen-guest-voice-kokoro').value;
+    body.guest_voice_minimax = document.getElementById('gen-guest-voice-minimax').value;
+    body.guest_tts_backend = document.getElementById('gen-guest-tts').value;
+  }
 
   const logEl = document.getElementById('gen-log');
   logEl.textContent = 'Starting generation job...\n';
@@ -1064,7 +2020,7 @@ async function loadJobs() {
       <div class="flex justify-between items-center py-1 border-b border-gray-800">
         <span class="text-gray-400">${allShows[j.show_id]?.name||j.show_id} · ${j.content_type==='music' ? '♪ music bumper' : j.segment_type}</span>
         <div class="flex items-center gap-2">
-          <span class="text-gray-600 text-xs">${j.created_at?.substring(11,16)}</span>
+          <span class="text-gray-600 text-xs">${formatStationTime(j.created_at)}</span>
           <span class="pill ${j.status==='completed'?'pill-green':j.status==='failed'?'pill-red':'pill-yellow'}">${j.status}</span>
           <button class="text-indigo-400 hover:text-indigo-300" onclick="viewJob('${j.id}')">log</button>
         </div>
@@ -1082,24 +2038,125 @@ async function viewJob(jobId) {
   pill.innerHTML = `<span class="pill ${job.status==='completed'?'pill-green':job.status==='failed'?'pill-red':'pill-yellow'}">${job.status}</span>`;
 }
 
+async function copyGenerationLog() {
+  const logEl = document.getElementById('gen-log');
+  const text = (logEl && logEl.textContent) ? logEl.textContent : '';
+  if (!text.trim()) return;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    const pill = document.getElementById('job-status-pill');
+    const prev = pill.innerHTML;
+    pill.innerHTML = '<span class="pill pill-green">copied</span>';
+    setTimeout(() => { pill.innerHTML = prev; }, 1200);
+  } catch (e) {
+    alert('Could not copy the generation log.');
+  }
+}
+
 // ============================================================
 // Library
 // ============================================================
 function switchLibrary(type, btn) {
   document.getElementById('library-segments').classList.toggle('hidden', type!=='segments');
   document.getElementById('library-bumpers').classList.toggle('hidden', type!=='bumpers');
-  document.querySelectorAll('#tab-library .btn').forEach(b => b.classList.remove('active','bg-indigo-700','text-white'));
+  document.querySelectorAll('#tab-library [data-library-tab-btn]').forEach(b => b.classList.remove('active','bg-indigo-700','text-white'));
   btn.classList.add('active');
+  applyLibraryFilter();
+}
+
+function setLibraryFilter(filter) {
+  libraryFilter = filter || 'all';
+  const sel = document.getElementById('library-filter-select');
+  if (sel && sel.value !== libraryFilter) sel.value = libraryFilter;
+  applyLibraryFilter();
+}
+
+function clearLibraryFilter() {
+  setLibraryFilter('all');
+}
+
+function libraryFilterLabel(value) {
+  if (!value || value === 'all') return 'All items';
+  if (value === 'segments') return 'Talk segments';
+  if (value === 'bumpers') return 'Music bumpers';
+  if (value.startsWith('type:')) {
+    const slug = value.slice(5);
+    const defs = allSegmentTypes || {};
+    const def = defs[slug];
+    return def?.display_name || def?.name || slug;
+  }
+  return value;
+}
+
+function applyLibraryFilter() {
+  document.querySelectorAll('.library-item').forEach(el => {
+    const kind = el.dataset.libraryKind;
+    const segType = (el.dataset.librarySegmentType || '').trim();
+    let show = true;
+    if (libraryFilter === 'segments') {
+      show = kind === 'segments';
+    } else if (libraryFilter === 'bumpers') {
+      show = kind === 'bumpers';
+    } else if (libraryFilter.startsWith('type:')) {
+      show = kind === 'segments' && segType === libraryFilter.slice(5);
+    }
+    el.classList.toggle('hidden', !show);
+  });
+  document.querySelectorAll('.library-show-card').forEach(card => {
+    const visibleItems = [...card.querySelectorAll('.library-item')].some(el => !el.classList.contains('hidden'));
+    card.classList.toggle('hidden', !visibleItems);
+  });
+  const status = document.getElementById('library-status');
+  if (status) {
+    status.textContent = `Showing: ${libraryFilterLabel(libraryFilter)}`;
+  }
 }
 
 async function loadLibrary() {
+  if (!Object.keys(allShows).length) allShows = await api('/shows');
+  if (!libraryFilterOptionsReady) {
+    if (!Object.keys(allSegmentTypes).length) {
+      const opts = await api('/generate/options').catch(() => ({}));
+      allSegmentTypes = opts.segment_type_defs || {};
+    }
+    const select = document.getElementById('library-filter-select');
+    if (select) {
+      const base = [
+        `<option value="all">All items</option>`,
+        `<option value="segments">Talk segments</option>`,
+        `<option value="bumpers">Music bumpers</option>`,
+      ];
+      const typeOpts = Object.entries(allSegmentTypes || {})
+        .sort((a, b) => (a[1].display_name || a[1].name || a[0]).localeCompare(b[1].display_name || b[1].name || b[0]))
+        .map(([slug, def]) => `<option value="type:${slug}">${escapeHtml(def.display_name || def.name || slug)}</option>`);
+      select.innerHTML = [...base, ...typeOpts].join('');
+      select.value = libraryFilter || 'all';
+    }
+    libraryFilterOptionsReady = true;
+  }
   const [segs, bumps] = await Promise.all([api('/library/segments'), api('/library/bumpers')]);
+  setLibraryStatus('');
 
   document.getElementById('seg-list').innerHTML = Object.entries(segs).map(([show, files]) => `
-    <div class="card p-3">
+    <div class="card p-3 library-show-card" data-library-show="${show}" data-library-kind="segments">
       <div class="flex justify-between items-center mb-2">
-        <div class="font-bold text-sm">${allShows[show]?.name||show}</div>
-        <span class="pill pill-blue">${files.length} files</span>
+        <div class="font-bold text-sm">${escapeHtml(allShows[show]?.name||show)}</div>
+        <div class="flex items-center gap-2">
+          <span class="pill pill-blue">${files.length} files</span>
+          <button class="btn btn-ghost text-xs px-2" onclick="deleteVisibleLibrary('${show}','segments')">Delete Visible</button>
+        </div>
       </div>
       <div class="space-y-1">${files.map(f=>{
         const eid = 'seg-' + CSS.escape(show + '-' + f.name).replace(/[^a-z0-9]/gi,'_');
@@ -1110,35 +2167,40 @@ async function loadLibrary() {
         const lastPlayed = f.last_played ? f.last_played.substring(0,10) : '';
         const promptText = f.prompt || '';
         const metaEid = eid + '_meta';
+        const expiryLabel = f.expires_label ? `<span class="text-gray-500">${escapeHtml(f.expires_label)}</span>` : '';
         return `
-        <div class="py-1 border-b border-gray-800">
+        <div class="py-1 border-b border-gray-800 library-item" data-library-kind="segments" data-library-show="${show}" data-library-segment-type="${escapeHtml(f.segment_type || '')}">
           <div class="flex justify-between items-center text-xs">
             <div class="flex items-center gap-2 min-w-0">
-              <span class="text-gray-400 truncate max-w-xs">${f.name}</span>
-              ${f.segment_type ? `<span class="pill pill-purple text-xs">${f.segment_type}</span>` : ''}
+        <span class="text-gray-200 truncate max-w-xs font-medium">${escapeHtml(f.name)}</span>
+              ${f.segment_type ? `<span class="pill pill-purple text-xs">${escapeHtml(f.segment_type)}</span>` : ''}
               ${f.word_count ? `<span class="text-gray-600">${f.word_count}w</span>` : ''}
             </div>
             <div class="flex items-center gap-3 ml-2 shrink-0">
               ${playsLabel}
-              <span class="text-gray-600">${f.size_kb}KB${lastPlayed ? ' · '+lastPlayed : ''}</span>
+              <span class="text-gray-600">${f.created_label ? 'created ' + f.created_label + ' · ' : ''}${f.duration_label || '?:??'} · ${f.size_kb}KB${lastPlayed ? ' · '+lastPlayed : ''}${expiryLabel ? ' · ' + expiryLabel : ''}</span>
               ${promptText ? `<button class="text-gray-500 hover:text-gray-300" onclick="toggleMeta('${metaEid}')">ⓘ prompt</button>` : ''}
-              <button class="text-indigo-400 hover:text-indigo-300" onclick="togglePreview('${eid}','${src}')">▶ preview</button>
-              <button class="text-red-400 hover:text-red-300" onclick="deleteSegment('${show}','${f.name}')">✕</button>
+              <button class="text-indigo-400 hover:text-indigo-300" data-preview-eid="${eid}" data-preview-src="${escapeHtml(src)}" onclick="previewFromButton(this)">▶ preview</button>
+              <button class="text-red-400 hover:text-red-300" data-delete-kind="segment" data-delete-show="${escapeHtml(show)}" data-delete-name="${escapeHtml(f.name)}" onclick="deleteLibraryFromButton(this)">✕</button>
             </div>
           </div>
-          ${promptText ? `<div id="${metaEid}" class="hidden text-xs text-indigo-300 bg-indigo-950 rounded px-3 py-2 mt-1 italic">${promptText.replace(/</g,'&lt;')}</div>` : ''}
+          <div class="mt-2">${libraryActionMenuHtml('segments', show, f.name, eid)}</div>
+          ${promptText ? `<div id="${metaEid}" class="hidden text-xs text-indigo-300 bg-indigo-950 rounded px-3 py-2 mt-1 italic">${escapeHtml(promptText)}</div>` : ''}
           <div class="preview-bar" id="${eid}">
-            <audio controls preload="none" style="flex:1;height:28px;min-width:0"><source src="${src}"></audio>
+            <audio controls preload="none" src="${src}" style="flex:1;height:28px;min-width:0"></audio>
           </div>
         </div>`;}).join('')}
       </div>
     </div>`).join('') || '<div class="text-gray-600 text-sm">No talk segments</div>';
 
   document.getElementById('bump-list').innerHTML = Object.entries(bumps).map(([show, files]) => `
-    <div class="card p-3">
+    <div class="card p-3 library-show-card" data-library-show="${show}" data-library-kind="bumpers">
       <div class="flex justify-between items-center mb-2">
-        <div class="font-bold text-sm">${allShows[show]?.name||show}</div>
-        <span class="pill pill-blue">${files.length} files</span>
+        <div class="font-bold text-sm">${escapeHtml(allShows[show]?.name||show)}</div>
+        <div class="flex items-center gap-2">
+          <span class="pill pill-blue">${files.length} files</span>
+          <button class="btn btn-ghost text-xs px-2" onclick="deleteVisibleLibrary('${show}','bumpers')">Delete Visible</button>
+        </div>
       </div>
       <div class="space-y-1">${files.map(f=>{
         const eid = 'bump-' + CSS.escape(show + '-' + f.name).replace(/[^a-z0-9]/gi,'_');
@@ -1148,30 +2210,33 @@ async function loadLibrary() {
           : '<span class="text-gray-700 text-xs">unplayed</span>';
         const lastPlayed = f.last_played ? f.last_played.substring(0,10) : '';
         const promptText = f.prompt || '';
-        const displayLabel = f.display_name ? `<span class="text-gray-500">${f.display_name}</span>` : '';
+        const displayLabel = f.display_name ? `<span class="text-gray-500">${escapeHtml(f.display_name)}</span>` : '';
         const metaEid = eid + '_meta';
+        const expiryLabel = f.expires_label ? `<span class="text-gray-500">${escapeHtml(f.expires_label)}</span>` : '';
         return `
-        <div class="py-1 border-b border-gray-800">
+        <div class="py-1 border-b border-gray-800 library-item" data-library-kind="bumpers" data-library-show="${show}" data-library-segment-type="">
           <div class="flex justify-between items-center text-xs">
             <div class="flex items-center gap-2 min-w-0">
-              <span class="text-gray-400 truncate max-w-xs">${f.name}</span>
+              <span class="text-gray-200 truncate max-w-xs font-medium">${escapeHtml(f.name)}</span>
               ${displayLabel}
             </div>
             <div class="flex items-center gap-3 ml-2 shrink-0">
               ${playsLabel}
-              <span class="text-gray-600">${f.size_kb}KB${lastPlayed ? ' · '+lastPlayed : ''}</span>
+              <span class="text-gray-600">${f.created_label ? 'created ' + f.created_label + ' · ' : ''}${f.duration_label || '?:??'} · ${f.size_kb}KB${lastPlayed ? ' · '+lastPlayed : ''}${expiryLabel ? ' · ' + expiryLabel : ''}</span>
               ${promptText ? `<button class="text-gray-500 hover:text-gray-300" onclick="toggleMeta('${metaEid}')">ⓘ prompt</button>` : ''}
-              <button class="text-indigo-400 hover:text-indigo-300" onclick="togglePreview('${eid}','${src}')">▶ preview</button>
-              <button class="text-red-400 hover:text-red-300" onclick="deleteBumper('${show}','${f.name}')">✕</button>
+              <button class="text-indigo-400 hover:text-indigo-300" data-preview-eid="${eid}" data-preview-src="${escapeHtml(src)}" onclick="previewFromButton(this)">▶ preview</button>
+              <button class="text-red-400 hover:text-red-300" data-delete-kind="bumper" data-delete-show="${escapeHtml(show)}" data-delete-name="${escapeHtml(f.name)}" onclick="deleteLibraryFromButton(this)">✕</button>
             </div>
           </div>
-          ${promptText ? `<div id="${metaEid}" class="hidden text-xs text-indigo-300 bg-indigo-950 rounded px-3 py-2 mt-1 italic">${promptText.replace(/</g,'&lt;')}</div>` : ''}
+          <div class="mt-2">${libraryActionMenuHtml('bumpers', show, f.name, eid)}</div>
+          ${promptText ? `<div id="${metaEid}" class="hidden text-xs text-indigo-300 bg-indigo-950 rounded px-3 py-2 mt-1 italic">${escapeHtml(promptText)}</div>` : ''}
           <div class="preview-bar" id="${eid}">
-            <audio controls preload="none" style="flex:1;height:28px;min-width:0"><source src="${src}"></audio>
+            <audio controls preload="none" src="${src}" style="flex:1;height:28px;min-width:0"></audio>
           </div>
         </div>`;}).join('')}
       </div>
     </div>`).join('') || '<div class="text-gray-600 text-sm">No bumpers</div>';
+  applyLibraryFilter();
 }
 
 async function deleteSegment(show, name) {
@@ -1185,16 +2250,93 @@ async function deleteBumper(show, name) {
   loadLibrary();
 }
 
+async function libraryAction(kind, action, show, name, targetSelectId=null) {
+  const target = targetSelectId ? document.getElementById(targetSelectId)?.value : '';
+  if ((action === 'copy' || action === 'move') && !target) {
+    alert('Choose a destination show first.');
+    return;
+  }
+  const label = action === 'copy' ? 'copy' : action === 'move' ? 'move' : 'reset the play count for';
+  if (!confirm(`Are you sure you want to ${label} "${name}"?`)) return;
+  const path = action === 'reset'
+    ? `/library/${kind}/${encodeURIComponent(show)}/${encodeURIComponent(name)}/reset-plays`
+    : `/library/${kind}/${encodeURIComponent(show)}/${encodeURIComponent(name)}/${action}`;
+  const opts = action === 'reset'
+    ? {method:'POST'}
+    : {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({target_show_id: target})};
+  try {
+    const result = await api(path, opts);
+    if (!result.ok) throw new Error('Action failed');
+    await loadLibrary();
+    const targetName = target ? (allShows[target]?.name || target) : '';
+    const message = action === 'reset'
+      ? `Reset play count for "${name}".`
+      : `${action === 'copy' ? 'Copied' : 'Moved'} "${name}"${targetName ? ` to ${targetName}` : ''}.`;
+    setLibraryStatus(message, false);
+  } catch (e) {
+    setLibraryStatus(`Library action failed for "${name}": ${e.message}`, true);
+    alert(`Library action failed: ${e.message}`);
+  }
+}
+
+function setLibraryStatus(message, isError=false) {
+  const el = document.getElementById('library-status');
+  if (!el) return;
+  el.textContent = message || '';
+  el.className = `text-xs mt-2 ${isError ? 'text-red-400' : 'text-gray-500'}`;
+}
+
+async function deleteVisibleLibrary(show, kind) {
+  const selector = `.library-show-card[data-library-show="${CSS.escape(show)}"][data-library-kind="${kind}"] .library-item:not(.hidden)`;
+  const rows = [...document.querySelectorAll(selector)];
+  if (!rows.length) {
+    alert('No visible files to delete.');
+    return;
+  }
+  if (!confirm(`Delete ${rows.length} visible ${kind === 'segments' ? 'talk segments' : 'music bumpers'} for ${allShows[show]?.name || show}?`)) return;
+  let deleted = 0;
+  for (const row of rows) {
+    const rowShow = row.dataset.libraryShow;
+    const filename = row.querySelector('[data-delete-name]')?.dataset.deleteName;
+    if (!rowShow || !filename) continue;
+    try {
+      if (kind === 'segments') {
+        await api(`/library/segments/${rowShow}/${encodeURIComponent(filename)}`, {method:'DELETE'});
+      } else {
+        await api(`/library/bumpers/${rowShow}/${encodeURIComponent(filename)}`, {method:'DELETE'});
+      }
+      deleted += 1;
+    } catch (e) {
+      console.warn('Delete failed', e);
+    }
+  }
+  setLibraryStatus(`Deleted ${deleted} visible file(s) from ${allShows[show]?.name || show}.`, deleted === 0);
+  await loadLibrary();
+}
+
 // ============================================================
 // Generate tab sub-tabs
 // ============================================================
 function switchGenTab(name, btn) {
+  if (schedPollTimer) {
+    clearInterval(schedPollTimer);
+    schedPollTimer = null;
+  }
   ['manual','schedules','activity'].forEach(t => {
     document.getElementById('gentab-' + t).classList.toggle('hidden', t !== name);
   });
   document.querySelectorAll('#tab-generate .tab-btn').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
-  if (name === 'schedules') loadSchedulerStatus();
+  if (name === 'schedules') {
+    loadSchedulerStatus();
+    loadSchedulerActivity();
+    schedPollTimer = setInterval(() => {
+      if (!document.getElementById('gentab-schedules').classList.contains('hidden')) {
+        loadSchedulerStatus();
+        loadSchedulerActivity();
+      }
+    }, 5000);
+  }
   if (name === 'activity') loadActivityLog();
 }
 
@@ -1207,6 +2349,8 @@ async function loadSchedulerStatus() {
   const [status] = await Promise.all([api('/scheduler/status')]);
   const shows = status.shows || {};
   const container = document.getElementById('sched-cards');
+  const jobsEl = document.getElementById('sched-active-jobs');
+  const recentEl = document.getElementById('sched-recent-jobs');
 
   container.innerHTML = Object.entries(shows).map(([showId, s]) => {
     const showName = allShows[showId]?.name || showId;
@@ -1221,6 +2365,7 @@ async function loadSchedulerStatus() {
       <div class="flex justify-between items-center mb-3">
         <div class="font-bold text-sm">${showName}</div>
         <div class="flex gap-2">
+          <button class="btn btn-primary text-xs" title="Run this show's default generators now" onclick="triggerShowNow('${showId}')">▶ Generate Now</button>
           <button class="btn btn-ghost text-xs" onclick="triggerNow('${showId}','talk')">▶ Talk Now</button>
           <button class="btn btn-ghost text-xs" onclick="triggerNow('${showId}','music')">♪ Music Now</button>
         </div>
@@ -1301,6 +2446,34 @@ async function loadSchedulerStatus() {
       </div>
     </div>`;
   }).join('');
+
+  if (jobsEl) {
+    const jobs = status.active_jobs || [];
+    jobsEl.innerHTML = jobs.length ? jobs.map(j => `
+      <div class="rounded border border-gray-800 bg-gray-950/60 p-3">
+        <div class="flex justify-between items-center gap-2">
+          <div class="font-medium">${allShows[j.show_id]?.name || j.show_id} · ${j.type}</div>
+          <span class="pill ${j.status==='completed'?'pill-green':j.status==='failed'?'pill-red':'pill-yellow'}">${j.status || 'running'}</span>
+        </div>
+        <div class="text-gray-500 mt-1">Count: ${j.count ?? 'n/a'} · Started: ${formatStationTime(j.started)}</div>
+        <div class="text-gray-600 mt-1">Job ID: ${j.id || 'n/a'}</div>
+      </div>
+    `).join('') : '<div class="text-gray-600 text-sm">No running jobs.</div>';
+  }
+
+  if (recentEl) {
+    const recent = status.recent_jobs || [];
+    recentEl.innerHTML = recent.length ? recent.map(j => `
+      <div class="rounded border border-gray-800 bg-gray-950/60 p-3">
+        <div class="flex justify-between items-center gap-2">
+          <div class="font-medium">${allShows[j.show_id]?.name || j.show_id} · ${j.type}</div>
+          <span class="pill ${j.status==='completed'?'pill-green':j.status==='failed'?'pill-red':'pill-yellow'}">${j.status || 'done'}</span>
+        </div>
+        <div class="text-gray-500 mt-1">Count: ${j.count ?? 'n/a'} · Started: ${formatStationTime(j.started)} · Ended: ${formatStationTime(j.ended)}</div>
+        <div class="text-gray-600 mt-1">Job ID: ${j.job_id || 'n/a'}</div>
+      </div>
+    `).join('') : '<div class="text-gray-600 text-sm">No recent jobs yet.</div>';
+  }
 }
 
 // Per-show generation config cache (to avoid full reloads on each field change)
@@ -1342,6 +2515,14 @@ async function triggerNow(showId, type) {
   const r = await api(`/scheduler/trigger/${showId}/${type}`, {method: 'POST'});
   alert(r.message);
   setTimeout(() => loadSchedulerStatus(), 2000);
+  setTimeout(() => loadActivityLog(), 1000);
+}
+
+async function triggerShowNow(showId) {
+  const r = await api(`/scheduler/trigger/${showId}`, {method: 'POST'});
+  alert(r.message);
+  setTimeout(() => loadSchedulerStatus(), 2000);
+  setTimeout(() => loadActivityLog(), 1000);
 }
 
 async function loadActivityLog() {
@@ -1352,6 +2533,17 @@ async function loadActivityLog() {
     const icon = e.level === 'error' ? '✗' : '✓';
     const src = {manual:'[manual] ', scheduler:'[sched]  ', history:'[hist]   '}[e.source] || '[?]      ';
     return `${e.ts}  ${icon}  ${src}  [${e.show_id}/${e.type}]  ${e.msg}`;
+  }).join('\n');
+}
+
+async function loadSchedulerActivity() {
+  const log = await api('/scheduler/log?limit=100');
+  const el = document.getElementById('sched-activity-log');
+  if (!el) return;
+  if (!log.length) { el.textContent = 'No scheduler activity yet.'; return; }
+  el.textContent = log.map(e => {
+    const icon = e.level === 'error' ? '✗' : '✓';
+    return `${e.ts}  ${icon}  [${e.show_id}/${e.type}]  ${e.msg}`;
   }).join('\n');
 }
 
@@ -1415,11 +2607,441 @@ function togglePreview(id, src) {
     lastPreviewId = null;
   } else {
     bar.classList.add('active');
-    audio.play();
+    audio.load();
+    audio.play().catch(() => {});
     lastPreviewId = id;
   }
 }
 
+// ============================================================
+// Hosts tab
+// ============================================================
+async function loadHosts() {
+  if (!Object.keys(genOptions).length) genOptions = await api('/generate/options');
+  const [hosts, voiceSamples] = await Promise.all([
+    api('/hosts'),
+    api('/voice-samples').catch(() => ({kokoro: [], minimax: []})),
+  ]);
+  allHosts = hosts;
+  voiceSamplesCatalog = voiceSamples || {kokoro: [], minimax: []};
+  const list = document.getElementById('hosts-list');
+  if (!Object.keys(allHosts).length) {
+    list.innerHTML = '<div class="text-gray-600 text-sm">No hosts defined.</div>';
+  } else {
+    list.innerHTML = Object.entries(allHosts).map(([id, h]) => `
+      <div class="card p-4 flex justify-between items-start">
+        <div class="flex-1">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="font-bold text-sm">${h.name}</span>
+            <span class="text-gray-600 text-xs">${id}</span>
+            <span class="pill pill-blue">${h.tts_backend}</span>
+          </div>
+          <div class="flex items-center gap-2 mt-1">
+            <span class="text-gray-500 text-xs">Kokoro: ${h.tts_voice}</span>
+            <span class="text-gray-700 text-xs">·</span>
+            <span class="text-gray-500 text-xs">MiniMax: ${h.voice_minimax}</span>
+            <span class="text-gray-700 text-xs">·</span>
+            <span class="text-gray-500 text-xs">${h.speaking_pace_wpm} wpm</span>
+          </div>
+          ${h.topics?.length ? `<div class="flex flex-wrap gap-1 mt-2">${h.topics.map(t=>`<span class="pill pill-purple">${t}</span>`).join('')}</div>` : ''}
+          ${h.bio ? `<div class="text-gray-600 text-xs mt-2 line-clamp-2">${h.bio.substring(0,120).replace(/\n/g,' ')}…</div>` : ''}
+        </div>
+        <div class="flex gap-2 ml-4 shrink-0">
+          <button class="btn btn-ghost text-xs" data-voice-sample-key="kokoro:${h.tts_voice}" ${isVoiceSampleReady('kokoro', h.tts_voice) ? '' : 'disabled'} onclick="playVoiceSample('kokoro','${h.tts_voice}',this)" title="Play Kokoro sample">▶</button>
+          <button class="btn btn-ghost text-xs" data-voice-sample-key="minimax:${h.voice_minimax}" ${isVoiceSampleReady('minimax', h.voice_minimax) ? '' : 'disabled'} onclick="playVoiceSample('minimax','${h.voice_minimax}',this)" title="Play MiniMax sample">▶</button>
+          <button class="btn btn-ghost" onclick='openHostModal(${JSON.stringify(id)})'>Edit</button>
+        </div>
+      </div>`).join('');
+  }
+  if (activeVoiceSampleKey && voiceSampleAudio && !voiceSampleAudio.paused) {
+    _syncVoiceSampleButtons(activeVoiceSampleKey, true);
+  }
+  renderVoiceSamples();
+  const firstHostsBtn = document.querySelector('#tab-hosts .tab-btn');
+  if (firstHostsBtn) switchHostsTab('hosts', firstHostsBtn);
+}
+
+async function refreshVoiceSamples() {
+  try {
+    voiceSamplesCatalog = await api('/voice-samples');
+    renderVoiceSamples();
+  } catch (e) {
+    alert(`Could not load voice samples: ${e.message}`);
+  }
+}
+
+function renderVoiceSamples() {
+  const root = document.getElementById('voices-list');
+  if (!root) return;
+  const groups = [
+    ['kokoro', 'Kokoro'],
+    ['minimax', 'MiniMax'],
+  ];
+  root.innerHTML = groups.map(([backend, label]) => {
+    const voices = voiceSamplesCatalog?.[backend] || [];
+    return `
+      <div class="card p-4">
+        <div class="flex justify-between items-center mb-3">
+          <div>
+            <div class="font-bold text-sm">${label}</div>
+            <div class="text-xs text-gray-500">${voices.length} voices</div>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+          ${voices.map(v => `
+            <div class="flex items-center justify-between gap-3 px-3 py-2 rounded bg-gray-950 border border-gray-800">
+              <div class="min-w-0">
+                <div class="text-sm text-gray-200 truncate">${v.label}</div>
+                <div class="text-xs text-gray-500">${v.voice}${v.sample_ready ? '' : ' · sample missing'}</div>
+              </div>
+              <button class="btn btn-ghost text-xs px-3 shrink-0"
+                data-voice-sample-key="${backend}:${v.voice}"
+                ${v.sample_ready ? '' : 'disabled'}
+                onclick="playVoiceSample('${backend}','${v.voice}',this)"
+                title="Play sample">▶</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>`;
+  }).join('') || '<div class="text-gray-600 text-sm">No voices available.</div>';
+  if (activeVoiceSampleKey && voiceSampleAudio && !voiceSampleAudio.paused) {
+    _syncVoiceSampleButtons(activeVoiceSampleKey, true);
+  }
+}
+
+function openHostModal(hostId) {
+  const h = hostId ? allHosts[hostId] : null;
+  const isNew = !hostId;
+  document.getElementById('host-modal-title').textContent = isNew ? 'New Host' : 'Edit Host';
+  document.getElementById('host-modal-id').value = hostId || '';
+  document.getElementById('host-modal-slug').value = isNew ? '' : hostId;
+  document.getElementById('host-modal-slug').disabled = !isNew;
+  document.getElementById('host-modal-name').value = h?.name || '';
+  document.getElementById('host-modal-bio').value = h?.bio || '';
+  document.getElementById('host-modal-voice-style').value = h?.voice_style || '';
+  document.getElementById('host-modal-philosophy').value = h?.philosophy || '';
+  document.getElementById('host-modal-anti').value = h?.anti_patterns || '';
+  document.getElementById('host-modal-tts-backend').value = h?.tts_backend || 'kokoro';
+  document.getElementById('host-modal-pace').value = h?.speaking_pace_wpm || 130;
+  document.getElementById('host-modal-topics').value = (h?.topics || []).join(', ');
+  document.getElementById('host-modal-delete-btn').classList.toggle('hidden', isNew);
+  document.getElementById('host-preview-status').classList.add('hidden');
+
+  const kokoroVoices = genOptions.kokoro_voices || ['am_michael','am_onyx','af_bella','af_heart'];
+  const minimaxVoices = genOptions.minimax_voices || ['Deep_Voice_Man','Wise_Woman'];
+
+  const kvSel = document.getElementById('host-modal-voice-kokoro');
+  kvSel.innerHTML = renderVoiceOptions('kokoro', kokoroVoices, h?.tts_voice || 'am_michael');
+
+  const mvSel = document.getElementById('host-modal-voice-minimax');
+  mvSel.innerHTML = renderVoiceOptions('minimax', minimaxVoices, h?.voice_minimax || 'Deep_Voice_Man');
+
+  syncVoiceSampleButtonFromSelect('host-modal-voice-kokoro', 'host-modal-voice-kokoro-btn', 'kokoro');
+  syncVoiceSampleButtonFromSelect('host-modal-voice-minimax', 'host-modal-voice-minimax-btn', 'minimax');
+
+  document.getElementById('host-modal').classList.remove('hidden');
+}
+
+function closeHostModal() {
+  document.getElementById('host-modal').classList.add('hidden');
+}
+
+async function saveHost() {
+  const hostId = document.getElementById('host-modal-id').value;
+  const slug = document.getElementById('host-modal-slug').value.trim().toLowerCase().replace(/\s+/g,'_');
+  if (!slug) return alert('Host ID required');
+  const name = document.getElementById('host-modal-name').value.trim();
+  if (!name) return alert('Display name required');
+
+  const body = {
+    name,
+    bio: document.getElementById('host-modal-bio').value.trim(),
+    voice_style: document.getElementById('host-modal-voice-style').value.trim(),
+    philosophy: document.getElementById('host-modal-philosophy').value.trim(),
+    anti_patterns: document.getElementById('host-modal-anti').value.trim(),
+    tts_backend: document.getElementById('host-modal-tts-backend').value,
+    tts_voice: document.getElementById('host-modal-voice-kokoro').value,
+    voice_minimax: document.getElementById('host-modal-voice-minimax').value,
+    speaking_pace_wpm: parseInt(document.getElementById('host-modal-pace').value) || 130,
+    topics: document.getElementById('host-modal-topics').value
+      .split(',').map(t => t.trim()).filter(Boolean),
+  };
+
+  try {
+    if (hostId) {
+      await api('/hosts/' + hostId, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    } else {
+      await api('/hosts/' + slug, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    }
+    closeHostModal();
+    loadHosts();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function deleteHost() {
+  const hostId = document.getElementById('host-modal-id').value;
+  if (!confirm(`Delete host "${hostId}"? Shows using this host will need to be updated.`)) return;
+  await api('/hosts/' + hostId, {method:'DELETE'});
+  closeHostModal();
+  loadHosts();
+}
+
+// ============================================================
+// Segment types tab
+// ============================================================
+async function loadSegmentTypes() {
+  allSegmentTypes = await api('/segment-types');
+  const list = document.getElementById('segment-types-list');
+  if (!Object.keys(allSegmentTypes).length) {
+    list.innerHTML = '<div class="text-gray-600 text-sm">No segment types defined.</div>';
+    return;
+  }
+  list.innerHTML = Object.entries(allSegmentTypes).map(([id, st]) => `
+    <div class="card p-4 flex justify-between items-start">
+      <div class="flex-1">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="font-bold text-sm">${st.name}</span>
+          <span class="text-gray-600 text-xs">${id}</span>
+          <span class="pill ${st.multi_voice ? 'pill-purple' : 'pill-blue'}">${st.multi_voice ? 'multi-voice' : 'single-voice'}</span>
+          <span class="text-gray-500 text-xs">${st.word_count_min}-${st.word_count_max} words</span>
+        </div>
+        ${st.description ? `<div class="text-gray-500 text-xs mb-2">${st.description}</div>` : ''}
+        <div class="text-gray-600 text-xs whitespace-pre-wrap">${(st.prompt_template || '').substring(0, 220).replace(/</g,'&lt;')}${(st.prompt_template || '').length > 220 ? '…' : ''}</div>
+      </div>
+      <button class="btn btn-ghost ml-4" onclick='openSegmentTypeModal(${JSON.stringify(id)})'>Edit</button>
+    </div>`).join('');
+}
+
+function openSegmentTypeModal(segmentTypeId) {
+  const st = segmentTypeId ? allSegmentTypes[segmentTypeId] : null;
+  const isNew = !segmentTypeId;
+  document.getElementById('segment-type-modal-title').textContent = isNew ? 'New Segment Type' : 'Edit Segment Type';
+  document.getElementById('segment-type-modal-id').value = segmentTypeId || '';
+  document.getElementById('segment-type-modal-slug').value = isNew ? '' : segmentTypeId;
+  document.getElementById('segment-type-modal-slug').disabled = !isNew;
+  document.getElementById('segment-type-modal-name').value = st?.name || '';
+  document.getElementById('segment-type-modal-description').value = st?.description || '';
+  document.getElementById('segment-type-modal-min').value = st?.word_count_min || 1500;
+  document.getElementById('segment-type-modal-max').value = st?.word_count_max || 2500;
+  document.getElementById('segment-type-modal-multi').checked = !!st?.multi_voice;
+  document.getElementById('segment-type-modal-prompt').value = st?.prompt_template || '';
+  document.getElementById('segment-type-modal-delete-btn').classList.toggle('hidden', isNew);
+  document.getElementById('segment-type-modal').classList.remove('hidden');
+}
+
+function closeSegmentTypeModal() {
+  document.getElementById('segment-type-modal').classList.add('hidden');
+}
+
+async function saveSegmentType() {
+  const segmentTypeId = document.getElementById('segment-type-modal-id').value;
+  const slug = document.getElementById('segment-type-modal-slug').value.trim().toLowerCase().replace(/\s+/g,'_');
+  if (!slug) return alert('Segment type ID required');
+  const body = {
+    name: document.getElementById('segment-type-modal-name').value.trim(),
+    description: document.getElementById('segment-type-modal-description').value.trim(),
+    word_count_min: parseInt(document.getElementById('segment-type-modal-min').value) || 1,
+    word_count_max: parseInt(document.getElementById('segment-type-modal-max').value) || 1,
+    multi_voice: document.getElementById('segment-type-modal-multi').checked,
+    prompt_template: document.getElementById('segment-type-modal-prompt').value.trim(),
+  };
+  if (!body.name) return alert('Display name required');
+  if (!body.prompt_template) return alert('Prompt template required');
+  if (body.word_count_max < body.word_count_min) return alert('Max words must be greater than or equal to min words');
+
+  if (segmentTypeId) {
+    await api('/segment-types/' + segmentTypeId, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  } else {
+    await api('/segment-types/' + slug, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  }
+  closeSegmentTypeModal();
+  await loadSegmentTypes();
+}
+
+async function deleteSegmentType() {
+  const segmentTypeId = document.getElementById('segment-type-modal-id').value;
+  if (!confirm(`Delete segment type "${segmentTypeId}"?`)) return;
+  await api('/segment-types/' + segmentTypeId, {method:'DELETE'});
+  closeSegmentTypeModal();
+  await loadSegmentTypes();
+}
+
+// ============================================================
+// Station settings
+// ============================================================
+async function loadSettings() {
+  try {
+    stationSettings = await api('/settings');
+    document.getElementById('settings-station-name').value = stationSettings.station_name || 'WRIT-FM';
+    document.getElementById('settings-timezone').value = stationSettings.timezone || 'local';
+    updateStationBranding(stationSettings.station_name || 'Station');
+    document.getElementById('settings-status').textContent =
+      `Current station: ${stationSettings.station_name || 'WRIT-FM'} · timezone: ${stationSettings.timezone || 'local'}`;
+  } catch(e) {
+    document.getElementById('settings-status').textContent = `Failed to load settings: ${e.message}`;
+  }
+}
+
+async function saveSettings() {
+  const station_name = document.getElementById('settings-station-name').value.trim() || 'WRIT-FM';
+  const timezone = document.getElementById('settings-timezone').value.trim() || 'local';
+  try {
+    const result = await api('/settings', {
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({station_name, timezone}),
+    });
+    stationSettings = result;
+    updateStationBranding(result.station_name || 'Station');
+    document.getElementById('settings-status').textContent =
+      `Saved. Station is now ${result.station_name} · timezone ${result.timezone}. Restart streamer/admin services if they are already running.`;
+  } catch(e) {
+    document.getElementById('settings-status').textContent = `Save failed: ${e.message}`;
+  }
+}
+
+// Load branding early so the shell reflects the configured station name.
+loadSettings();
+
+// ============================================================
+// TTS Voice Preview
+// ============================================================
+let _previewBtn = null;
+const voiceSampleAudio = document.getElementById('voice-sample-audio');
+let activeVoiceSampleKey = null;
+
+async function _doPreview(backend, voice, statusElId) {
+  const audio = document.getElementById('preview-audio');
+  const statusEl = statusElId ? document.getElementById(statusElId) : null;
+
+  if (statusEl) { statusEl.textContent = `Generating ${backend} preview…`; statusEl.classList.remove('hidden'); }
+
+  try {
+    // Fetch the audio as a blob to avoid CORS/cache issues
+    const resp = await fetch('/api/tts/preview', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({backend, voice}),
+    });
+    if (!resp.ok) {
+      const err = await resp.text();
+      if (statusEl) statusEl.textContent = `Preview failed: ${err}`;
+      return;
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    audio.src = url;
+    audio.play().catch(() => {});
+    if (statusEl) { statusEl.textContent = 'Playing preview…'; setTimeout(() => statusEl.classList.add('hidden'), 4000); }
+  } catch(e) {
+    if (statusEl) { statusEl.textContent = `Error: ${e.message}`; }
+  }
+}
+
+function syncVoiceSampleButtonFromSelect(selectId, buttonId, backend) {
+  const select = document.getElementById(selectId);
+  const button = document.getElementById(buttonId);
+  if (!select || !button) return;
+  const voice = select.value;
+  const ready = voice ? isVoiceSampleReady(backend, voice) : false;
+  button.disabled = !voice || !ready;
+  const key = `${backend}:${voice}`;
+  button.dataset.voiceSampleKey = key;
+  const isActive = activeVoiceSampleKey === key && voiceSampleAudio && !voiceSampleAudio.paused;
+  button.textContent = isActive ? '■' : '▶';
+  button.title = !voice
+    ? 'Select a voice first'
+    : (!ready ? 'Sample not generated yet' : (isActive ? 'Stop sample' : 'Play sample'));
+}
+
+function isVoiceSampleReady(backend, voice) {
+  const entries = voiceSamplesCatalog?.[backend] || [];
+  return entries.some(v => v.voice === voice && v.sample_ready);
+}
+
+function _syncVoiceSampleButtons(key, active) {
+  document.querySelectorAll(`[data-voice-sample-key="${key}"]`).forEach(btn => {
+    btn.textContent = active ? '■' : '▶';
+    btn.title = active ? 'Stop sample' : 'Play sample';
+  });
+}
+
+function _clearVoiceSampleState() {
+  if (activeVoiceSampleKey) {
+    _syncVoiceSampleButtons(activeVoiceSampleKey, false);
+  }
+  activeVoiceSampleKey = null;
+}
+
+function playVoiceSample(backend, voice, buttonEl=null) {
+  if (!voiceSampleAudio || !voice) return;
+  if (!isVoiceSampleReady(backend, voice)) {
+    alert(`No cached sample exists for ${backend}:${voice} yet.`);
+    return;
+  }
+  const key = `${backend}:${voice}`;
+
+  if (activeVoiceSampleKey === key && !voiceSampleAudio.paused) {
+    voiceSampleAudio.pause();
+    voiceSampleAudio.currentTime = 0;
+    _clearVoiceSampleState();
+    return;
+  }
+
+  if (activeVoiceSampleKey && activeVoiceSampleKey !== key) {
+    _syncVoiceSampleButtons(activeVoiceSampleKey, false);
+    voiceSampleAudio.pause();
+    voiceSampleAudio.currentTime = 0;
+  }
+
+  activeVoiceSampleKey = key;
+  _syncVoiceSampleButtons(key, true);
+  if (buttonEl) {
+    buttonEl.dataset.voiceSampleKey = key;
+    buttonEl.title = 'Stop sample';
+  }
+
+  voiceSampleAudio.src = `/api/voice-samples/audio/${backend}/${encodeURIComponent(voice)}`;
+  voiceSampleAudio.load();
+  voiceSampleAudio.play().catch(() => {
+    _clearVoiceSampleState();
+  });
+}
+
+voiceSampleAudio?.addEventListener('ended', () => {
+  _clearVoiceSampleState();
+});
+voiceSampleAudio?.addEventListener('error', () => {
+  _clearVoiceSampleState();
+});
+
+// Preview from host modal voice selectors
+async function previewHostVoice(backend, selectId, buttonId) {
+  const voice = document.getElementById(selectId)?.value;
+  const button = document.getElementById(buttonId);
+  if (!voice) return;
+  playVoiceSample(backend, voice, button);
+}
+
+async function previewGuestVoice(backend, selectId, buttonId) {
+  const voice = document.getElementById(selectId)?.value;
+  const button = document.getElementById(buttonId);
+  if (!voice) return;
+  playVoiceSample(backend, voice, button);
+}
+
+// Preview from Generate tab host voice override
+async function previewVoiceGen() {
+  const voiceSel = document.getElementById('gen-host-voice');
+  const ttsSel = document.getElementById('gen-tts');
+  const voice = voiceSel?.value;
+  const backend = ttsSel?.value || 'kokoro';
+  if (!voice) { alert('Select a voice override first.'); return; }
+  const button = document.getElementById('gen-host-voice-btn');
+  playVoiceSample(backend, voice, button);
+}
+
+// ============================================================
 // Init
 showTab('dashboard');
 </script>

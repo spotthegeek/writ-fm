@@ -6,8 +6,30 @@ Defines the core identities for WRIT-FM's talk show hosts.
 All content generators should import from here to maintain consistency.
 """
 
+from pathlib import Path
+
 from datetime import datetime
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "mac"))
+from time_utils import station_now
 from helpers import get_time_of_day
+
+
+def _load_hosts_from_yaml() -> dict:
+    """Load host definitions from config/hosts.yaml if it exists."""
+    yaml_path = Path(__file__).parents[2] / "config" / "hosts.yaml"
+    if not yaml_path.exists():
+        return {}
+    try:
+        import yaml
+        with open(yaml_path) as f:
+            data = yaml.safe_load(f)
+        return data.get("hosts", {}) or {}
+    except Exception:
+        return {}
 
 # =============================================================================
 # STATION IDENTITY
@@ -190,6 +212,7 @@ Late at night, the spin stops. That's when you can think clearly.""",
 
     "ember": {
         "name": "Ember",
+
         "identity": """You are Ember, WRIT-FM's soul and warmth.
 
 You are the friend who always has the perfect record for the moment. You
@@ -224,6 +247,15 @@ Food, music, and love are the same thing expressed differently.""",
         "speaking_pace_wpm": 135,
     },
 }
+
+# Merge in any hosts defined or overridden in config/hosts.yaml.
+# yaml takes precedence field-by-field; new hosts in yaml are added wholesale.
+_yaml_hosts = _load_hosts_from_yaml()
+for _hid, _hdata in _yaml_hosts.items():
+    if _hid in HOSTS:
+        HOSTS[_hid] = {**HOSTS[_hid], **_hdata}
+    else:
+        HOSTS[_hid] = _hdata
 
 # =============================================================================
 # TIME-AWARE BEHAVIOR
@@ -300,7 +332,11 @@ def build_host_prompt(persona_id: str, show_context: dict | None = None) -> str:
     """
     host = get_host(persona_id)
 
-    prompt = f"""You are {host['name']}, a host on {STATION_NAME}.
+    station_name = STATION_NAME
+    if show_context and show_context.get("station_name"):
+        station_name = str(show_context["station_name"])
+
+    prompt = f"""You are {host['name']}, a host on {station_name}.
 
 {host['identity'].strip()}
 
@@ -324,7 +360,7 @@ Topic Focus: {show_context.get('topic_focus', '')}
 
     # Add time context
     ctx = get_operator_context()
-    now = datetime.now()
+    now = station_now()
     prompt += f"""
 CURRENT STATE:
 Date: {now.strftime('%A, %B %d, %Y')}
@@ -338,7 +374,7 @@ Mood: {ctx['mood']}
 def get_operator_context(hour: int | None = None) -> dict:
     """Get the full operator context for the current time."""
     if hour is None:
-        hour = datetime.now().hour
+        hour = station_now().hour
 
     time_of_day = get_time_of_day(hour)
 
@@ -366,7 +402,5 @@ def get_operator_context(hour: int | None = None) -> dict:
         "mood": period_info["mood"],
         "operator_state": period_info["operator_state"],
         "preferred_segments": period_info["segment_types"],
-        "current_time": datetime.now().strftime("%H:%M"),
+        "current_time": station_now().strftime("%H:%M"),
     }
-
-

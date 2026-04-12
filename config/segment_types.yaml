@@ -1,0 +1,248 @@
+segment_types:
+  show_intro:
+    name: Show Intro
+    description: Short opening that sets the mood and welcomes listeners.
+    word_count_min: 80
+    word_count_max: 150
+    multi_voice: false
+    prompt_template: 'Write an 80-150 word opening for the show.
+
+      Welcome listeners. Set the mood. Hint at what''s ahead without being specific.
+
+      Output ONLY the spoken text. Include the name of the show in the intro.
+
+      DO NOT make reference to the time, time-of-day (eg: do not use the words Night,
+      Tonight, Morning, Afternoon etc), date, or day of the week.'
+  show_outro:
+    name: Show Outro
+    description: Short closing that leaves the listener with a final thought.
+    word_count_min: 60
+    word_count_max: 120
+    multi_voice: false
+    prompt_template: 'Write a 60-120 word show closing.
+
+      Thank the listener for staying. Acknowledge the time spent together.
+
+      Hint at what''s next on the station. Leave them with something to carry.
+
+      Output ONLY the spoken text.
+
+      '
+  station_id:
+    name: Station ID
+    description: Very short station identification between longer segments.
+    word_count_min: 15
+    word_count_max: 30
+    multi_voice: false
+    prompt_template: 'Write a 15-30 word station ID for Crouch-FM.
+
+      Use one sentence. Be plain and on-air, not poetic. Mention the station name
+      and/or tagline if it fits naturally. Do not invent imagery or a backstory.
+
+      Output ONLY the spoken text. No quotes, headers, or explanations.'
+  deep_dive:
+    name: Deep Dive
+    description: Long-form reflective exploration of a single topic.
+    word_count_min: 1500
+    word_count_max: 2500
+    multi_voice: false
+    prompt_template: 'Write an extended exploration of this topic. Go deep.
+
+      Build your central idea through stories, examples, tangents.
+
+      Let one thought lead naturally to another. Circle back to earlier threads.
+
+      Include specific details: years, names, places when relevant.
+
+      Structure: open with a hook, develop through 3-4 connected ideas, land somewhere
+      unexpected.
+
+      Use [pause] for natural rhythm. Output ONLY the spoken words.
+
+      '
+  news_analysis:
+    name: News Analysis
+    description: Late-night analysis built from current headlines.
+    word_count_min: 1500
+    word_count_max: 2000
+    multi_voice: false
+    prompt_template: 'Analyze these headlines through a late-night lens.
+
+      Don''t just report - interpret. What patterns do you see? What''s being missed?
+
+      Connect current events to deeper themes. Ask the questions daytime anchors don''t.
+
+      Be thoughtful, not reactive. Skeptical but not cynical.
+
+
+      HEADLINES:
+
+      {headlines}
+
+
+      Use [pause] for natural rhythm. Output ONLY the spoken words.
+
+      '
+  interview:
+    name: Interview
+    description: Primary host interviews a guest or recurring character.
+    word_count_min: 2000
+    word_count_max: 3000
+    multi_voice: true
+    prompt_template: 'Write a simulated interview where {primary_host_name} talks
+      with {guest_name}.
+
+      Format with HOST: and GUEST: markers on separate lines.
+
+      The guest is a fictional/composite character, not a real living person being
+      impersonated.
+
+      The conversation should feel natural - interruptions, tangents, moments of surprise.
+
+      Build to genuine insight or revelation.
+
+      Use [pause] for natural rhythm. Output ONLY the spoken dialogue.
+
+      '
+  panel:
+    name: Panel
+    description: Two voices explore a topic from different angles.
+    word_count_min: 2000
+    word_count_max: 3000
+    multi_voice: true
+    prompt_template: 'Write a discussion between {primary_host_name} and {secondary_host_name}
+      on this topic.
+
+      Format with HOST_A: and HOST_B: markers on separate lines.
+
+      They have different perspectives but mutual respect.
+
+      The conversation should build - start with disagreement, find nuance, reach
+      unexpected common ground.
+
+      Include moments of genuine surprise and humor.
+
+      Use [pause] for natural rhythm. Output ONLY the spoken dialogue.
+
+      '
+  story:
+    name: Story
+    description: Narrative storytelling segment.
+    word_count_min: 1500
+    word_count_max: 2500
+    multi_voice: false
+    prompt_template: 'Tell a story. It can be true, apocryphal, or mythological -
+      but tell it like it happened.
+
+      Good stories have specific details: the color of the room, the year, the weather.
+
+      Build tension. Let the listener wonder where this is going.
+
+      The ending should reframe everything that came before.
+
+      Use [pause] for dramatic effect. Output ONLY the spoken words.
+
+      '
+  reddit_storytelling:
+    name: Reddit Storytelling
+    description: Read a Reddit post as a story, with light performance cues.
+    word_count_min: 1200
+    word_count_max: 2200
+    multi_voice: false
+    prompt_template: 'Read the Reddit post as a story, not a summary.
+
+      Stay close to the original wording and arc. Do not add commentary or analysis.
+
+      Use light performance cues sparingly where they fit the story: [pause], [sigh],
+      [laugh], [chuckle].
+
+      If the post is already a story, preserve its pacing and tone.
+
+      Do not discuss comments, external links, or your own reaction.
+
+      Output ONLY the spoken words.
+
+      '
+  reddit_post:
+    name: Reddit Post
+    description: Radio retelling and discussion of a Reddit thread, including comments.
+    word_count_min: 1400
+    word_count_max: 2200
+    multi_voice: false
+    prompt_template: 'Turn this Reddit thread into a compelling on-air segment.
+
+      Open by grounding the listener in the subreddit and what kind of post this is.
+
+      Retell the original post clearly and vividly in radio-friendly language.
+
+      Bring in a handful of revealing, funny, skeptical, or emotionally resonant comments.
+
+      If the post links to outside material, weave in the useful parts without sounding
+      like you''re reading a webpage.
+
+      Distinguish between the original post, the community reaction, and the host''s
+      own interpretation.
+
+      Output ONLY the spoken words.
+
+      '
+  youtube:
+    name: YouTube
+    description: Radio segment built from a YouTube video's audio, captions, and metadata.
+    word_count_min: 1400
+    word_count_max: 2400
+    multi_voice: false
+    prompt_template: 'Turn this YouTube video into a compelling on-air segment.
+
+      Ground the listener in the channel, the title, and what kind of video this is.
+
+      Use the transcript, audio-derived notes, and metadata as your primary source
+      material.
+
+      Summarize the key beats, arguments, or story clearly and vividly.
+
+      If there is no usable transcript, work from the title, description, chapters,
+      and metadata.
+
+      Keep the narration radio-friendly. Output ONLY the spoken words.
+
+      '
+  listener_mailbag:
+    name: Listener Mailbag
+    description: Invented listener letters and thoughtful responses.
+    word_count_min: 1500
+    word_count_max: 2000
+    multi_voice: false
+    prompt_template: 'Write a segment responding to invented listener messages.
+
+      Create 2-3 messages from listeners (with first names and cities).
+
+      Each message should touch on something real - a memory, a question, a feeling.
+
+      Respond to each with genuine warmth and thoughtfulness.
+
+      Format: read the message, then respond. Natural transitions between letters.
+
+      Use [pause] for natural rhythm. Output ONLY the spoken words.
+
+      '
+  music_essay:
+    name: Music Essay
+    description: Long-form essay about a song, artist, scene, or musical idea.
+    word_count_min: 1500
+    word_count_max: 2500
+    multi_voice: false
+    prompt_template: 'Write an extended essay about music.
+
+      This is not a review. It''s a love letter, an excavation, a meditation.
+
+      Pick a specific angle: a single song, a studio, a year, a collaboration, a genre''s
+      birth.
+
+      Use vivid, sensory language. Make the listener hear what you''re describing.
+
+      Be specific with details but universal with feeling.
+
+      Use [pause] for natural rhythm. Output ONLY the spoken words.
+
+      '

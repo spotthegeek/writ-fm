@@ -20,10 +20,21 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "mac"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from time_utils import station_now, station_iso_now
 
 from music_gen_client import MUSIC_GEN_BASE_URL, generate_music, is_server_available
+from helpers import run_claude
 
 BUMPERS_DIR = PROJECT_ROOT / "output" / "music_bumpers"
+
+DEFAULT_MUSIC_POOL = [
+    "cinematic radio bumper, warm synth bed, shortwave texture, polished and atmospheric",
+    "late-night station bumper, subtle pulse, analog glow, compact and memorable",
+    "broadcast interstitial, dreamy ambient layers, gentle motion, modern radio imaging",
+    "short station ident bed, melodic synth motif, crisp and uplifting, 90s FM polish",
+    "transition bumper, low-end thump, airy pads, radio-friendly and clean",
+]
 
 # Per-show music pools — mix of instrumental and vocal tracks.
 # Each entry is either a plain caption string (instrumental) or a dict with
@@ -284,6 +295,40 @@ BUMPER_MIN = 120.0
 BUMPER_MAX = 240.0
 
 
+def _generate_custom_lyrics(caption: str) -> str | None:
+    """Generate singable lyrics from a custom vocal style prompt."""
+    prompt = f"""You are writing lyrics for a short AI-generated song.
+
+STYLE / PRODUCTION BRIEF:
+{caption}
+
+Write original lyrics that fit this style prompt.
+
+Requirements:
+- Output only lyrics, no commentary
+- Do not repeat or paraphrase the production brief
+- Never include phrases like "generate a track", "write lyrics", "style prompt", or any instruction language
+- Keep it concise: 2 verses and 1 chorus
+- Use plain lyric section markers like [verse] and [chorus]
+- Make the lyrics feel complete and singable
+"""
+    lyrics = run_claude(prompt, timeout=90, min_length=40, strip_quotes=True)
+    if not lyrics:
+        return None
+
+    bad_phrases = (
+        "generate a track",
+        "write lyrics",
+        "style prompt",
+        "prompt:",
+        "instruction",
+    )
+    lowered = lyrics.lower()
+    if any(phrase in lowered for phrase in bad_phrases):
+        return None
+    return lyrics.strip()
+
+
 def _display_name(caption: str) -> str:
     """Extract a short display-friendly name from the caption (first 2-3 words)."""
     first_part = caption.split(",")[0].strip()
@@ -322,14 +367,24 @@ def generate_one_bumper(show_id: str, verbose: bool = True,
         vocal_override: If set, force instrumental (False) or vocal (True).
     """
     if show_id not in SHOW_MUSIC and not caption_override:
-        print(f"Unknown show: {show_id}")
-        return False
+        # Fallback for shows without a curated bumper pool.
+        # This keeps music generation working for content-led shows that
+        # still need generic radio bumpers.
+        entry = random.choice(DEFAULT_MUSIC_POOL)
+        caption = entry
+        lyrics = "[Instrumental]"
+        instrumental = True
 
-    if caption_override:
+    elif caption_override:
         caption = caption_override
         if vocal_override is True:
             instrumental = False
-            lyrics = "[verse]\nCustom vocals\n\n[chorus]\nGenerated track"
+            lyrics = _generate_custom_lyrics(caption_override) or (
+                "[verse]\nThe signal rises out of night\nA low-lit room, a borrowed light\n"
+                "We hold the frequency and stay\nUntil the dark gives way\n\n"
+                "[chorus]\nStill alive inside the sound\nLost and found, then found again\n"
+                "Every waveform circles round\nUntil it pulls us in"
+            )
         else:
             instrumental = True
             lyrics = "[Instrumental]"
@@ -349,7 +404,7 @@ def generate_one_bumper(show_id: str, verbose: bool = True,
 
     show_dir = BUMPERS_DIR / show_id
     show_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = station_now().strftime("%Y%m%d_%H%M%S")
     audio_path = show_dir / f"{show_id}_bumper_{timestamp}.flac"
     meta_path = audio_path.with_suffix(".json")
 
@@ -371,7 +426,7 @@ def generate_one_bumper(show_id: str, verbose: bool = True,
             "display_name": _display_name(caption),
             "duration": duration,
             "instrumental": instrumental,
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": station_iso_now(),
             "generation_seconds": round(elapsed, 1),
             "ai_generated": True,
             "model": "ace-step",
@@ -418,7 +473,7 @@ def main():
         return
 
     if not is_server_available():
-        print("MINIMAX_API_KEY is not set — cannot generate music")
+        print("MINIMAX_TOKEN_PLAN_API_KEY is not set — cannot generate music")
         sys.exit(1)
 
     if args.all:
@@ -435,9 +490,6 @@ def main():
     if args.show:
         caption_override = args.caption or None
         vocal_override = True if args.vocal else None
-        if not caption_override and args.show not in SHOW_MUSIC:
-            print(f"Unknown show '{args.show}'. Valid shows: {', '.join(SHOW_MUSIC)}")
-            sys.exit(1)
         total = generate_bumpers_for_show(args.show, count=args.count,
                                           caption_override=caption_override,
                                           vocal_override=vocal_override)

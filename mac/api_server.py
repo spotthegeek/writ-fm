@@ -16,7 +16,12 @@ import time
 import urllib.parse
 import urllib.request
 from datetime import datetime
+import sys
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / "mac"))
+from time_utils import station_now, station_iso_now, station_from_timestamp
 
 # Import play history
 try:
@@ -204,7 +209,7 @@ def get_health_status() -> dict:
     tunnel_ok = check_process("cloudflared")
     return {
         "status": "healthy" if icecast_ok and streamer_ok and tunnel_ok else "degraded",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": station_iso_now(),
         "components": {
             "icecast": {"status": "up" if icecast_ok else "down"},
             "streamer": {"status": "up" if streamer_ok else "down"},
@@ -228,7 +233,7 @@ def get_stats() -> dict:
         "tracks_played": TRACKS_PLAYED,
         "total_listeners_served": TOTAL_LISTENERS_SERVED,
         "current_listeners": listeners,
-        "api_started": datetime.fromtimestamp(SERVER_START_TIME).isoformat(),
+        "api_started": station_from_timestamp(SERVER_START_TIME).isoformat(),
     }
 
 
@@ -280,7 +285,7 @@ def save_message(message: str, ip: str):
     messages.append({
         "message": message,
         "ip": ip,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": station_iso_now(),
         "read": False,
     })
 
@@ -322,7 +327,7 @@ def get_schedule_info() -> dict:
         from schedule import load_schedule
         schedule_path = PROJECT_ROOT / "config" / "schedule.yaml"
         schedule = load_schedule(schedule_path)
-        now = datetime.now()
+        now = station_now()
         current = schedule.resolve(now)
 
         # Find upcoming shows (next 4 hours)

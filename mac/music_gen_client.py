@@ -13,9 +13,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
 MINIMAX_BASE_URL = "https://api.minimax.io/v1"
-MINIMAX_MODEL = "music-2.6"
+MINIMAX_MODEL = os.environ.get("MINIMAX_MUSIC_MODEL", "music-2.6")
 
 # Legacy env var kept for health-check callers that test server availability.
 MUSIC_GEN_BASE_URL = os.environ.get("MUSIC_GEN_URL", "http://localhost:4009")
@@ -23,7 +22,15 @@ MUSIC_GEN_BASE_URL = os.environ.get("MUSIC_GEN_URL", "http://localhost:4009")
 
 def is_server_available(base_url: str = MUSIC_GEN_BASE_URL, timeout: float = 2.0) -> bool:
     """Check if music generation is available. For MiniMax, just verify API key is set."""
-    return bool(MINIMAX_API_KEY)
+    return bool(_music_api_key())
+
+
+def _music_api_key() -> str:
+    """Prefer the token-plan key for music generation, falling back safely."""
+    return (
+        os.environ.get("MINIMAX_TOKEN_PLAN_API_KEY", "").strip()
+        or os.environ.get("MINIMAX_API_KEY", "").strip()
+    )
 
 
 def generate_music(
@@ -55,18 +62,25 @@ def generate_music(
     Returns:
         True if successful, False otherwise.
     """
-    api_key = MINIMAX_API_KEY
+    api_key = _music_api_key()
     if not api_key:
-        print("[music_gen] MINIMAX_API_KEY not set")
+        print("[music_gen] MINIMAX_TOKEN_PLAN_API_KEY not set")
         return False
 
     payload: dict = {
         "model": MINIMAX_MODEL,
         "prompt": caption,
-        "is_instrumental": instrumental,
+        "audio_setting": {
+            "sample_rate": 44100,
+            "bitrate": 256000,
+            "format": "mp3",
+        },
     }
-    if not instrumental and lyrics and lyrics != "[Instrumental]":
-        payload["lyrics"] = lyrics
+    if instrumental:
+        payload["is_instrumental"] = True
+    else:
+        payload["lyrics"] = lyrics if lyrics and lyrics != "[Instrumental]" else "[Instrumental]\n"
+        payload["is_instrumental"] = False
 
     req = urllib.request.Request(
         f"{MINIMAX_BASE_URL}/music_generation",

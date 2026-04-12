@@ -35,6 +35,8 @@ except ImportError:
     SCHEDULE_ENABLED = False
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / "mac"))
+from time_utils import station_now, station_from_timestamp, station_iso_now
 
 # Directories
 TALK_SEGMENTS_DIR = PROJECT_ROOT / "output" / "talk_segments"
@@ -144,10 +146,10 @@ def _record_play_lifecycle(audio_path: Path) -> dict:
     p = _plays_sidecar(audio_path)
     meta = _read_plays(audio_path)
     meta["play_count"] = meta.get("play_count", 0) + 1
-    now = datetime.now().isoformat()
+    now = station_iso_now()
     if "created_at" not in meta:
         # Use file mtime as creation time if not yet set
-        meta["created_at"] = datetime.fromtimestamp(audio_path.stat().st_mtime).isoformat()
+        meta["created_at"] = station_from_timestamp(audio_path.stat().st_mtime).isoformat()
     if "first_played_at" not in meta:
         meta["first_played_at"] = now
     meta["last_played_at"] = now
@@ -170,14 +172,14 @@ def _should_retire(audio_path: Path, lifecycle: ContentLifecycle) -> bool:
         created_str = meta.get("created_at")
         if created_str:
             try:
-                age_days = (datetime.now() - datetime.fromisoformat(created_str)).days
+                age_days = (station_now() - datetime.fromisoformat(created_str)).days
                 if age_days >= lifecycle.max_days:
                     return True
             except Exception:
                 pass
         else:
             # No sidecar yet — use file mtime as proxy age
-            age_days = (datetime.now() - datetime.fromtimestamp(audio_path.stat().st_mtime)).days
+            age_days = (station_now() - station_from_timestamp(audio_path.stat().st_mtime)).days
             if age_days >= lifecycle.max_days:
                 return True
     return False
@@ -275,7 +277,7 @@ def signal_handler(signum, frame):
 
 
 def log(msg: str):
-    ts = datetime.now().strftime("%H:%M:%S")
+    ts = station_now().strftime("%H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
 
 
@@ -328,7 +330,7 @@ def update_now_playing(
         "segment_type": segment_type,
         "show_id": show_id,
         "show": show_name,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": station_iso_now(),
         "listeners": get_listener_count(),
     }
     if caption is not None:
@@ -369,6 +371,9 @@ def clean_name(filepath: Path, is_speech: bool = False) -> str:
             "interview": "The Interview",
             "panel": "Crosswire",
             "story": "Story Hour",
+            "reddit_storytelling": "Reddit Storytelling",
+            "reddit_post": "Reddit Thread",
+            "youtube": "YouTube",
             "listener_mailbag": "Listener Hours",
             "music_essay": "Sonic Essay",
             "station_id": "WRIT-FM",
@@ -1041,7 +1046,7 @@ def _extract_segment_type(filepath: Path) -> str:
     name = filepath.name.lower()
     types = [
         "listener_response",  # Priority: real listener messages
-        "deep_dive", "news_analysis", "interview", "panel", "story",
+        "deep_dive", "news_analysis", "interview", "panel", "story", "reddit_storytelling", "reddit_post", "youtube",
         "listener_mailbag", "music_essay", "station_id", "show_intro", "show_outro",
         # Legacy
         "long_talk", "monologue", "late_night", "music_history",
