@@ -21,10 +21,12 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "mac"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from schedule import load_schedule
 from time_utils import station_now, station_iso_now
 
 from music_gen_client import MUSIC_GEN_BASE_URL, generate_music, is_server_available
 from helpers import run_claude
+from persona import get_host
 
 BUMPERS_DIR = PROJECT_ROOT / "output" / "music_bumpers"
 
@@ -270,6 +272,23 @@ SHOW_MUSIC: dict[str, list[str | dict]] = {
     ],
 }
 
+
+def _show_primary_host(show_id: str) -> tuple[str, str]:
+    """Return the primary host id/name for a show if it exists in schedule.yaml."""
+    try:
+        data = load_schedule()
+    except Exception:
+        return show_id, show_id
+    show = (data.get("shows") or {}).get(show_id, {})
+    hosts = show.get("hosts") or []
+    primary = next((h for h in hosts if h.get("role") == "primary"), None)
+    host_id = str((primary or {}).get("id") or show.get("host") or show_id).strip() or show_id
+    try:
+        host_name = get_host(host_id).get("name", host_id)
+    except Exception:
+        host_name = str((primary or {}).get("display_name") or host_id).strip() or host_id
+    return host_id, host_name
+
 # Merge expanded caption pools (25 instrumental + 10 vocal per show)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from music_pools_expanded import (  # noqa: E402
@@ -405,7 +424,7 @@ def generate_one_bumper(show_id: str, verbose: bool = True,
     show_dir = BUMPERS_DIR / show_id
     show_dir.mkdir(parents=True, exist_ok=True)
     timestamp = station_now().strftime("%Y%m%d_%H%M%S")
-    audio_path = show_dir / f"{show_id}_bumper_{timestamp}.flac"
+    audio_path = show_dir / f"{show_id}_bumper_{timestamp}.mp3"
     meta_path = audio_path.with_suffix(".json")
 
     kind = "vocal" if not instrumental else "instrumental"
@@ -419,13 +438,20 @@ def generate_one_bumper(show_id: str, verbose: bool = True,
                         guidance_scale=guidance)
     elapsed = time.perf_counter() - start
 
-    if ok:
+    saved_path = audio_path if audio_path.exists() else audio_path.with_suffix(".mp3")
+    if ok and saved_path.exists():
+        host_id, host_name = _show_primary_host(show_id)
         meta = {
             "show_id": show_id,
+            "host": host_id,
+            "host_name": host_name,
             "caption": caption,
             "display_name": _display_name(caption),
             "duration": duration,
             "instrumental": instrumental,
+            "voice": "instrumental" if instrumental else "vocal",
+            "generation_backend": "music-gen",
+            "backend_origin": "cloud",
             "generated_at": station_iso_now(),
             "generation_seconds": round(elapsed, 1),
             "ai_generated": True,
@@ -433,7 +459,7 @@ def generate_one_bumper(show_id: str, verbose: bool = True,
         }
         meta_path.write_text(json.dumps(meta, indent=2))
         if verbose:
-            print(f"  Saved: {audio_path.name} ({elapsed:.0f}s)")
+            print(f"  Saved: {saved_path.name} ({elapsed:.0f}s)")
         return True
     else:
         if verbose:
@@ -477,6 +503,7 @@ def main():
         sys.exit(1)
 
     if args.all:
+        all_ok = True
         for show_id in SHOW_MUSIC:
             current = bumper_count(show_id)
             if current >= args.min:
@@ -484,8 +511,10 @@ def main():
                 continue
             needed = args.min - current
             print(f"\nGenerating {needed} bumpers for {show_id} (have {current})...")
-            generate_bumpers_for_show(show_id, count=needed)
-        return
+            generated = generate_bumpers_for_show(show_id, count=needed)
+            if generated < needed:
+                all_ok = False
+        sys.exit(0 if all_ok else 1)
 
     if args.show:
         caption_override = args.caption or None
@@ -494,9 +523,10 @@ def main():
                                           caption_override=caption_override,
                                           vocal_override=vocal_override)
         print(f"\nGenerated {total}/{args.count} bumpers for {args.show}")
-        return
+        sys.exit(0 if total >= args.count else 1)
 
     parser.print_help()
+    sys.exit(1)
 
 
 if __name__ == "__main__":

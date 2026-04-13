@@ -523,6 +523,99 @@ def _used_source_keys_for_show(show_id: str) -> set[str]:
     return used
 
 
+def _source_rule_sort_key(rule: dict) -> tuple:
+    return (
+        str(rule.get("type") or ""),
+        str(rule.get("value") or ""),
+        str(rule.get("segment_type") or ""),
+    )
+
+
+def _choose_source_rule_for_show(show, show_id: str, preferred_segment_type: str | None = None) -> dict | None:
+    rules = [_normalize_source_rule(rule) for rule in getattr(show, "source_rules", []) if isinstance(rule, dict)]
+    rules = [rule for rule in rules if rule["value"]]
+    if not rules:
+        return None
+
+    if preferred_segment_type and preferred_segment_type != "random":
+        matching = [rule for rule in rules if rule["segment_type"] == preferred_segment_type]
+        if matching:
+            rules = matching
+
+    eligible: list[dict] = []
+    for rule in rules:
+        source_type = str(rule["type"])
+        source_value = str(rule["value"])
+        if source_type in {"reddit", "reddit_subreddit", "reddit_thread"}:
+            if source_type == "reddit_subreddit":
+                source_type = "reddit_subreddit"
+            else:
+                kind, _ = _normalize_reddit_source(source_value)
+                source_type = "reddit_subreddit" if kind == "subreddit" else "reddit_thread"
+        elif source_type in {"youtube", "youtube_video"}:
+            if _is_youtube_collection_source(source_value):
+                source_type = "youtube_channel"
+            else:
+                source_type = "youtube_video"
+        key = _canonical_source_key(source_type, source_value)
+        if key and key in _used_source_keys_for_show(show_id):
+            continue
+        eligible.append(rule)
+
+    if not eligible:
+        return None
+
+    eligible = sorted(eligible, key=_source_rule_sort_key)
+    if len(eligible) == 1:
+        return eligible[0]
+
+    history_path = SCRIPTS_DIR / f".{show_id}_source_rotation.json"
+    last_key = ""
+    try:
+        if history_path.exists():
+            last_key = str(json.loads(history_path.read_text()).get("last_key") or "")
+    except Exception:
+        last_key = ""
+
+    def rule_key(rule: dict) -> str:
+        src_type = str(rule["type"])
+        src_value = str(rule["value"])
+        if src_type in {"youtube", "youtube_video"} and _is_youtube_collection_source(src_value):
+            src_type = "youtube_channel"
+        elif src_type in {"reddit", "reddit_thread"}:
+            kind, _ = _normalize_reddit_source(src_value)
+            src_type = "reddit_subreddit" if kind == "subreddit" else "reddit_thread"
+        return _canonical_source_key(src_type, src_value)
+
+    if last_key:
+        for idx, rule in enumerate(eligible):
+            if rule_key(rule) == last_key:
+                return eligible[(idx + 1) % len(eligible)]
+
+    return random.choice(eligible)
+
+
+def _record_source_rotation(show_id: str, rule: dict | None) -> None:
+    if not rule:
+        return
+    try:
+        SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+        src_type = str(rule.get("type") or "")
+        src_value = str(rule.get("value") or "")
+        if src_type in {"youtube", "youtube_video"} and _is_youtube_collection_source(src_value):
+            src_type = "youtube_channel"
+        elif src_type in {"reddit", "reddit_thread"}:
+            kind, _ = _normalize_reddit_source(src_value)
+            src_type = "reddit_subreddit" if kind == "subreddit" else "reddit_thread"
+        payload = {
+            "last_key": _canonical_source_key(src_type, src_value),
+            "updated_at": station_iso_now(),
+        }
+        (SCRIPTS_DIR / f".{show_id}_source_rotation.json").write_text(json.dumps(payload, indent=2))
+    except Exception:
+        pass
+
+
 def _extract_reddit_comments(children: list[dict], limit: int = REDDIT_COMMENT_LIMIT) -> list[str]:
     comments: list[str] = []
     for child in children:
@@ -741,6 +834,43 @@ def _normalize_youtube_source(source_value: str) -> str:
     return f"https://www.youtube.com/watch?v={value}"
 
 
+def _is_youtube_collection_source(source_value: str) -> bool:
+    value = (source_value or "").strip()
+    if not value:
+        return False
+    parsed = urllib.parse.urlparse(value if "://" in value else "https://" + value)
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if parsed.netloc.endswith("youtu.be"):
+        return False
+    if any(part.startswith("@") for part in path_parts) or "playlist" in path_parts or "channel" in path_parts:
+        return True
+    return False
+
+
+def _youtube_collection_url(source_value: str) -> str:
+    value = (source_value or "").strip()
+    if not value:
+        return ""
+    parsed = urllib.parse.urlparse(value if "://" in value else "https://" + value)
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if parsed.netloc.endswith("youtu.be"):
+        return value
+    if "playlist" in path_parts:
+        return value
+    if path_parts and path_parts[-1] == "videos":
+        return value
+    if any(part.startswith("@") for part in path_parts) or "channel" in path_parts:
+        new_path = parsed.path.rstrip("/") + "/videos"
+        return urllib.parse.urlunparse(parsed._replace(path=new_path))
+    return value
+
+
+def _show_value(show, key: str, default=None):
+    if isinstance(show, dict):
+        return show.get(key, default)
+    return getattr(show, key, default)
+
+
 def _run_yt_dlp(args: list[str], timeout: int = 300) -> subprocess.CompletedProcess[str]:
     cmd = [sys.executable, "-m", "yt_dlp", *args]
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -848,13 +978,18 @@ def _select_youtube_video_url_from_collection(
     selection_strategy: str = "latest",
     used_source_keys: set[str] | None = None,
 ) -> str:
-    source_url = _normalize_youtube_source(source_value)
-    meta = _run_yt_dlp([
+    source_url = _youtube_collection_url(_normalize_youtube_source(source_value))
+    fetch_args = [
         "--flat-playlist",
         "--dump-single-json",
         "--skip-download",
-        source_url,
-    ], timeout=180)
+    ]
+    if selection_strategy.strip().lower() == "random":
+        fetch_args += ["--playlist-end", "25"]
+    else:
+        fetch_args += ["--playlist-end", "12"]
+    fetch_args.append(source_url)
+    meta = _run_yt_dlp(fetch_args, timeout=240)
     if meta.returncode != 0 or not meta.stdout.strip():
         raise RuntimeError(meta.stderr.strip() or "yt-dlp playlist fetch failed")
     payload = json.loads(meta.stdout)
@@ -1056,6 +1191,9 @@ def load_source_context(
         if source_type == "reddit_subreddit":
             return _fetch_reddit_subreddit_context_with_strategy(source_value, lookback_days, selection_strategy, used_source_keys)
         if source_type in {"youtube", "youtube_video"}:
+            if _is_youtube_collection_source(source_value):
+                selected_url = _select_youtube_video_url_from_collection(source_value, lookback_days, selection_strategy, used_source_keys)
+                return _fetch_youtube_context(selected_url)
             if used_source_keys and _canonical_source_key("youtube_video", source_value) in used_source_keys:
                 return None
             return _fetch_youtube_context(source_value)
@@ -1342,8 +1480,44 @@ def run_generation(prompt: str, segment_type: str) -> str | None:
     if not script:
         return None
 
-    # Quality gate: check word count
+    # If the model undershoots the nominal minimum, try one corrective pass
+    # before falling back to the looser 80% acceptance floor.
     word_count = len(script.split())
+    if word_count < min_words:
+        repaired_prompt = f"""{prompt}
+
+The draft below is too short for this segment.
+Target length: {min_words}-{max_words} words.
+Current length: {word_count} words.
+
+Revise the full script so it reaches at least {min_words} words.
+Preserve the same topic, structure, tone, and voice.
+Do not add commentary about the revision.
+Do not summarize the draft.
+Output ONLY the revised spoken text.
+
+CURRENT DRAFT:
+{script}
+"""
+        repaired_script = run_claude(
+            repaired_prompt,
+            timeout=timeout,
+            temperature=max(0.35, temperature - 0.15),
+            num_predict=num_predict,
+        )
+        if repaired_script:
+            repaired_word_count = len(repaired_script.split())
+            if repaired_word_count > word_count:
+                log(
+                    "Script expanded from "
+                    f"{word_count} to {repaired_word_count} words "
+                    f"(target {min_words}-{max_words})"
+                )
+                script = repaired_script
+                word_count = repaired_word_count
+
+    # Quality gate: keep the existing 80% floor, but reject anything too short
+    # before it reaches TTS.
     if word_count < min_acceptable:
         log(f"Script too short: {word_count} words (need {min_acceptable}+, target {min_words}-{max_words})")
         return None
@@ -1631,6 +1805,7 @@ def generate_segment(
     source_lookback_days: int = 7,
     source_selection_strategy: str = "latest",
     source_context: SourceContext | None = None,
+    used_source_keys: set[str] | None = None,
     station_name: str = STATION_NAME,
     include_topic: bool = True,
 ) -> Path | None:
@@ -1647,10 +1822,16 @@ def generate_segment(
             source_value,
             lookback_days=source_lookback_days,
             selection_strategy=source_selection_strategy,
+            used_source_keys=used_source_keys,
         )
     if source_type and source_value and source_context is None:
         log(f"  Source '{source_type}' at '{source_value}' was unavailable or already used.")
         return None
+    if source_context and used_source_keys:
+        selected_key = _canonical_source_key(source_context.source_type, source_context.source_value)
+        if selected_key and selected_key in used_source_keys:
+            log(f"  Source '{source_context.source_type}' at '{source_context.source_value}' was already used.")
+            return None
     if source_context and source_context.source_type in {"reddit", "youtube"}:
         topic = source_context.title or topic
     elif source_context and not topic:
@@ -1732,13 +1913,15 @@ def generate_segment(
         meta = {
             "type": segment_type,
             "show_id": show_id,
-            "show_name": show.name,
-            "host": primary.get("id", show.host),
+            "show_name": _show_value(show, "name", show_id),
+            "host": primary.get("id", _show_value(show, "host", "")),
+            "host_name": primary.get("display_name", _host_label(primary.get("id", _show_value(show, "host", "")))),
             "topic": topic,
             "script": script,
             "word_count": word_count,
             "duration_seconds": duration,
             "voices": voices,
+            "voice": "" if backend_used == "youtube_ingest" else voices.get("host", ""),
             "speaker_labels": speaker_labels,
             "source_type": source_context.source_type,
             "source_value": source_context.source_value,
@@ -1748,6 +1931,8 @@ def generate_segment(
             "source_audio_path": source_context.audio_path,
             "transcript_source": source_context.transcript_source,
             "tts_backend": backend_used,
+            "audio_backend": backend_used,
+            "backend_origin": "local" if backend_used == "kokoro" else "cloud" if backend_used in {"minimax", "minimax_async"} else "source" if backend_used == "youtube_ingest" else backend_used,
             "generated_at": station_iso_now(),
         }
         with open(meta_path, "w") as f:
@@ -1758,11 +1943,23 @@ def generate_segment(
             json.dump({
                 "type": segment_type,
                 "show_id": show_id,
+                "show_name": _show_value(show, "name", show_id),
+                "host": _show_value(show, "host", ""),
                 "topic": topic,
                 "word_count": word_count,
+                "voices": voices,
+                "voice": "" if backend_used == "youtube_ingest" else voices.get("host", ""),
+                "voice_details": ", ".join(f"{role}: {value}" for role, value in voices.items() if value) or ("" if backend_used == "youtube_ingest" else voices.get("host", "")),
+                "speaker_labels": speaker_labels,
                 "source_type": source_context.source_type,
+                "source_value": source_context.source_value,
                 "source_title": source_context.title,
+                "source_subreddit": source_context.subreddit,
+                "source_story_mode": bool(source_context.story_mode),
                 "source_audio_path": source_context.audio_path,
+                "tts_backend": backend_used,
+                "audio_backend": backend_used,
+                "backend_origin": "local" if backend_used == "kokoro" else "cloud" if backend_used in {"minimax", "minimax_async"} else "source" if backend_used == "youtube_ingest" else backend_used,
                 "generated_at": station_iso_now(),
             }, f, indent=2)
 
@@ -1811,6 +2008,14 @@ def generate_segment(
 
     # Preprocess for TTS
     processed = preprocess_for_tts(script)
+    processed_word_count = len(processed.split())
+    min_acceptable = int(min_words * 0.8)
+    if processed_word_count < min_acceptable:
+        log(
+            "  Processed script too short for TTS: "
+            f"{processed_word_count} words (need {min_acceptable}+, target {min_words}-{max_words})"
+        )
+        return None
 
     # Render audio
     log("  Rendering audio...")
@@ -1891,11 +2096,13 @@ def generate_segment(
         "show_id": show_id,
         "show_name": show.name,
         "host": primary.get("id", show.host),
+        "host_name": primary.get("display_name", _host_label(primary.get("id", show.host))),
         "topic": topic,
         "script": script,
         "word_count": word_count,
         "duration_seconds": duration,
         "voices": voices,
+        "voice": "" if backend_used == "youtube_ingest" else voices.get("host", ""),
         "speaker_labels": speaker_labels,
         "source_type": source_context.source_type if source_context else "",
         "source_value": source_context.source_value if source_context else "",
@@ -1903,6 +2110,8 @@ def generate_segment(
         "source_subreddit": source_context.subreddit if source_context else "",
         "source_story_mode": bool(source_context.story_mode) if source_context else False,
         "tts_backend": backend_used,
+        "audio_backend": backend_used,
+        "backend_origin": "local" if backend_used == "kokoro" else "cloud" if backend_used in {"minimax", "minimax_async"} else "source" if backend_used == "youtube_ingest" else backend_used,
         "generated_at": station_iso_now(),
     }
     with open(meta_path, "w") as f:
@@ -1914,10 +2123,23 @@ def generate_segment(
         json.dump({
             "type": segment_type,
             "show_id": show_id,
+            "show_name": _show_value(show, "name", show_id),
+            "host": _show_value(show, "host", ""),
             "topic": topic,
             "word_count": word_count,
+            "voices": voices,
+            "voice": "" if backend_used == "youtube_ingest" else voices.get("host", ""),
+            "voice_details": ", ".join(f"{role}: {value}" for role, value in voices.items() if value) or ("" if backend_used == "youtube_ingest" else voices.get("host", "")),
+            "speaker_labels": speaker_labels,
             "source_type": source_context.source_type if source_context else "",
+            "source_value": source_context.source_value if source_context else "",
             "source_title": source_context.title if source_context else "",
+            "source_subreddit": source_context.subreddit if source_context else "",
+            "source_story_mode": bool(source_context.story_mode) if source_context else False,
+            "source_audio_path": source_context.audio_path if source_context else "",
+            "tts_backend": backend_used,
+            "audio_backend": backend_used,
+            "backend_origin": "local" if backend_used == "kokoro" else "cloud" if backend_used in {"minimax", "minimax_async"} else "source" if backend_used == "youtube_ingest" else backend_used,
             "generated_at": station_iso_now(),
         }, f, indent=2)
 
@@ -1976,32 +2198,20 @@ def generate_for_show(
             and requested_segment_type in {"random", "reddit_post", "reddit_storytelling", "youtube"}
         )
         if auto_source:
-            candidate_rules = [
-                _normalize_source_rule(rule)
-                for rule in getattr(show, "source_rules", [])
-                if isinstance(rule, dict)
-            ]
-            candidate_rules = [rule for rule in candidate_rules if rule["value"]]
-            if requested_segment_type and requested_segment_type != "random":
-                matching = [rule for rule in candidate_rules if rule["segment_type"] == requested_segment_type]
-                if matching:
-                    candidate_rules = matching
-            for rule in candidate_rules:
-                ctx = load_source_context(
-                    rule["type"],
-                    rule["value"],
-                    lookback_days=int(rule["lookback_days"]),
-                    selection_strategy=str(rule["selection_strategy"]),
+            selected_source_rule = _choose_source_rule_for_show(show, show_id, requested_segment_type)
+            if selected_source_rule:
+                selected_source_context = load_source_context(
+                    selected_source_rule["type"],
+                    selected_source_rule["value"],
+                    lookback_days=int(selected_source_rule["lookback_days"]),
+                    selection_strategy=str(selected_source_rule["selection_strategy"]),
                     used_source_keys=used_source_keys,
                 )
-                if ctx:
-                    selected_source_rule = rule
-                    selected_source_context = ctx
-                    iter_source_type = str(rule["type"])
-                    iter_source_value = str(rule["value"])
-                    iter_source_lookback_days = int(rule["lookback_days"])
-                    iter_source_selection_strategy = str(rule["selection_strategy"])
-                    break
+                if selected_source_context:
+                    iter_source_type = str(selected_source_rule["type"])
+                    iter_source_value = str(selected_source_rule["value"])
+                    iter_source_lookback_days = int(selected_source_rule["lookback_days"])
+                    iter_source_selection_strategy = str(selected_source_rule["selection_strategy"])
             if not selected_source_context and requires_source:
                 log(f"  No unused source items available for show '{show.name}'.")
                 break
@@ -2029,6 +2239,7 @@ def generate_for_show(
             source_lookback_days=iter_source_lookback_days,
             source_selection_strategy=iter_source_selection_strategy,
             source_context=selected_source_context,
+            used_source_keys=used_source_keys,
             station_name=station_name,
             include_topic=include_topic,
         )
@@ -2041,6 +2252,7 @@ def generate_for_show(
                 )
                 if used_key:
                     used_source_keys.add(used_key)
+            _record_source_rotation(show_id, selected_source_rule)
 
         if i < count - 1:
             time.sleep(2)

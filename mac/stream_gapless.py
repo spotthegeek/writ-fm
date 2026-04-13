@@ -17,8 +17,9 @@ import re
 import json
 import time
 import urllib.request
+import threading
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 
 # Import play history tracker
@@ -37,6 +38,7 @@ except ImportError:
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "mac"))
 from time_utils import station_now, station_from_timestamp, station_iso_now
+import api_server as live_api
 
 # Directories
 TALK_SEGMENTS_DIR = PROJECT_ROOT / "output" / "talk_segments"
@@ -68,8 +70,19 @@ ICECAST_STATUS_URL = os.environ.get(
 running = True
 encoder_proc = None
 skip_current = False
+skip_was_requested = False
 force_segment = False
 last_bumper_path: Path | None = None
+_live_queue_lock = threading.Lock()
+_live_queue_state: dict = {
+    "show_id": None,
+    "show_name": None,
+    "host": None,
+    "current_item": None,
+    "upcoming": [],
+    "queue_length": 0,
+    "updated_at": None,
+}
 current_track_info: dict = {
     "track": None,
     "type": None,
@@ -356,7 +369,158 @@ def check_command() -> str | None:
             return cmd
     except Exception:
         pass
+    try:
+        cmd = live_api.pop_live_command({"skip", "segment"})
+        if isinstance(cmd, dict):
+            action = str(cmd.get("action", "")).strip().lower()
+            if action:
+                return action
+    except Exception:
+        pass
     return None
+
+
+def _queue_item_duration(filepath: Path) -> float:
+    duration = get_track_duration(filepath)
+    return float(duration) if duration else 0.0
+
+
+def _queue_item_snapshot(filepath: Path, index: int, total: int, started_at: datetime | None = None) -> dict:
+    duration = _queue_item_duration(filepath)
+    snapshot = {
+        "index": index,
+        "total": total,
+        "filename": filepath.name,
+        "path": str(filepath),
+        "name": clean_name(filepath, is_speech=True),
+        "segment_type": _extract_segment_type(filepath),
+        "duration_seconds": round(duration, 2) if duration else None,
+    }
+    if started_at is not None:
+        snapshot["started_at"] = started_at.isoformat()
+        if duration:
+            snapshot["estimated_end_at"] = (started_at + timedelta(seconds=duration)).isoformat()
+    return snapshot
+
+
+def _resolve_queue_index(talk_queue: list[Path], ref: str, start_index: int = 0) -> int | None:
+    if not ref:
+        return None
+    ref_name = Path(ref).name
+    for idx in range(start_index, len(talk_queue)):
+        item = talk_queue[idx]
+        try:
+            rel = str(item.relative_to(PROJECT_ROOT))
+        except Exception:
+            rel = ""
+        if str(item) == ref or rel == ref or item.name == ref_name:
+            return idx
+    return None
+
+
+def _apply_live_command_to_queue(command: dict, talk_queue: list[Path], current_index: int) -> int:
+    action = str(command.get("action", "")).strip().lower()
+    ref = str(command.get("path") or command.get("filename") or "").strip()
+    if not action:
+        return current_index
+    upcoming_start = min(len(talk_queue), current_index + 1)
+
+    if action in {"play_next", "insert_next", "enqueue_next", "add_next"}:
+        target = _resolve_queue_index(talk_queue, ref, upcoming_start)
+        if target is not None:
+            item = talk_queue.pop(target)
+            if target < upcoming_start:
+                upcoming_start -= 1
+            talk_queue.insert(upcoming_start, item)
+            return current_index
+        if ref:
+            candidate = Path(ref)
+            if not candidate.is_absolute():
+                candidate = (PROJECT_ROOT / candidate).resolve()
+            if candidate.exists():
+                talk_queue.insert(upcoming_start, candidate)
+        return current_index
+
+    if action in {"move_up", "move_down", "move_top", "move_bottom", "remove"}:
+        target = _resolve_queue_index(talk_queue, ref, upcoming_start)
+        if target is None:
+            return current_index
+        if action == "remove":
+            talk_queue.pop(target)
+            return current_index
+        if action == "move_up" and target > upcoming_start:
+            talk_queue[target - 1], talk_queue[target] = talk_queue[target], talk_queue[target - 1]
+        elif action == "move_down" and target < len(talk_queue) - 1:
+            talk_queue[target + 1], talk_queue[target] = talk_queue[target], talk_queue[target + 1]
+        elif action == "move_top" and target > upcoming_start:
+            item = talk_queue.pop(target)
+            talk_queue.insert(upcoming_start, item)
+        elif action == "move_bottom" and target < len(talk_queue) - 1:
+            item = talk_queue.pop(target)
+            talk_queue.append(item)
+        return current_index
+
+    return current_index
+
+
+def _drain_live_commands() -> list[dict]:
+    commands = []
+    movable = {"play_next", "insert_next", "enqueue_next", "add_next", "move_up", "move_down", "move_top", "move_bottom", "remove"}
+    while True:
+        try:
+            cmd = live_api.pop_live_command(movable)
+        except Exception:
+            break
+        if not isinstance(cmd, dict):
+            break
+        commands.append(cmd)
+    return commands
+
+
+def _publish_live_queue_state(
+    show_id: str,
+    show_name: str,
+    host: str,
+    talk_queue: list[Path],
+    current_index: int | None = None,
+    current_started_at: datetime | None = None,
+) -> None:
+    upcoming = []
+    current_item = None
+    total = len(talk_queue)
+    if current_index is not None and 0 <= current_index < total:
+        current_start = current_started_at or station_now()
+        current_item = _queue_item_snapshot(talk_queue[current_index], current_index, total, current_start)
+        cursor = current_start
+        for idx, item in enumerate(talk_queue[current_index + 1:current_index + 11], start=current_index + 1):
+            upcoming.append(_queue_item_snapshot(item, idx, total, cursor))
+            cursor = cursor + timedelta(seconds=_queue_item_duration(item))
+    else:
+        cursor = station_now()
+        for idx, item in enumerate(talk_queue[:10]):
+            upcoming.append(_queue_item_snapshot(item, idx, total, cursor))
+            cursor = cursor + timedelta(seconds=_queue_item_duration(item))
+    snapshot = {
+        "show_id": show_id,
+        "show_name": show_name,
+        "host": host,
+        "current_item": current_item,
+        "upcoming": upcoming,
+        "queue_length": total,
+        "updated_at": station_iso_now(),
+    }
+    with _live_queue_lock:
+        _live_queue_state.clear()
+        _live_queue_state.update(snapshot)
+
+
+def get_live_queue_state() -> dict:
+    with _live_queue_lock:
+        state = dict(_live_queue_state)
+        state["upcoming"] = list(_live_queue_state.get("upcoming", []))
+        if _live_queue_state.get("current_item"):
+            state["current_item"] = dict(_live_queue_state["current_item"])
+        return state
 
 
 
@@ -623,7 +787,7 @@ def wait_for_encoder_ready(encoder: subprocess.Popen, timeout: float = 2.0) -> b
 
 def pipe_track(filepath: Path, encoder: subprocess.Popen, start_time: float = 0, duration: float = None, is_speech: bool = False) -> bool:
     """Decode a track and pipe PCM to encoder. Returns False if encoder died."""
-    global running, skip_current, force_segment
+    global running, skip_current, skip_was_requested, force_segment
 
     if not running or encoder.poll() is not None:
         return False
@@ -652,6 +816,7 @@ def pipe_track(filepath: Path, encoder: subprocess.Popen, start_time: float = 0,
             if cmd == "skip":
                 log("Skipping...")
                 skip_current = True
+                skip_was_requested = True
                 break
             elif cmd == "segment":
                 log("Will play segment next...")
@@ -789,7 +954,7 @@ def _evict_orphaned_encoder() -> None:
 
 
 def run():
-    global running, encoder_proc, force_segment, last_bumper_path
+    global running, encoder_proc, force_segment, last_bumper_path, skip_was_requested
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
@@ -818,7 +983,7 @@ def run():
 
     # Start embedded API server
     from api_server import start_api_thread
-    start_api_thread(current_track_info, lambda: encoder_proc, get_listener_count)
+    start_api_thread(current_track_info, lambda: encoder_proc, get_listener_count, queue_getter=get_live_queue_state)
     log("API server started on port 8001")
 
     # Count talk segments
@@ -885,7 +1050,13 @@ def run():
                 if lr_count:
                     log(f"  Listener responses queued: {lr_count} (priority)")
 
-                for talk_seg in talk_queue:
+                talk_index = 0
+                _publish_live_queue_state(ctx.show_id, ctx.show_name, ctx.host, talk_queue, talk_index)
+                while running and encoder_proc.poll() is None and talk_index < len(talk_queue):
+                    for cmd in _drain_live_commands():
+                        talk_index = _apply_live_command_to_queue(cmd, talk_queue, talk_index)
+                    _publish_live_queue_state(ctx.show_id, ctx.show_name, ctx.host, talk_queue, talk_index)
+                    talk_seg = talk_queue[talk_index]
                     if not running or encoder_proc.poll() is not None:
                         break
 
@@ -894,6 +1065,8 @@ def run():
                     if new_ctx.show_id != ctx.show_id:
                         log(f"Show changed to {new_ctx.show_name} - switching...")
                         break
+
+                    _publish_live_queue_state(ctx.show_id, ctx.show_name, ctx.host, talk_queue, talk_index)
 
                     # Play talk segment
                     seg_name = clean_name(talk_seg, is_speech=True)
@@ -910,6 +1083,13 @@ def run():
                     if not pipe_track(talk_seg, encoder_proc, is_speech=True):
                         log("Talk pipe failed, reconnecting...")
                         break
+
+                    if skip_was_requested:
+                        log("  Segment skipped by live control")
+                        skip_was_requested = False
+                        talk_index += 1
+                        _publish_live_queue_state(ctx.show_id, ctx.show_name, ctx.host, talk_queue, talk_index)
+                        continue
 
                     # Update play count and retire if lifecycle limits exceeded
                     if CONSUME_SEGMENTS:
@@ -957,6 +1137,11 @@ def run():
                                 log("Music pipe failed, continuing...")
                                 break
 
+                            if skip_was_requested:
+                                log("  Bumper skipped by live control")
+                                skip_was_requested = False
+                                break
+
                             record_play(bpath, bname, "ai_bumper", ctx.show_id)
                             if CONSUME_SEGMENTS:
                                 bmeta = _record_play_lifecycle(bpath)
@@ -1000,6 +1185,9 @@ def run():
                                 except Exception:
                                     pass
 
+                    talk_index += 1
+                    _publish_live_queue_state(ctx.show_id, ctx.show_name, ctx.host, talk_queue, talk_index)
+
             else:
                 # No talk segments — play AI bumpers if available, otherwise fallback tone
                 ai_bumper = select_ai_bumper(ctx.show_id)
@@ -1015,6 +1203,10 @@ def run():
                         caption=bcaption,
                     )
                     pipe_track(bpath, encoder_proc, start_time=bstart, duration=bdur)
+                    if skip_was_requested:
+                        log("  Bumper skipped by live control")
+                        skip_was_requested = False
+                        continue
                     record_play(bpath, bname, "ai_bumper", ctx.show_id)
                     last_bumper_path = bpath
                 else:

@@ -47,6 +47,18 @@ except ImportError:
 # Discogs lookup cache to avoid repeated lookups for the same track
 _discogs_cache: dict[str, dict | None] = {}
 _discogs_last_track: str | None = None
+_live_queue_getter = None
+_live_queue_lock = threading.Lock()
+_live_queue_state: dict = {
+    "show_id": None,
+    "show_name": None,
+    "host": None,
+    "current_item": None,
+    "upcoming": [],
+    "queue_length": 0,
+    "updated_at": None,
+}
+_live_command_queue: list[dict] = []
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MESSAGES_FILE = Path.home() / ".writ" / "messages.json"
@@ -110,6 +122,8 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(get_stats())
         elif path == "/schedule":
             self._send_json(get_schedule_info())
+        elif path == "/queue":
+            self._send_json(get_live_queue())
         elif path.startswith("/history"):
             self._send_json(get_play_history())
         elif path == "/messages":
@@ -151,8 +165,21 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path.rstrip("/")
         if path != "/message":
-            self.send_response(404)
-            self.end_headers()
+            if path != "/control":
+                self.send_response(404)
+                self.end_headers()
+                return
+
+        if path == "/control":
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                data = json.loads(self.rfile.read(content_length).decode("utf-8") or "{}")
+                if not isinstance(data, dict) or not data.get("action"):
+                    return self._send_error(400, "Invalid control command")
+                enqueue_live_command(data)
+                self._send_json({"ok": True, "queued": data.get("action")})
+            except Exception as e:
+                self._send_error(500, str(e))
             return
 
         client_ip = self.client_address[0]
@@ -321,6 +348,45 @@ def get_now_playing() -> dict:
     return data
 
 
+def get_live_queue() -> dict:
+    if _live_queue_getter:
+        try:
+            state = _live_queue_getter() or {}
+            if isinstance(state, dict):
+                return state
+        except Exception:
+            pass
+    with _live_queue_lock:
+        state = dict(_live_queue_state)
+        state["upcoming"] = list(_live_queue_state.get("upcoming", []))
+        return state
+
+
+def set_live_queue(state: dict) -> None:
+    with _live_queue_lock:
+        _live_queue_state.clear()
+        _live_queue_state.update(state or {})
+
+
+def enqueue_live_command(command: dict) -> None:
+    with _live_queue_lock:
+        _live_command_queue.append(dict(command))
+
+
+def pop_live_command(actions: set[str] | list[str] | tuple[str, ...] | None = None) -> dict | None:
+    with _live_queue_lock:
+        if not _live_command_queue:
+            return None
+        if actions is None:
+            return _live_command_queue.pop(0)
+        wanted = {str(action).strip().lower() for action in actions if str(action).strip()}
+        for idx, command in enumerate(_live_command_queue):
+            action = str(command.get("action", "")).strip().lower()
+            if action in wanted:
+                return _live_command_queue.pop(idx)
+        return None
+
+
 def get_schedule_info() -> dict:
     """Get current and upcoming show schedule."""
     try:
@@ -480,7 +546,7 @@ class ReusableTCPServer(socketserver.TCPServer):
     allow_reuse_address = True
 
 
-def start_api_thread(track_info: dict, encoder_getter, listener_fn) -> threading.Thread:
+def start_api_thread(track_info: dict, encoder_getter, listener_fn, queue_getter=None) -> threading.Thread:
     """Start the HTTP API server in a daemon thread.
 
     Args:
@@ -489,9 +555,11 @@ def start_api_thread(track_info: dict, encoder_getter, listener_fn) -> threading
         listener_fn: Callable returning the current listener count.
     """
     global _track_info, _encoder_getter, _listener_fn, SERVER_START_TIME
+    global _live_queue_getter
     _track_info = track_info
     _encoder_getter = encoder_getter
     _listener_fn = listener_fn
+    _live_queue_getter = queue_getter
     SERVER_START_TIME = time.time()
 
     def _serve():

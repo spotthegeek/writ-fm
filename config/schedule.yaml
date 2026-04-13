@@ -156,94 +156,206 @@ shows:
     topic_focus: ''
     research_sources: *id001
     content_lifecycle:
-      talk: {}
-      music: {}
+      talk:
+        max_days: 3
+      music:
+        max_days: 14
     generation:
       talk:
-        enabled: false
-        min_inventory: 4
-        target_inventory: 8
+        enabled: true
+        min_inventory: 6
+        target_inventory: 12
         cadence: continuous
       music:
-        enabled: false
-        min_inventory: 3
-        target_inventory: 6
+        enabled: true
+        min_inventory: 4
+        target_inventory: 8
         cadence: weekly
   alien_theory:
     name: /r/alien_theory
     description: Reddit discussions and theories about extraterrestrials or ancient
       terrestrials, and the existence of life - of any kind - outside planet Earth.
     show_type: content_ingest
-    research_topic: Aliens
-    source_rules:
+    research_topic: ''
+    source_rules: &id002
     - type: reddit_subreddit
       value: /r/Alien_Theory/
       lookback_days: 7
-      selection_strategy: latest
+      selection_strategy: top
       segment_type: reddit_post
     - type: reddit_subreddit
       value: /r/EBEs/
       lookback_days: 7
-      selection_strategy: latest
+      selection_strategy: top
       segment_type: reddit_post
     - type: reddit_subreddit
       value: /r/UFOs/
       lookback_days: 7
-      selection_strategy: latest
+      selection_strategy: top
       segment_type: reddit_post
     guests: []
     segment_types:
     - show_intro
     - show_outro
     - station_id
-    - reddit_post
     - reddit_storytelling
+    - reddit_post
     bumper_style: ambient
+    hosts:
+    - id: nyx
+      role: primary
+      tts_backend: kokoro
+      voice_kokoro: af_heart
+      voice_minimax: Calm_Woman
+    - id: signal
+      role: co-host
+      tts_backend: kokoro
+      voice_kokoro: am_onyx
+      voice_minimax: Deep_Voice_Man
+    host: nyx
+    tts_backend: kokoro
+    voices:
+      host: af_heart
+      guest: am_onyx
+    topic_focus: ''
+    research_sources: *id002
+    content_lifecycle:
+      talk:
+        max_days: 3
+      music:
+        max_days: 14
+    generation:
+      talk:
+        enabled: true
+        min_inventory: 6
+        target_inventory: 12
+        cadence: continuous
+      music:
+        enabled: true
+        min_inventory: 4
+        target_inventory: 8
+        cadence: weekly
+  sysadmin:
+    name: /r/sysadmin/
+    description: Analysis and discussion of the top posts on /r/sysadmin and adjacent
+      infrastructure communities
+    show_type: content_ingest
+    topic_focus: ''
+    research_topic: ''
+    research_sources: &id003
+    - type: reddit_subreddit
+      value: /r/sysadmin/
+      lookback_days: 7
+      selection_strategy: top
+      segment_type: reddit_post
+    source_rules: *id003
+    guests:
+    - name: The 30 year greybeard sysadmin veteran
+      expertise: systems administration and engineering
+    segment_types:
+    - show_intro
+    - show_outro
+    - station_id
+    - reddit_post
+    bumper_style: rock
+    hosts:
+    - id: ember
+      role: primary
+      tts_backend: kokoro
+      voice_kokoro: af_bella
+      voice_minimax: Friendly_Person
+    content_lifecycle:
+      talk:
+        max_days: 3
+      music:
+        max_days: 14
+    generation:
+      talk:
+        enabled: true
+        min_inventory: 6
+        target_inventory: 12
+        cadence: continuous
+      music:
+        enabled: true
+        min_inventory: 4
+        target_inventory: 8
+        cadence: weekly
+    host: ember
+    tts_backend: kokoro
+    voices:
+      host: af_bella
+  youtube-ai:
+    name: YouTube AI
+    description: Audio from top subscribed AI related videos from YouTube.
+    show_type: content_ingest
+    topic_focus: ''
+    research_topic: ''
+    research_sources: &id004
+    - type: youtube_channel
+      value: https://www.youtube.com/@buildnpublic
+      lookback_days: 1
+      selection_strategy: latest
+      segment_type: ''
+    - type: youtube_channel
+      value: https://www.youtube.com/@BoxminingAI
+      lookback_days: 1
+      selection_strategy: latest
+      segment_type: ''
+    - type: youtube_channel
+      value: https://www.youtube.com/@TimCarambat
+      lookback_days: 1
+      selection_strategy: latest
+      segment_type: ''
+    - type: youtube_channel
+      value: https://www.youtube.com/@nateherk
+      lookback_days: 1
+      selection_strategy: latest
+      segment_type: ''
+    source_rules: *id004
+    guests: []
+    segment_types:
+    - reddit_storytelling
+    - reddit_post
+    - youtube
+    bumper_style: rock
     hosts:
     - id: liminal_operator
       role: primary
-      tts_backend: minimax
+      tts_backend: kokoro
       voice_kokoro: am_michael
       voice_minimax: Deep_Voice_Man
+    content_lifecycle:
+      talk:
+        max_days: 3
+      music:
+        max_days: 14
+    generation:
+      talk:
+        enabled: true
+        min_inventory: 6
+        target_inventory: 12
+        cadence: continuous
+      music:
+        enabled: true
+        min_inventory: 4
+        target_inventory: 8
+        cadence: weekly
     host: liminal_operator
-    tts_backend: minimax
+    tts_backend: kokoro
     voices:
       host: am_michael
 schedule:
   base:
   - start: 00:00
-    end: 04:00
-    show: midnight_signal
-  - start: 04:00
     end: 06:00
-    show: the_night_garden
+    show: alien_theory
   - start: 06:00
-    end: 09:00
-    show: dawn_chorus
-  - start: 09:00
     end: '12:00'
-    show: sonic_archaeology
-  - start: '12:00'
-    end: '14:00'
-    show: signal_report
-  - start: '14:00'
-    end: '16:00'
-    show: the_groove_lab
-  - start: '16:00'
-    end: '18:00'
-    show: crosswire
-  - start: '18:00'
-    end: '20:00'
-    show: sonic_archaeology
-  - start: '20:00'
-    end: '22:00'
-    show: the_groove_lab
-  - start: '22:00'
-    end: 00:00
     show: nosleep
-  overrides:
-  - days:
-    - sun
-    start: '18:00'
-    end: '20:00'
-    show: listener_hours
+  - start: '12:00'
+    end: '18:00'
+    show: sysadmin
+  - start: '18:00'
+    end: 00:00
+    show: youtube-ai
+  overrides: []

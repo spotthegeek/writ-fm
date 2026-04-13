@@ -34,7 +34,20 @@
   .show-block { border-radius: 3px; padding: 2px 4px; margin: 1px 0; cursor: pointer; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: #6366f1; margin-bottom: 8px; }
   .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 50; display: flex; align-items: center; justify-content: center; }
-  .modal { background: #1a1f2e; border: 1px solid #2d3452; border-radius: 8px; width: 640px; max-height: 90vh; overflow-y: auto; padding: 24px; }
+  .modal { background: #1a1f2e; border: 1px solid #2d3452; border-radius: 8px; width: min(1120px, 94vw); max-height: 92vh; overflow: hidden; padding: 20px; display: flex; flex-direction: column; }
+  .modal-body { min-height: 0; overflow: hidden; }
+  .modal-pane { max-height: calc(92vh - 180px); overflow-y: auto; padding-right: 4px; }
+  .modal-pane.hidden { display: none; }
+  .field-label { display: block; font-size: 11px; color: #94a3b8; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .field-help { font-size: 11px; color: #64748b; margin-top: 6px; line-height: 1.4; }
+  .source-rule-card { border: 1px solid #2d3452; border-radius: 8px; background: #111522; padding: 12px; }
+  .source-rule-grid { display: grid; grid-template-columns: minmax(180px, 1.2fr) minmax(260px, 2fr) 110px 130px minmax(130px, 1fr) auto; gap: 10px; align-items: end; }
+  .source-rule-field { min-width: 0; }
+  .source-rule-field .field-label { margin-bottom: 4px; }
+  .show-modal-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .show-modal-tab { min-height: 100%; }
+  .show-modal-tab.active { background: #6366f1; color: #fff; }
+  .show-modal-tab:not(.active):hover { background: #1e2130; }
   /* Live stream button */
   #live-btn { border-radius: 4px; padding: 5px 14px; font-size: 12px; cursor: pointer; transition: all 0.15s; border: 1px solid #374151; }
   #live-btn.off { background: transparent; color: #6b7280; }
@@ -46,38 +59,77 @@
   .preview-bar.active { display: flex; }
   .preview-bar audio { flex: 1; height: 28px; min-width: 0; }
   audio::-webkit-media-controls-panel { background: #1a1f2e; }
+  .library-actions-wrap { position: relative; }
+  .library-actions-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 30;
+    min-width: 180px;
+    background: #111522;
+    border: 1px solid #2d3452;
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    padding: 6px;
+  }
+  .library-actions-menu.hidden { display: none; }
+  .library-actions-menu button {
+    width: 100%;
+    justify-content: flex-start;
+    padding: 8px 10px;
+    border-radius: 6px;
+    text-align: left;
+  }
+  .library-actions-menu button:hover { background: #1e2130; }
+  .sticky-shell {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    background: #0f1117;
+  }
+  .sticky-topbar,
+  .sticky-tabs {
+    background: #0f1117;
+  }
+  .sticky-tabs {
+    border-bottom: 1px solid #1f2937;
+  }
 </style>
 </head>
 <body class="min-h-screen">
 
-<!-- Header -->
-<div class="border-b border-gray-800 px-6 py-3 flex items-center justify-between">
-  <div class="flex items-center gap-3">
-    <div id="station-wordmark" class="text-indigo-400 font-bold text-lg tracking-widest">Station</div>
-    <div class="text-gray-600 text-sm">Admin Console</div>
+<div class="sticky-shell">
+  <!-- Header -->
+  <div class="sticky-topbar border-b border-gray-800 px-6 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div id="station-wordmark" class="text-indigo-400 font-bold text-lg tracking-widest">Station</div>
+      <div class="text-gray-600 text-sm">Admin Console</div>
+    </div>
+    <div id="status-bar" class="flex items-center gap-3 text-xs text-gray-500">
+      <span id="icecast-status">⬤ Icecast</span>
+      <span id="streamer-status">⬤ Streamer</span>
+      <span id="now-playing-label" class="text-gray-600 truncate max-w-48"></span>
+      <button id="live-btn" class="off" onclick="toggleLiveStream()">▶ LIVE</button>
+    </div>
   </div>
-  <div id="status-bar" class="flex items-center gap-3 text-xs text-gray-500">
-    <span id="icecast-status">⬤ Icecast</span>
-    <span id="streamer-status">⬤ Streamer</span>
-    <span id="now-playing-label" class="text-gray-600 truncate max-w-48"></span>
-    <button id="live-btn" class="off" onclick="toggleLiveStream()">▶ LIVE</button>
+
+  <!-- Nav Tabs -->
+  <div class="sticky-tabs flex gap-1 px-6 py-3">
+    <button class="tab-btn active px-4 py-2 text-sm rounded" onclick="showTab('dashboard')">Dashboard</button>
+    <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('live')">Live</button>
+    <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('shows')">Shows</button>
+    <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('hosts')">Hosts</button>
+    <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('segments')">Segments</button>
+    <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('taxonomy')">Taxonomy</button>
+    <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('settings')">Settings</button>
+    <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('schedule')">Schedule</button>
+    <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('generate')">Generate</button>
+    <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('library')">Library</button>
   </div>
 </div>
+
 <!-- Hidden live stream audio element -->
 <audio id="live-audio" preload="none"></audio>
-
-<!-- Nav Tabs -->
-<div class="flex gap-1 px-6 pt-4">
-  <button class="tab-btn active px-4 py-2 text-sm rounded" onclick="showTab('dashboard')">Dashboard</button>
-  <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('shows')">Shows</button>
-  <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('hosts')">Hosts</button>
-  <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('segments')">Segments</button>
-  <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('taxonomy')">Taxonomy</button>
-  <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('settings')">Settings</button>
-  <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('schedule')">Schedule</button>
-  <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('generate')">Generate</button>
-  <button class="tab-btn px-4 py-2 text-sm rounded" onclick="showTab('library')">Library</button>
-</div>
 
 <div class="px-6 py-4">
 
@@ -113,9 +165,57 @@
     </div>
   </div>
 
-  <div class="flex gap-3">
+  <div class="flex items-center gap-3 mb-4">
+    <button class="btn btn-primary" id="refresh-station-btn" onclick="refreshStation()">Refresh Station</button>
+    <button class="btn btn-ghost" onclick="loadDashboard()">↺ Refresh Dashboard</button>
+    <span id="refresh-station-status" class="text-xs text-gray-500"></span>
+  </div>
+
+<div class="flex gap-3">
     <button class="btn btn-primary" onclick="showTab('generate')">+ Generate Content</button>
     <button class="btn btn-ghost" onclick="loadDashboard()">↺ Refresh</button>
+  </div>
+</div>
+
+<!-- ===== LIVE CONTROL ===== -->
+<div id="tab-live" class="hidden">
+  <div class="flex justify-between items-center mb-4">
+    <div>
+      <h2 class="text-sm font-bold text-gray-300">Live Control</h2>
+      <div id="live-control-status" class="text-xs text-gray-500 mt-1">Loading live queue...</div>
+    </div>
+    <div class="flex gap-2">
+      <button class="btn btn-primary" onclick="loadLiveControl()">↺ Refresh</button>
+      <button class="btn btn-danger" onclick="skipLiveCurrent()">Skip Current</button>
+    </div>
+  </div>
+
+  <div class="flex gap-2 mb-3">
+    <button class="btn btn-ghost" onclick="openLiveLibraryModal()">+ Add from Library</button>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
+    <div class="card p-4 lg:col-span-1">
+      <div class="section-title">Current Program</div>
+      <div id="live-current-program" class="space-y-3 text-sm text-gray-300">Loading…</div>
+    </div>
+    <div class="card p-4 lg:col-span-2">
+      <div class="section-title">Live Queue</div>
+      <div id="live-queue" class="space-y-2 text-sm text-gray-300">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<div id="live-library-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="flex justify-between items-center mb-4">
+      <div>
+        <div id="live-library-modal-title" class="text-lg font-bold">Add from Library</div>
+        <div id="live-library-modal-subtitle" class="text-xs text-gray-500 mt-1"></div>
+      </div>
+      <button class="btn btn-ghost" onclick="closeLiveLibraryModal()">Close</button>
+    </div>
+    <div id="live-library-modal-list" class="space-y-2 overflow-y-auto flex-1 min-h-0"></div>
   </div>
 </div>
 
@@ -125,7 +225,17 @@
     <h2 class="text-sm font-bold text-gray-300">Shows</h2>
     <button class="btn btn-primary" onclick="openShowModal(null)">+ New Show</button>
   </div>
-  <div id="shows-list" class="space-y-2"></div>
+  <div class="flex gap-2 mb-4">
+    <button class="tab-btn active px-3 py-1.5 text-xs rounded" onclick="switchShowsTab('active', this)">Active</button>
+    <button class="tab-btn px-3 py-1.5 text-xs rounded" onclick="switchShowsTab('inactive', this)">Inactive</button>
+  </div>
+  <div id="shows-status" class="text-xs text-gray-500 mb-3"></div>
+  <div id="shows-tab-active">
+    <div id="shows-active-list" class="space-y-2"></div>
+  </div>
+  <div id="shows-tab-inactive" class="hidden">
+    <div id="shows-inactive-list" class="space-y-2"></div>
+  </div>
 </div>
 
 <!-- ===== HOSTS ===== -->
@@ -227,7 +337,10 @@
 <!-- ===== SCHEDULE ===== -->
 <div id="tab-schedule" class="hidden">
   <div class="flex justify-between items-center mb-4">
-    <h2 class="text-sm font-bold text-gray-300">Weekly Schedule</h2>
+    <div class="flex items-center gap-3">
+      <h2 class="text-sm font-bold text-gray-300">Weekly Schedule</h2>
+      <span id="schedule-timezone-label" class="pill pill-blue text-[10px]">timezone: local</span>
+    </div>
     <button class="btn btn-primary" onclick="saveSchedule()">Save Schedule</button>
   </div>
 
@@ -439,7 +552,7 @@
         </div>
       </div>
 
-      <button class="btn btn-primary w-full py-3 text-base" onclick="startGeneration()">▶ Generate Content</button>
+      <button class="btn btn-primary w-full py-3 text-base" onclick="startGeneration()">↻ Generate Content</button>
     </div>
 
     <div class="space-y-4">
@@ -486,11 +599,45 @@
     </div>
     <button class="btn btn-ghost text-xs" onclick="loadLibrary()">↺ Refresh</button>
   </div>
+  <div id="library-loading" class="hidden card p-4 mb-3">
+    <div class="flex items-center gap-3">
+      <div class="h-4 w-4 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin"></div>
+      <div>
+        <div class="text-sm font-medium text-gray-200">Loading library</div>
+        <div class="text-xs text-gray-500">Fetching inventory and metadata...</div>
+      </div>
+    </div>
+  </div>
   <div id="library-segments">
     <div id="seg-list" class="space-y-3"></div>
   </div>
   <div id="library-bumpers" class="hidden">
     <div id="bump-list" class="space-y-3"></div>
+  </div>
+</div>
+
+<div id="library-action-modal" class="modal-overlay hidden">
+  <div class="modal" style="width:640px">
+    <div class="flex items-start justify-between gap-4 mb-4">
+      <div>
+        <h2 class="text-base font-bold" id="library-action-modal-title">Choose Destination</h2>
+        <div class="text-xs text-gray-500 mt-1" id="library-action-modal-summary"></div>
+      </div>
+      <button class="btn btn-ghost text-xs px-3" onclick="closeLibraryActionModal()">Close</button>
+    </div>
+    <div class="modal-body flex-1 min-h-0">
+      <div class="modal-pane library-action-pane space-y-4">
+        <div>
+          <label class="field-label">Destination Show</label>
+          <select id="library-action-target" class="input"></select>
+          <div class="field-help">Choose where this item should be copied or moved.</div>
+        </div>
+      </div>
+    </div>
+    <div class="flex justify-end gap-3 mt-6">
+      <button class="btn btn-ghost" onclick="closeLibraryActionModal()">Cancel</button>
+      <button class="btn btn-primary" id="library-action-confirm" onclick="confirmLibraryActionModal()">Continue</button>
+    </div>
   </div>
 </div>
 
@@ -646,164 +793,199 @@
 <!-- ===== SHOW MODAL ===== -->
 <div id="show-modal" class="modal-overlay hidden">
   <div class="modal">
-    <h2 class="text-base font-bold mb-4" id="modal-title">Edit Show</h2>
+    <div class="flex items-start justify-between gap-4 mb-3">
+      <div>
+        <h2 class="text-base font-bold" id="modal-title">Edit Show</h2>
+        <div class="text-xs text-gray-500 mt-1">Use the tabs to keep metadata, source rules, and automation settings separate.</div>
+      </div>
+      <button class="btn btn-ghost text-xs px-3" onclick="closeModal()">Close</button>
+    </div>
     <input id="modal-show-id" type="hidden" />
 
-    <div class="space-y-4">
-      <div class="grid grid-cols-2 gap-3">
-        <div>
-          <label class="text-xs text-gray-400 block mb-1">Show ID <span class="text-gray-600">(slug, no spaces)</span></label>
-          <input id="modal-id-input" class="input" placeholder="my_show" />
-        </div>
-        <div>
-          <label class="text-xs text-gray-400 block mb-1">Display Name</label>
-          <input id="modal-name" class="input" placeholder="My Show" />
-        </div>
-      </div>
+    <div class="show-modal-tabs">
+      <button class="tab-btn show-modal-tab-btn active px-3 py-1.5 text-xs rounded" onclick="switchShowModalTab('basics', this)">Basics</button>
+      <button class="tab-btn show-modal-tab-btn px-3 py-1.5 text-xs rounded" onclick="switchShowModalTab('sources', this)">Source Rules</button>
+      <button class="tab-btn show-modal-tab-btn px-3 py-1.5 text-xs rounded" onclick="switchShowModalTab('content', this)">Content & Hosts</button>
+      <button class="tab-btn show-modal-tab-btn px-3 py-1.5 text-xs rounded" onclick="switchShowModalTab('automation', this)">Automation</button>
+    </div>
 
-      <div>
-        <label class="text-xs text-gray-400 block mb-1">Description</label>
-        <textarea id="modal-description" class="input h-16 resize-none" placeholder="What is this show about?"></textarea>
-      </div>
-
-      <div class="grid grid-cols-2 gap-3">
-        <div>
-          <label class="text-xs text-gray-400 block mb-1">Show Type</label>
-          <select id="modal-show-type" class="input" onchange="onShowTypeChange(this.value)"></select>
-        </div>
-        <div id="modal-bumper-wrap">
-          <label class="text-xs text-gray-400 block mb-1">Bumper Style</label>
-          <select id="modal-bumper-style" class="input"></select>
-        </div>
-      </div>
-
-      <div id="modal-topic-wrap">
-        <label class="text-xs text-gray-400 block mb-1">Topic Focus</label>
-        <select id="modal-topic-focus" class="input"></select>
-      </div>
-
-      <div id="modal-research-topic-wrap">
-        <label class="text-xs text-gray-400 block mb-1">Research Topic <span class="text-gray-600">(used as primary script focus)</span></label>
-        <input id="modal-research-topic" class="input" placeholder="e.g. AI consciousness and the philosophy of mind" />
-      </div>
-
-      <div id="modal-source-wrap">
-        <label class="text-xs text-gray-400 block mb-1">Source Rules</label>
-        <div id="modal-source-hint" class="text-xs text-gray-500 mb-2"></div>
-        <div id="modal-sources" class="space-y-2 mb-2"></div>
-        <button class="btn btn-ghost text-xs" onclick="addSource()">+ Add Source</button>
-      </div>
-
-      <div>
-        <label class="text-xs text-gray-400 block mb-1">Segment Types</label>
-        <div id="modal-segment-types" class="flex flex-wrap gap-2"></div>
-      </div>
-
-      <div>
-        <div class="flex justify-between items-center mb-2">
-          <label class="text-xs text-gray-400">Hosts</label>
-          <button class="btn btn-ghost text-xs" onclick="addHost()">+ Add Host</button>
-        </div>
-        <div id="modal-hosts" class="space-y-2"></div>
-      </div>
-
-      <div>
-        <div class="flex justify-between items-center mb-2">
-          <label class="text-xs text-gray-400">Recurring Guests <span class="text-gray-600">(pool for interview/panel segments)</span></label>
-          <button class="btn btn-ghost text-xs" onclick="addGuest()">+ Add Guest</button>
-        </div>
-        <div id="modal-guests" class="space-y-2"></div>
-      </div>
-
-      <div>
-        <div class="section-title">Content Lifecycle <span class="text-gray-600 text-xs normal-case font-normal ml-1">— leave blank for unlimited</span></div>
-        <div class="grid grid-cols-2 gap-4">
+    <div class="modal-body flex-1 min-h-0">
+      <div id="show-modal-pane-basics" class="modal-pane show-modal-pane space-y-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <div class="text-xs text-gray-400 mb-2">Talk Segments</div>
-            <div class="grid grid-cols-2 gap-2">
-              <div>
-                <label class="text-xs text-gray-500 block mb-1">Max plays</label>
-                <input id="modal-talk-max-plays" type="number" min="1" class="input" placeholder="∞">
-              </div>
-              <div>
-                <label class="text-xs text-gray-500 block mb-1">Max age (days)</label>
-                <input id="modal-talk-max-days" type="number" min="1" class="input" placeholder="∞">
-              </div>
-            </div>
+            <label class="field-label">Show ID <span class="text-gray-600 normal-case">(slug, no spaces)</span></label>
+            <input id="modal-id-input" class="input" placeholder="my_show" />
           </div>
           <div>
-            <div class="text-xs text-gray-400 mb-2">Music Bumpers</div>
-            <div class="grid grid-cols-2 gap-2">
-              <div>
-                <label class="text-xs text-gray-500 block mb-1">Max plays</label>
-                <input id="modal-music-max-plays" type="number" min="1" class="input" placeholder="∞">
-              </div>
-              <div>
-                <label class="text-xs text-gray-500 block mb-1">Max age (days)</label>
-                <input id="modal-music-max-days" type="number" min="1" class="input" placeholder="∞">
-              </div>
-            </div>
+            <label class="field-label">Display Name</label>
+            <input id="modal-name" class="input" placeholder="My Show" />
+          </div>
+        </div>
+
+        <div>
+          <label class="field-label">Description</label>
+          <textarea id="modal-description" class="input h-24 resize-none" placeholder="What is this show about?"></textarea>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label class="field-label">Show Type</label>
+            <select id="modal-show-type" class="input" onchange="onShowTypeChange(this.value)"></select>
+          </div>
+          <div id="modal-bumper-wrap">
+            <label class="field-label">Bumper Style</label>
+            <select id="modal-bumper-style" class="input"></select>
+          </div>
+        </div>
+
+        <div id="modal-topic-wrap">
+          <label class="field-label">Topic Focus</label>
+          <select id="modal-topic-focus" class="input"></select>
+        </div>
+
+        <div id="modal-research-topic-wrap">
+          <label class="field-label">Research Topic</label>
+          <input id="modal-research-topic" class="input" placeholder="e.g. AI consciousness and the philosophy of mind" />
+          <div class="field-help">Used as the script focus for research-led shows.</div>
+        </div>
+      </div>
+
+      <div id="show-modal-pane-sources" class="modal-pane show-modal-pane hidden space-y-4">
+        <div class="card p-4">
+          <div class="section-title">Source Rules</div>
+          <div class="text-xs text-gray-500 mb-3" id="modal-source-hint"></div>
+          <div id="modal-source-disabled" class="text-xs text-gray-500 hidden">
+            This show type does not use source rules by default.
+          </div>
+          <div id="modal-source-enabled" class="space-y-3">
+            <div id="modal-sources" class="space-y-3"></div>
+            <button class="btn btn-ghost text-xs" onclick="addSource()">+ Add Source Rule</button>
           </div>
         </div>
       </div>
-      <div>
-        <div class="section-title">Auto Generation <span class="text-gray-600 text-xs normal-case font-normal ml-1">— saved with the show</span></div>
-        <div class="grid grid-cols-2 gap-4">
-          <div>
-            <div class="flex items-center justify-between mb-2">
-              <div class="text-xs text-gray-400">Talk Segments</div>
-              <label class="flex items-center gap-1 text-xs text-gray-500">
-                <input id="modal-talk-enabled" type="checkbox" class="accent-indigo-500">
-                Auto
-              </label>
+
+      <div id="show-modal-pane-content" class="modal-pane show-modal-pane hidden space-y-4">
+        <div class="card p-4">
+          <div class="section-title">Segment Types</div>
+          <div class="text-xs text-gray-500 mb-3">Choose the segment formats this show can generate.</div>
+          <div id="modal-segment-types" class="flex flex-wrap gap-2"></div>
+        </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div class="card p-4">
+            <div class="flex justify-between items-center mb-2">
+              <label class="section-title mb-0">Hosts</label>
+              <button class="btn btn-ghost text-xs" onclick="addHost()">+ Add Host</button>
             </div>
-            <div class="grid grid-cols-3 gap-2">
+            <div id="modal-hosts" class="space-y-2"></div>
+          </div>
+          <div class="card p-4">
+            <div class="flex justify-between items-center mb-2">
+              <label class="section-title mb-0">Recurring Guests</label>
+              <button class="btn btn-ghost text-xs" onclick="addGuest()">+ Add Guest</button>
+            </div>
+            <div class="text-xs text-gray-500 mb-3">Used for interview, panel, and mailbag-style segments.</div>
+            <div id="modal-guests" class="space-y-2"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="show-modal-pane-automation" class="modal-pane show-modal-pane hidden space-y-4">
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div class="card p-4">
+            <div class="section-title">Content Lifecycle</div>
+            <div class="text-xs text-gray-500 mb-3">Leave blank for unlimited retention.</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label class="text-xs text-gray-500 block mb-1">Min</label>
-                <input id="modal-talk-min" type="number" min="0" class="input" placeholder="5">
+                <div class="text-xs text-gray-400 mb-2">Talk Segments</div>
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <label class="field-label">Max plays</label>
+                    <input id="modal-talk-max-plays" type="number" min="1" class="input" placeholder="∞">
+                  </div>
+                  <div>
+                    <label class="field-label">Max age (days)</label>
+                    <input id="modal-talk-max-days" type="number" min="1" class="input" placeholder="∞">
+                  </div>
+                </div>
               </div>
               <div>
-                <label class="text-xs text-gray-500 block mb-1">Target</label>
-                <input id="modal-talk-target" type="number" min="0" class="input" placeholder="15">
-              </div>
-              <div>
-                <label class="text-xs text-gray-500 block mb-1">Cadence</label>
-                <select id="modal-talk-cadence" class="input">
-                  <option value="continuous">continuous</option>
-                  <option value="hourly">hourly</option>
-                  <option value="daily">daily</option>
-                  <option value="weekly">weekly</option>
-                  <option value="monthly">monthly</option>
-                </select>
+                <div class="text-xs text-gray-400 mb-2">Music Bumpers</div>
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <label class="field-label">Max plays</label>
+                    <input id="modal-music-max-plays" type="number" min="1" class="input" placeholder="∞">
+                  </div>
+                  <div>
+                    <label class="field-label">Max age (days)</label>
+                    <input id="modal-music-max-days" type="number" min="1" class="input" placeholder="∞">
+                  </div>
+                </div>
               </div>
             </div>
           </div>
-          <div>
-            <div class="flex items-center justify-between mb-2">
-              <div class="text-xs text-gray-400">Music Bumpers</div>
-              <label class="flex items-center gap-1 text-xs text-gray-500">
-                <input id="modal-music-enabled" type="checkbox" class="accent-indigo-500">
-                Auto
-              </label>
-            </div>
-            <div class="grid grid-cols-3 gap-2">
+
+          <div class="card p-4">
+            <div class="section-title">Auto Generation</div>
+            <div class="text-xs text-gray-500 mb-3">Saved with the show and used by the scheduler.</div>
+            <div class="space-y-4">
               <div>
-                <label class="text-xs text-gray-500 block mb-1">Min</label>
-                <input id="modal-music-min" type="number" min="0" class="input" placeholder="3">
+                <div class="flex items-center justify-between mb-2">
+                  <div class="text-xs text-gray-400">Talk Segments</div>
+                  <label class="flex items-center gap-1 text-xs text-gray-500">
+                    <input id="modal-talk-enabled" type="checkbox" class="accent-indigo-500">
+                    Auto
+                  </label>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <div>
+                    <label class="field-label">Min</label>
+                    <input id="modal-talk-min" type="number" min="0" class="input" placeholder="5">
+                  </div>
+                  <div>
+                    <label class="field-label">Target</label>
+                    <input id="modal-talk-target" type="number" min="0" class="input" placeholder="15">
+                  </div>
+                  <div>
+                    <label class="field-label">Cadence</label>
+                    <select id="modal-talk-cadence" class="input">
+                      <option value="continuous">continuous</option>
+                      <option value="hourly">hourly</option>
+                      <option value="daily">daily</option>
+                      <option value="weekly">weekly</option>
+                      <option value="monthly">monthly</option>
+                    </select>
+                  </div>
+                </div>
               </div>
               <div>
-                <label class="text-xs text-gray-500 block mb-1">Target</label>
-                <input id="modal-music-target" type="number" min="0" class="input" placeholder="8">
-              </div>
-              <div>
-                <label class="text-xs text-gray-500 block mb-1">Cadence</label>
-                <select id="modal-music-cadence" class="input">
-                  <option value="continuous">continuous</option>
-                  <option value="hourly">hourly</option>
-                  <option value="daily">daily</option>
-                  <option value="weekly">weekly</option>
-                  <option value="monthly">monthly</option>
-                </select>
+                <div class="flex items-center justify-between mb-2">
+                  <div class="text-xs text-gray-400">Music Bumpers</div>
+                  <label class="flex items-center gap-1 text-xs text-gray-500">
+                    <input id="modal-music-enabled" type="checkbox" class="accent-indigo-500">
+                    Auto
+                  </label>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <div>
+                    <label class="field-label">Min</label>
+                    <input id="modal-music-min" type="number" min="0" class="input" placeholder="3">
+                  </div>
+                  <div>
+                    <label class="field-label">Target</label>
+                    <input id="modal-music-target" type="number" min="0" class="input" placeholder="8">
+                  </div>
+                  <div>
+                    <label class="field-label">Cadence</label>
+                    <select id="modal-music-cadence" class="input">
+                      <option value="continuous">continuous</option>
+                      <option value="hourly">hourly</option>
+                      <option value="daily">daily</option>
+                      <option value="weekly">weekly</option>
+                      <option value="monthly">monthly</option>
+                    </select>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -811,10 +993,12 @@
       </div>
     </div>
 
-    <div class="flex justify-end gap-3 mt-6">
-      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+    <div class="flex justify-between items-center gap-3 mt-4 pt-4 border-t border-gray-800">
       <button class="btn btn-danger hidden" id="modal-delete-btn" onclick="deleteShow()">Delete Show</button>
-      <button class="btn btn-primary" onclick="saveShow()">Save Show</button>
+      <div class="flex gap-3 ml-auto">
+        <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveShow()">Save Show</button>
+      </div>
     </div>
   </div>
 </div>
@@ -831,10 +1015,16 @@ let genOptions = {};
 let showTaxonomy = {show_types:{}, topic_focuses:[], bumper_styles:[], source_types:[]};
 let voiceSamplesCatalog = {kokoro: [], minimax: []};
 let currentSchedule = {base: [], overrides: []};
+let activeShowsTab = 'active';
+let activeShowModalTab = 'basics';
 let libraryFilter = 'all';
+let libraryPendingAction = null;
 let activeJobId = null;
 let jobPollTimer = null;
 let schedPollTimer = null;
+let liveControlTimer = null;
+let liveQueueState = {};
+let liveLibraryInventory = {};
 const SHOW_COLORS = ['#4f46e5','#0891b2','#059669','#d97706','#dc2626','#7c3aed','#0284c7','#65a30d'];
 let showColorMap = {};
 let libraryFilterOptionsReady = false;
@@ -843,6 +1033,10 @@ let libraryFilterOptionsReady = false;
 // Tab management
 // ============================================================
 function showTab(name) {
+  if (name !== 'live' && liveControlTimer) {
+    clearInterval(liveControlTimer);
+    liveControlTimer = null;
+  }
   document.querySelectorAll('[id^="tab-"]').forEach(el => el.classList.add('hidden'));
   document.getElementById('tab-' + name).classList.remove('hidden');
   document.querySelectorAll('.tab-btn').forEach(b => {
@@ -855,6 +1049,7 @@ function showTab(name) {
   if (name === 'taxonomy') loadTaxonomyTab();
   if (name === 'settings') loadSettings();
   if (name === 'schedule') loadScheduleTab();
+  if (name === 'live') loadLiveControl();
   if (name === 'generate') loadGenerateTab();
   if (name === 'library') loadLibrary();
 }
@@ -865,6 +1060,39 @@ function switchHostsTab(name, btn) {
   document.querySelectorAll('#tab-hosts .tab-btn').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
   if (name === 'voices') renderVoiceSamples();
+}
+
+function switchShowsTab(name, btn) {
+  activeShowsTab = name;
+  document.getElementById('shows-tab-active').classList.toggle('hidden', name !== 'active');
+  document.getElementById('shows-tab-inactive').classList.toggle('hidden', name !== 'inactive');
+  document.querySelectorAll('#tab-shows .tab-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+}
+
+function isShowScheduled(showId) {
+  const scheduledShowIds = new Set([
+    ...(currentSchedule.base || []),
+    ...(currentSchedule.overrides || []),
+  ].map(block => block?.show).filter(Boolean));
+  return scheduledShowIds.has(showId);
+}
+
+function resolvedScheduleTimezone() {
+  const schedTz = (currentSchedule.timezone || '').trim();
+  const appTz = (stationSettings.timezone || '').trim();
+  if (!schedTz || schedTz === 'local' || schedTz === 'system') {
+    return appTz || schedTz || 'local';
+  }
+  return schedTz;
+}
+
+function scheduleTimezoneLabel(tz) {
+  const value = (tz || '').trim() || 'local';
+  if (value === 'local' || value === 'system') {
+    return `timezone: ${value} (server clock)`;
+  }
+  return `timezone: ${value}`;
 }
 
 // ============================================================
@@ -928,48 +1156,31 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-function libraryActionOptionsHtml(currentShow, selectId) {
+function libraryActionOptionsHtml(selectedShow='', excludeShow='') {
   return Object.entries(allShows).map(([id, s]) =>
-    `<option value="${id}" ${id===currentShow?'selected':''}>${escapeHtml(s.name || id)}</option>`
+    id === excludeShow ? '' : `<option value="${id}" ${id===selectedShow?'selected':''}>${escapeHtml(s.name || id)}</option>`
   ).join('');
 }
 
 function libraryActionMenuHtml(kind, show, name, eid) {
-  const selectId = `${eid}_target`;
-  const title = kind === 'segments' ? 'Segment' : 'Bumper';
+  const menuId = `${eid}_menu`;
+  const title = kind === 'segments' ? 'Talk segment' : 'Music bumper';
   return `
-    <div class="flex items-center gap-2 flex-wrap text-xs text-gray-500">
-      <span class="uppercase tracking-widest text-[10px] text-gray-600">${title} actions</span>
-      <select id="${selectId}" class="input text-xs" style="width:170px">
-        ${libraryActionOptionsHtml(show, selectId)}
-      </select>
-      <button class="btn btn-ghost text-xs px-3" data-library-kind="${escapeHtml(kind)}" data-library-action="copy" data-library-show="${escapeHtml(show)}" data-library-name="${escapeHtml(name)}" data-library-target="${selectId}" onclick="libraryActionFromButton(this)">Copy</button>
-      <button class="btn btn-ghost text-xs px-3" data-library-kind="${escapeHtml(kind)}" data-library-action="move" data-library-show="${escapeHtml(show)}" data-library-name="${escapeHtml(name)}" data-library-target="${selectId}" onclick="libraryActionFromButton(this)">Move</button>
-      <button class="btn btn-ghost text-xs px-3" data-library-kind="${escapeHtml(kind)}" data-library-action="reset" data-library-show="${escapeHtml(show)}" data-library-name="${escapeHtml(name)}" onclick="libraryActionFromButton(this)">Reset plays</button>
+    <div class="library-actions-wrap">
+      <button class="btn btn-ghost text-xs px-2 py-1" aria-label="${title} actions" aria-haspopup="menu" aria-expanded="false" onclick="toggleLibraryActionsMenu(event, '${menuId}')">⋯</button>
+      <div id="${menuId}" class="library-actions-menu hidden" role="menu">
+        <button class="btn btn-ghost text-xs" data-library-kind="${escapeHtml(kind)}" data-library-action="copy" data-library-show="${escapeHtml(show)}" data-library-name="${escapeHtml(name)}" onclick="libraryActionFromButton(this)">Copy…</button>
+        <button class="btn btn-ghost text-xs" data-library-kind="${escapeHtml(kind)}" data-library-action="move" data-library-show="${escapeHtml(show)}" data-library-name="${escapeHtml(name)}" onclick="libraryActionFromButton(this)">Move…</button>
+        <button class="btn btn-ghost text-xs" data-library-kind="${escapeHtml(kind)}" data-library-action="reset" data-library-show="${escapeHtml(show)}" data-library-name="${escapeHtml(name)}" onclick="libraryActionFromButton(this)">Reset plays</button>
+        <button class="btn btn-ghost text-xs text-red-300" data-library-kind="${escapeHtml(kind)}" data-library-action="delete" data-library-show="${escapeHtml(show)}" data-library-name="${escapeHtml(name)}" onclick="libraryActionFromButton(this)">Delete</button>
+      </div>
     </div>`;
-}
-
-function libraryActionFromButton(btn) {
-  const kind = btn.dataset.libraryKind;
-  const action = btn.dataset.libraryAction;
-  const show = btn.dataset.libraryShow;
-  const name = btn.dataset.libraryName;
-  const targetSelectId = btn.dataset.libraryTarget || null;
-  return libraryAction(kind, action, show, name, targetSelectId);
 }
 
 function previewFromButton(btn) {
   const eid = btn.dataset.previewEid;
   const src = btn.dataset.previewSrc;
   if (eid && src) togglePreview(eid, src);
-}
-
-function deleteLibraryFromButton(btn) {
-  const kind = btn.dataset.deleteKind;
-  const show = btn.dataset.deleteShow;
-  const name = btn.dataset.deleteName;
-  if (kind === 'segment') return deleteSegment(show, name);
-  if (kind === 'bumper') return deleteBumper(show, name);
 }
 
 function voiceLabel(backend, voice) {
@@ -1119,39 +1330,310 @@ async function loadDashboard() {
     console.error(e);
   }
 }
+
+async function refreshStation() {
+  const btn = document.getElementById('refresh-station-btn');
+  const status = document.getElementById('refresh-station-status');
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = 'Restarting streamer...';
+  try {
+    await api('/station/refresh', {method: 'POST'});
+    if (status) status.textContent = 'Streamer restarted. Schedule/config reloaded.';
+    await loadDashboard();
+  } catch (e) {
+    if (status) status.textContent = `Refresh failed: ${e.message}`;
+    alert(`Refresh failed: ${e.message}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 loadDashboard();
+
+function liveAudioSrc(showId, item) {
+  if (!showId || !item?.filename) return '';
+  return `/api/library/audio/${encodeURIComponent(showId)}/${encodeURIComponent(item.filename)}?type=segment`;
+}
+
+function formatLiveTime(value) {
+  if (!value) return 'n/a';
+  return formatStationTime(value);
+}
+
+function renderLiveQueueItem(item, showId, isCurrent = false) {
+  if (!item) return '<div class="text-gray-600 text-sm">Nothing queued.</div>';
+  const badge = isCurrent
+    ? '<span class="pill pill-green">Current</span>'
+    : `<span class="pill pill-blue">#${(item.index ?? 0) + 1}</span>`;
+  const segmentType = item.segment_type ? `<span class="pill pill-purple">${escapeHtml(item.segment_type)}</span>` : '';
+  const controls = isCurrent ? `
+      <button class="btn btn-danger text-xs px-2 py-1" onclick="skipLiveCurrent()">Skip</button>
+    ` : `
+      <button class="btn btn-ghost text-xs px-2 py-1" onclick="liveControlAction('play_next', ${JSON.stringify(item.path || '')})">Play Next</button>
+      <button class="btn btn-ghost text-xs px-2 py-1" onclick="liveControlAction('move_up', ${JSON.stringify(item.path || '')})">↑</button>
+      <button class="btn btn-ghost text-xs px-2 py-1" onclick="liveControlAction('move_down', ${JSON.stringify(item.path || '')})">↓</button>
+      <button class="btn btn-ghost text-xs px-2 py-1 text-red-300" onclick="liveControlAction('remove', ${JSON.stringify(item.path || '')})">Remove</button>
+    `;
+  const stamp = item.started_at || item.estimated_start_at;
+  const stampLabel = stamp ? `Starts ${formatLiveTime(stamp)}` : 'Start time unavailable';
+  const durationLabel = item.duration_seconds ? ` · ${Math.round(item.duration_seconds)}s` : '';
+  return `
+    <div class="rounded border border-gray-800 bg-gray-950/70 p-3">
+      <div class="flex items-start justify-between gap-3">
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-2 flex-wrap">
+            ${badge}
+            <span class="font-medium text-gray-100 truncate">${escapeHtml(item.name || item.filename || 'Unknown item')}</span>
+            ${segmentType}
+          </div>
+          <div class="text-xs text-gray-500 mt-1">${escapeHtml(item.filename || '')}</div>
+          <div class="text-xs text-gray-500 mt-1">${stampLabel}${durationLabel}</div>
+        </div>
+        <div class="flex gap-1 flex-wrap justify-end">${controls}</div>
+      </div>
+    </div>`;
+}
+
+function renderLiveCurrentProgram(queue, s) {
+  const currentShow = queue.show_name || s.now_playing?.show || s.now_playing?.show_name || 'Unknown show';
+  const currentHost = queue.host || s.now_playing?.host || 'n/a';
+  const nowTrack = s.now_playing?.track || 'No track reported';
+  const nowType = s.now_playing?.type || 'unknown';
+  const currentItem = queue.current_item;
+  const audioSrc = currentItem ? liveAudioSrc(queue.show_id, currentItem) : '';
+  return `
+    <div class="space-y-3">
+      <div>
+        <div class="text-gray-500 text-xs uppercase tracking-wider">Show</div>
+        <div id="live-current-show" class="text-lg font-bold text-gray-100">${escapeHtml(currentShow)}</div>
+      </div>
+      <div>
+        <div class="text-gray-500 text-xs uppercase tracking-wider">Host</div>
+        <div id="live-current-host">${escapeHtml(currentHost)}</div>
+      </div>
+      <div>
+        <div class="text-gray-500 text-xs uppercase tracking-wider">Now Playing</div>
+        <div id="live-current-now-track">${escapeHtml(nowTrack)}</div>
+        <div id="live-current-now-type" class="text-xs text-gray-500 mt-1">${escapeHtml(nowType)}</div>
+      </div>
+      <div>
+        <div class="text-gray-500 text-xs uppercase tracking-wider">Current File</div>
+        <div id="live-current-file-wrap">
+          ${currentItem ? `
+            <audio class="w-full mt-2" controls preload="metadata" src="${escapeHtml(audioSrc)}"></audio>
+            <div id="live-current-file-meta" class="text-xs text-gray-500 mt-2">
+              Started ${formatLiveTime(currentItem.started_at)} · Ends ${formatLiveTime(currentItem.estimated_end_at)} · ${Math.round(currentItem.duration_seconds || 0)}s
+            </div>
+          ` : '<div id="live-current-file-meta" class="text-gray-600 text-sm mt-1">No current file available.</div>'}
+        </div>
+      </div>
+      <div>
+        <div class="text-gray-500 text-xs uppercase tracking-wider">Queue</div>
+        <div id="live-current-queue-meta">${queue.queue_length ?? 0} items · updated ${queue.updated_at ? formatStationTime(queue.updated_at) : 'n/a'}</div>
+      </div>
+    </div>`;
+}
+
+async function loadLiveControl() {
+  try {
+    const s = await api('/live/status');
+    liveQueueState = s.queue || {};
+    const statusEl = document.getElementById('live-control-status');
+    const currentEl = document.getElementById('live-current-program');
+    const queueEl = document.getElementById('live-queue');
+    const currentPath = liveQueueState.current_item?.path || '';
+    const previousPath = currentEl?.dataset?.currentPath || '';
+    if (currentEl.dataset.loaded !== '1' || previousPath !== currentPath) {
+      currentEl.innerHTML = renderLiveCurrentProgram(liveQueueState, s);
+      currentEl.dataset.currentPath = currentPath;
+      currentEl.dataset.loaded = '1';
+    } else {
+      const showEl = document.getElementById('live-current-show');
+      const hostEl = document.getElementById('live-current-host');
+      const trackEl = document.getElementById('live-current-now-track');
+      const typeEl = document.getElementById('live-current-now-type');
+      const fileMetaEl = document.getElementById('live-current-file-meta');
+      const queueMetaEl = document.getElementById('live-current-queue-meta');
+      const currentItem = liveQueueState.current_item;
+      if (showEl) showEl.textContent = liveQueueState.show_name || s.now_playing?.show || s.now_playing?.show_name || 'Unknown show';
+      if (hostEl) hostEl.textContent = liveQueueState.host || s.now_playing?.host || 'n/a';
+      if (trackEl) trackEl.textContent = s.now_playing?.track || 'No track reported';
+      if (typeEl) typeEl.textContent = s.now_playing?.type || 'unknown';
+      if (fileMetaEl) {
+        fileMetaEl.textContent = currentItem
+          ? `Started ${formatLiveTime(currentItem.started_at)} · Ends ${formatLiveTime(currentItem.estimated_end_at)} · ${Math.round(currentItem.duration_seconds || 0)}s`
+          : 'No current file available.';
+      }
+      if (queueMetaEl) {
+        queueMetaEl.textContent = `${liveQueueState.queue_length ?? 0} items · updated ${liveQueueState.updated_at ? formatStationTime(liveQueueState.updated_at) : 'n/a'}`;
+      }
+    }
+    const upcoming = liveQueueState.upcoming || [];
+    queueEl.innerHTML = [
+      renderLiveQueueItem(liveQueueState.current_item, liveQueueState.show_id, true),
+      ...(upcoming.length ? upcoming.map(item => renderLiveQueueItem(item, liveQueueState.show_id, false)) : ['<div class="text-gray-600 text-sm">No upcoming items queued.</div>'])
+    ].join('');
+    if (statusEl) {
+      const statusBits = [
+        s.streamer ? 'streamer up' : 'streamer down',
+        s.icecast ? 'icecast up' : 'icecast down',
+        `${liveQueueState.queue_length ?? 0} queued`,
+      ];
+      statusEl.textContent = statusBits.join(' · ');
+    }
+    if (!liveControlTimer && !document.getElementById('tab-live').classList.contains('hidden')) {
+      liveControlTimer = setInterval(() => {
+        if (!document.getElementById('tab-live').classList.contains('hidden')) loadLiveControl();
+      }, 5000);
+    }
+  } catch (e) {
+    const statusEl = document.getElementById('live-control-status');
+    const currentEl = document.getElementById('live-current-program');
+    const queueEl = document.getElementById('live-queue');
+    if (statusEl) statusEl.textContent = `Live queue unavailable: ${e.message}`;
+    if (currentEl) currentEl.innerHTML = '<div class="text-red-400 text-sm">Unable to load live control data.</div>';
+    if (queueEl) queueEl.innerHTML = '<div class="text-red-400 text-sm">Unable to load live queue.</div>';
+  }
+}
+
+async function liveControlAction(action, refPath) {
+  if (!action) return;
+  try {
+    const payload = {action};
+    if (refPath) payload.path = refPath;
+    await api('/live/control', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    await loadLiveControl();
+  } catch (e) {
+    alert(`Live control failed: ${e.message}`);
+  }
+}
+
+async function skipLiveCurrent() {
+  const btn = document.querySelector('#tab-live .btn-danger');
+  if (btn) btn.disabled = true;
+  try {
+    const result = await api('/live/skip', {method: 'POST'});
+    const statusEl = document.getElementById('live-control-status');
+    if (statusEl) statusEl.textContent = result?.queued ? `Queued ${result.queued} command.` : 'Skip queued.';
+    await loadLiveControl();
+  } catch (e) {
+    alert(`Skip failed: ${e.message}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function openLiveLibraryModal() {
+  try {
+    const s = await api('/live/status');
+    liveQueueState = s.queue || {};
+    const showId = liveQueueState.show_id;
+    if (!showId) {
+      alert('No active show available for library injection.');
+      return;
+    }
+    const library = await api('/library/segments').catch(() => ({}));
+    liveLibraryInventory = library?.[showId] || [];
+    document.getElementById('live-library-modal-title').textContent = `Add from Library · ${allShows[showId]?.name || showId}`;
+    document.getElementById('live-library-modal-subtitle').textContent = `${liveLibraryInventory.length} talk items available`;
+    renderLiveLibraryModal(showId);
+    document.getElementById('live-library-modal').classList.remove('hidden');
+  } catch (e) {
+    alert(`Could not open library picker: ${e.message}`);
+  }
+}
+
+function closeLiveLibraryModal() {
+  document.getElementById('live-library-modal').classList.add('hidden');
+}
+
+function renderLiveLibraryModal(showId) {
+  const root = document.getElementById('live-library-modal-list');
+  if (!root) return;
+  if (!liveLibraryInventory.length) {
+    root.innerHTML = '<div class="text-gray-600 text-sm">No library files found for this show.</div>';
+    return;
+  }
+  root.innerHTML = liveLibraryInventory.map(item => `
+    <div class="card p-3 flex justify-between items-start gap-3">
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="font-medium text-gray-100 truncate">${escapeHtml(item.name || '')}</span>
+          ${item.segment_type ? `<span class="pill pill-purple">${escapeHtml(item.segment_type)}</span>` : ''}
+          ${item.voice ? `<span class="pill pill-blue">${escapeHtml(item.voice)}</span>` : ''}
+          ${item.backend_label ? `<span class="pill pill-green">${escapeHtml(item.backend_label)}</span>` : ''}
+        </div>
+        <div class="text-xs text-gray-500 mt-1">${escapeHtml(item.duration_label || '')} · ${escapeHtml(item.created_label || '')}</div>
+      </div>
+      <button class="btn btn-primary text-xs px-3" onclick="liveControlAction('play_next', ${JSON.stringify(item.path || '')}); closeLiveLibraryModal();">Play Next</button>
+    </div>
+  `).join('');
+}
 
 // ============================================================
 // Shows
 // ============================================================
 async function loadShows() {
   try {
-    if (!Object.keys(genOptions).length) {
-      try {
-        genOptions = await api('/generate/options');
-      } catch(e) {
-        genOptions = {};
+    const needsGenOptions = !Object.keys(genOptions).length;
+    const [
+      shows,
+      hosts,
+      taxonomy,
+      segmentTypes,
+      schedule,
+      options,
+    ] = await Promise.all([
+      api('/shows'),
+      api('/hosts'),
+      api('/show-taxonomy').catch(() => ({show_types:{}, topic_focuses:[], bumper_styles:[], source_types:[]})),
+      api('/segment-types').catch(() => ({})),
+      api('/schedule').catch(() => ({base: [], overrides: []})),
+      needsGenOptions ? api('/generate/options').catch(() => ({})) : Promise.resolve(null),
+    ]);
+    allShows = shows;
+    allHosts = hosts;
+    showTaxonomy = taxonomy;
+    allSegmentTypes = segmentTypes || {};
+    currentSchedule = schedule;
+    if (options) {
+      genOptions = options;
+      if (options.segment_type_defs && !Object.keys(allSegmentTypes).length) {
+        allSegmentTypes = options.segment_type_defs || {};
       }
     }
-    allShows = await api('/shows');
-    allHosts = await api('/hosts');
-    showTaxonomy = await api('/show-taxonomy').catch(() => ({show_types:{}, topic_focuses:[], bumper_styles:[], source_types:[]}));
-    try {
-      allSegmentTypes = await api('/segment-types');
-    } catch(e) {
-      allSegmentTypes = {};
-    }
   } catch(e) {
-    document.getElementById('shows-list').innerHTML = `<div class="text-red-400 text-sm">Failed to load shows: ${e.message}</div>`;
+    document.getElementById('shows-active-list').innerHTML = `<div class="text-red-400 text-sm">Failed to load shows: ${e.message}</div>`;
+    document.getElementById('shows-inactive-list').innerHTML = '';
+    document.getElementById('shows-status').textContent = '';
     return;
   }
   const colors = Object.keys(allShows);
   colors.forEach((id, i) => { showColorMap[id] = SHOW_COLORS[i % SHOW_COLORS.length]; });
 
-  document.getElementById('shows-list').innerHTML = Object.entries(allShows).map(([id, show]) => `
-    <div class="card p-4 flex justify-between items-start">
-      <div class="flex-1">
-        <div class="flex items-center gap-2 mb-1">
+  const showEntries = Object.entries(allShows);
+  const scheduledShowIds = new Set([
+    ...(currentSchedule.base || []),
+    ...(currentSchedule.overrides || []),
+  ].map(block => block?.show).filter(Boolean));
+  const activeShows = [];
+  const inactiveShows = [];
+  showEntries.forEach(([id, show]) => {
+    if (scheduledShowIds.has(id)) {
+      activeShows.push([id, show]);
+    } else {
+      inactiveShows.push([id, show]);
+    }
+  });
+
+  const renderShowCard = ([id, show]) => `
+    <div class="card p-4 flex justify-between items-start gap-4">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 mb-1 flex-wrap">
           <div class="w-3 h-3 rounded-full" style="background:${showColorMap[id]}"></div>
           <span class="font-bold text-sm">${show.name}</span>
           <span class="text-gray-600 text-xs">${id}</span>
@@ -1165,8 +1647,13 @@ async function loadShows() {
         </div>
         ${show.research_topic ? `<div class="text-xs text-indigo-400 mt-1">📌 ${show.research_topic}</div>` : ''}
       </div>
-      <button class="btn btn-ghost ml-4" onclick='openShowModal(${JSON.stringify(id)})'>Edit</button>
-    </div>`).join('');
+      <button class="btn btn-ghost shrink-0" onclick='openShowModal(${JSON.stringify(id)})'>Edit</button>
+    </div>`;
+
+  document.getElementById('shows-active-list').innerHTML = activeShows.map(renderShowCard).join('') || '<div class="text-gray-600 text-sm">No active shows.</div>';
+  document.getElementById('shows-inactive-list').innerHTML = inactiveShows.map(renderShowCard).join('') || '<div class="text-gray-600 text-sm">No inactive shows.</div>';
+  document.getElementById('shows-status').textContent = `${activeShows.length} active · ${inactiveShows.length} inactive · ${scheduledShowIds.size} scheduled in config`;
+  switchShowsTab(activeShowsTab, Array.from(document.querySelectorAll('#tab-shows .tab-btn')).find(btn => (btn.textContent || '').trim().toLowerCase() === activeShowsTab));
 }
 
 function openShowModal(showId) {
@@ -1214,6 +1701,7 @@ function openShowModal(showId) {
   renderGenerationFields(show || {});
 
   document.getElementById('show-modal').classList.remove('hidden');
+  switchShowModalTab('basics');
 }
 
 function defaultGenerationConfig(showType) {
@@ -1257,9 +1745,10 @@ function renderShowModalFields(show) {
   const showTypeSel = document.getElementById('modal-show-type');
   const topicWrap = document.getElementById('modal-topic-wrap');
   const researchTopicWrap = document.getElementById('modal-research-topic-wrap');
-  const sourceWrap = document.getElementById('modal-source-wrap');
   const bumperWrap = document.getElementById('modal-bumper-wrap');
   const sourceHint = document.getElementById('modal-source-hint');
+  const sourceEnabled = document.getElementById('modal-source-enabled');
+  const sourceDisabled = document.getElementById('modal-source-disabled');
   const topicSel = document.getElementById('modal-topic-focus');
 
   if (showTypeSel) {
@@ -1268,11 +1757,16 @@ function renderShowModalFields(show) {
   }
   topicWrap.classList.toggle('hidden', !defs.uses_topic_focus);
   researchTopicWrap.classList.toggle('hidden', !defs.uses_topic_focus);
-  sourceWrap.classList.toggle('hidden', !defs.uses_source_rules);
   bumperWrap.classList.toggle('hidden', !defs.uses_bumper_style);
-  sourceHint.textContent = defs.uses_source_rules
-    ? 'Add source rules here. These can point at Reddit, YouTube, web URLs, RSS feeds, and more. For content-led shows, these are what the scheduler will draw from.'
-    : 'This show type does not use source rules by default.';
+  if (sourceEnabled && sourceDisabled) {
+    sourceEnabled.classList.toggle('hidden', !defs.uses_source_rules);
+    sourceDisabled.classList.toggle('hidden', defs.uses_source_rules);
+  }
+  if (sourceHint) {
+    sourceHint.textContent = defs.uses_source_rules
+      ? 'Add source rules for Reddit, YouTube, web URLs, RSS feeds, and more. For content-led shows, these are what the scheduler will draw from.'
+      : 'This show type does not use source rules by default.';
+  }
 
   topicSel.innerHTML = renderTopicFocusOptions(show?.topic_focus || '');
   document.getElementById('modal-bumper-style').innerHTML = renderBumperStyleOptions(show?.bumper_style || 'ambient');
@@ -1286,6 +1780,23 @@ function onShowTypeChange(showType) {
 
 function closeModal() { document.getElementById('show-modal').classList.add('hidden'); }
 
+function switchShowModalTab(name, btn) {
+  activeShowModalTab = name;
+  document.querySelectorAll('.show-modal-pane').forEach(pane => {
+    const paneName = (pane.id || '').replace('show-modal-pane-', '');
+    pane.classList.toggle('hidden', paneName !== name);
+  });
+  document.querySelectorAll('.show-modal-tab-btn').forEach(tab => tab.classList.remove('active'));
+  if (btn) {
+    btn.classList.add('active');
+  } else {
+    const fallback = Array.from(document.querySelectorAll('.show-modal-tab-btn')).find(tab =>
+      (tab.textContent || '').trim().toLowerCase().includes(name)
+    );
+    if (fallback) fallback.classList.add('active');
+  }
+}
+
 function renderSources(sources) {
   const sourceTypes = showTaxonomy.source_types || [
     {id:'url', name:'Web URL'},
@@ -1296,24 +1807,56 @@ function renderSources(sources) {
     {id:'youtube_video', name:'YouTube Video'},
     {id:'rss', name:'RSS Feed'},
   ];
-  document.getElementById('modal-sources').innerHTML = sources.map((s,i) => {
+  const container = document.getElementById('modal-sources');
+  if (!container) return;
+  if (!sources.length) {
+    container.innerHTML = `
+      <div class="border border-dashed border-gray-700 rounded-lg p-4 text-xs text-gray-500">
+        No source rules yet. Add one to tell the scheduler where this show should pull material from.
+      </div>`;
+    return;
+  }
+  container.innerHTML = sources.map((s,i) => {
     const sourceType = s.type || s.source_type || 'url';
     const sourceValue = s.value || s.url || s.source_value || s.description || '';
     return `
-    <div class="grid grid-cols-[180px,1fr,100px,130px,140px,auto] gap-2 items-center source-row">
-      <select class="input source-type" onchange="syncSourceRowHint(this.closest('.source-row'))">
-        ${sourceTypes.map(t => `<option value="${t.id}" ${t.id===sourceType?'selected':''}>${t.name}</option>`).join('')}
-      </select>
-      <input class="input source-value" value="${sourceValue}" placeholder="Paste a URL, subreddit, channel, or playlist" />
-      <input class="input source-lookback" type="number" min="1" value="${s.lookback_days || 7}" placeholder="days" title="Lookback window in days" />
-      <select class="input source-strategy">
-        <option value="latest" ${ (s.selection_strategy || 'latest') === 'latest' ? 'selected' : ''}>Latest</option>
-        <option value="top" ${s.selection_strategy === 'top' ? 'selected' : ''}>Top</option>
-        <option value="popular" ${s.selection_strategy === 'popular' ? 'selected' : ''}>Popular</option>
-        <option value="random" ${s.selection_strategy === 'random' ? 'selected' : ''}>Random</option>
-      </select>
-      <input class="input source-segment" value="${s.segment_type || ''}" placeholder="segment type" />
-      <button class="btn btn-ghost text-xs px-2" onclick="removeSource(${i})">✕</button>
+    <div class="source-rule-card source-row">
+      <div class="source-rule-grid grid grid-cols-1 lg:grid-cols-12 gap-3 items-end">
+        <div class="source-rule-field lg:col-span-2">
+          <label class="field-label">Source Type</label>
+          <select class="input source-type" onchange="syncSourceRowHint(this.closest('.source-row'))">
+            ${sourceTypes.map(t => `<option value="${t.id}" ${t.id===sourceType?'selected':''}>${t.name}</option>`).join('')}
+          </select>
+        </div>
+        <div class="source-rule-field lg:col-span-4">
+          <label class="field-label">Source Value</label>
+          <input class="input source-value" value="${escapeHtml(sourceValue)}" placeholder="Paste a URL, subreddit, channel, or playlist" />
+        </div>
+        <div class="source-rule-field lg:col-span-2">
+          <label class="field-label">Lookback Days</label>
+          <input class="input source-lookback" type="number" min="1" value="${s.lookback_days || 7}" placeholder="days" title="Lookback window in days" />
+        </div>
+        <div class="source-rule-field lg:col-span-2">
+          <label class="field-label">Selection Strategy</label>
+          <select class="input source-strategy">
+            <option value="latest" ${ (s.selection_strategy || 'latest') === 'latest' ? 'selected' : ''}>Latest</option>
+            <option value="top" ${s.selection_strategy === 'top' ? 'selected' : ''}>Top</option>
+            <option value="popular" ${s.selection_strategy === 'popular' ? 'selected' : ''}>Popular</option>
+            <option value="random" ${s.selection_strategy === 'random' ? 'selected' : ''}>Random</option>
+          </select>
+        </div>
+        <div class="source-rule-field lg:col-span-2">
+          <label class="field-label">Segment Type Override</label>
+          <input class="input source-segment" value="${escapeHtml(s.segment_type || '')}" placeholder="e.g. reddit_post" />
+        </div>
+        <div class="source-rule-field lg:col-span-1">
+          <label class="field-label text-transparent">Remove</label>
+          <button class="btn btn-ghost text-xs px-3 w-full" onclick="removeSource(${i})">Remove</button>
+        </div>
+      </div>
+      <div class="field-help">
+        The source type and value define where content comes from. Segment type is optional and only needed when this rule should always map to a specific segment format.
+      </div>
     </div>`;
   }).join('');
   [...document.querySelectorAll('#modal-sources .source-row')].forEach(syncSourceRowHint);
@@ -1350,20 +1893,21 @@ function removeSource(i) {
 }
 
 function getSources() {
-  return [...document.querySelectorAll('#modal-sources > div')].map(row => {
-    const type = row.querySelector('.source-type').value;
-    const val = row.querySelector('.source-value').value.trim();
-    const lookback_days = parseInt(row.querySelector('.source-lookback').value) || 7;
-    const selection_strategy = row.querySelector('.source-strategy').value;
-    const segment_type = row.querySelector('.source-segment').value.trim();
+  return [...document.querySelectorAll('#modal-sources .source-row')].map(row => {
+    const typeEl = row.querySelector('.source-type');
+    const valueEl = row.querySelector('.source-value');
+    const lookbackEl = row.querySelector('.source-lookback');
+    const strategyEl = row.querySelector('.source-strategy');
+    const segmentEl = row.querySelector('.source-segment');
+    if (!typeEl || !valueEl || !lookbackEl || !strategyEl || !segmentEl) return null;
     return {
-      type,
-      value: val,
-      lookback_days,
-      selection_strategy,
-      segment_type,
+      type: typeEl.value,
+      value: valueEl.value.trim(),
+      lookback_days: parseInt(lookbackEl.value) || 7,
+      selection_strategy: strategyEl.value,
+      segment_type: segmentEl.value.trim(),
     };
-  });
+  }).filter(Boolean);
 }
 
 const HOST_ROLES = ['primary','co-host','guest','call-in'];
@@ -1466,6 +2010,7 @@ async function saveShow() {
   const showId = document.getElementById('modal-show-id').value;
   const newId = document.getElementById('modal-id-input').value.trim().toLowerCase().replace(/\s+/g,'_');
   if (!newId) return alert('Show ID required');
+  const savedId = showId || newId;
 
   const showType = document.getElementById('modal-show-type').value || 'research';
   const defs = showTypeDef(showType);
@@ -1531,7 +2076,11 @@ async function saveShow() {
       await api('/shows?show_id=' + newId, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
     }
     closeModal();
-    loadShows();
+    await loadShows();
+    const targetTab = isShowScheduled(savedId) ? 'active' : 'inactive';
+    const status = document.getElementById('shows-status');
+    if (status) status.textContent = `Saved show "${body.name || savedId}".`;
+    switchShowsTab(targetTab, Array.from(document.querySelectorAll('#tab-shows .tab-btn')).find(btn => (btn.textContent || '').trim().toLowerCase() === targetTab));
   } catch(e) { alert('Error: ' + e.message); }
 }
 
@@ -1547,9 +2096,17 @@ async function deleteShow() {
 // Schedule
 // ============================================================
 async function loadScheduleTab() {
-  if (!Object.keys(allShows).length) allShows = await api('/shows');
-  const sched = await api('/schedule');
+  const needsShows = !Object.keys(allShows).length;
+  const [shows, sched, settings] = await Promise.all([
+    needsShows ? api('/shows').catch(() => ({})) : Promise.resolve(null),
+    api('/schedule'),
+    api('/settings').catch(() => stationSettings || {}),
+  ]);
+  if (shows) allShows = shows;
+  if (settings) stationSettings = settings;
   currentSchedule = sched;
+  const tzLabel = document.getElementById('schedule-timezone-label');
+  if (tzLabel) tzLabel.textContent = scheduleTimezoneLabel(resolvedScheduleTimezone());
   renderScheduleBlocks();
   renderOverrideBlocks();
 }
@@ -1600,6 +2157,7 @@ function removeBlock(i) { currentSchedule.base.splice(i,1); renderScheduleBlocks
 function removeOverride(i) { currentSchedule.overrides.splice(i,1); renderOverrideBlocks(); }
 
 async function saveSchedule() {
+  const settings = await api('/settings').catch(() => stationSettings || {});
   const base = [...document.querySelectorAll('#schedule-blocks > div')].map(row => ({
     start: row.querySelector('.block-start').value,
     end: row.querySelector('.block-end').value,
@@ -1611,8 +2169,10 @@ async function saveSchedule() {
     end: row.querySelector('.override-end').value,
     show: row.querySelector('.block-show').value,
   }));
+  const timezone = (settings?.timezone || stationSettings.timezone || currentSchedule.timezone || 'local').trim() || 'local';
   await api('/schedule', {method:'PUT', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({base, overrides})});
+    body: JSON.stringify({timezone, base, overrides})});
+  currentSchedule.timezone = timezone;
   alert('Schedule saved. Streamer will use new schedule on next show transition.');
 }
 
@@ -1620,10 +2180,15 @@ async function saveSchedule() {
 // Generate
 // ============================================================
 async function loadGenerateTab() {
-  genOptions = await api('/generate/options');
-  allShows = await api('/shows');
+  const [options, shows, voiceSamples] = await Promise.all([
+    api('/generate/options'),
+    api('/shows'),
+    api('/voice-samples').catch(() => ({kokoro: [], minimax: []})),
+  ]);
+  genOptions = options;
+  allShows = shows;
   allSegmentTypes = genOptions.segment_type_defs || {};
-  voiceSamplesCatalog = await api('/voice-samples').catch(() => ({kokoro: [], minimax: []}));
+  voiceSamplesCatalog = voiceSamples || {kokoro: [], minimax: []};
   // Ensure manual sub-tab is visible by default
   switchGenTab('manual', document.querySelector('#tab-generate .tab-btn'));
 
@@ -2100,6 +2665,288 @@ function libraryFilterLabel(value) {
   return value;
 }
 
+function setLibraryLoading(loading) {
+  const el = document.getElementById('library-loading');
+  if (el) el.classList.toggle('hidden', !loading);
+}
+
+function resolveLibraryVoiceText(item, kind) {
+  if (kind === 'bumpers') {
+    return item.voice || (item.speaker_count > 0 ? 'vocal' : 'instrumental') || '';
+  }
+  if (item.voice) return item.voice;
+  if (item.host_voice) return item.host_voice;
+  const voices = item.voices && typeof item.voices === 'object' ? item.voices : {};
+  if (voices.host) return voices.host;
+  const firstVoice = Object.values(voices).find(Boolean);
+  return firstVoice || '';
+}
+
+function resolveLibraryVoicesText(item) {
+  const voices = item.voices && typeof item.voices === 'object' ? item.voices : {};
+  const entries = Object.entries(voices)
+    .filter(([, value]) => value)
+    .map(([role, value]) => `${role}: ${value}`);
+  return entries.join(', ');
+}
+
+function resolveLibrarySpeakerCount(item, kind) {
+  if (item.speaker_count !== undefined && item.speaker_count !== null && item.speaker_count !== '') {
+    return Number(item.speaker_count);
+  }
+  if (kind === 'bumpers') {
+    return item.voice === 'vocal' ? 1 : 0;
+  }
+  const labels = item.speaker_labels && typeof item.speaker_labels === 'object' ? item.speaker_labels : {};
+  const voices = item.voices && typeof item.voices === 'object' ? item.voices : {};
+  if (Object.keys(labels).length) return Object.keys(labels).length;
+  if (Object.keys(voices).length) return Object.keys(voices).length;
+  return 1;
+}
+
+function libraryMetadataChips(item, kind) {
+  const chips = [];
+  if (item.host_name) {
+    chips.push(`<span class="pill pill-blue">host: ${escapeHtml(item.host_name)}</span>`);
+  }
+  const speakerCount = resolveLibrarySpeakerCount(item, kind);
+  if (speakerCount !== null && speakerCount !== undefined) {
+    const label = speakerCount === 1 ? '1 speaker' : `${speakerCount} speakers`;
+    chips.push(`<span class="pill pill-blue">${label}</span>`);
+  }
+  if (item.backend_label) {
+    const originClass = item.backend_origin === 'local'
+      ? 'pill-green'
+      : item.backend_origin === 'cloud'
+        ? 'pill-yellow'
+        : 'pill-blue';
+    chips.push(`<span class="pill ${originClass}">${escapeHtml(item.backend_label)} · ${escapeHtml(item.backend_origin || '')}</span>`);
+  }
+  return chips.join('');
+}
+
+function librarySecondaryLine(item) {
+  const bits = [];
+  if (item.created_label) bits.push(`created ${escapeHtml(item.created_label)}`);
+  if (item.duration_label) bits.push(item.duration_label);
+  if (item.size_kb) bits.push(`${item.size_kb}KB`);
+  if (item.last_played) bits.push(`last played ${escapeHtml(item.last_played.substring(0,10))}`);
+  if (item.expires_label) bits.push(escapeHtml(item.expires_label));
+  return bits.join(' · ');
+}
+
+function libraryVoiceLine(item, kind) {
+  const details = item.voice_details || '';
+  if (!details) return '';
+  const label = kind === 'bumpers' ? 'Mode' : 'Voice';
+  return `${label}: ${details}`;
+}
+
+function renderLibraryItemMeta(item, kind) {
+  return `
+    <div class="mt-1 flex flex-wrap gap-1.5">
+      ${libraryMetadataChips(item, kind)}
+    </div>`;
+}
+
+function closeLibraryActionsMenus() {
+  document.querySelectorAll('.library-actions-menu').forEach(menu => menu.classList.add('hidden'));
+  document.querySelectorAll('.library-actions-wrap > button').forEach(btn => btn.setAttribute('aria-expanded', 'false'));
+}
+
+function toggleLibraryActionsMenu(event, menuId) {
+  event?.stopPropagation?.();
+  const menu = document.getElementById(menuId);
+  if (!menu) return;
+  const shouldOpen = menu.classList.contains('hidden');
+  closeLibraryActionsMenus();
+  if (shouldOpen) {
+    menu.classList.remove('hidden');
+    const button = menu.parentElement?.querySelector('button[aria-haspopup="menu"]');
+    if (button) button.setAttribute('aria-expanded', 'true');
+  }
+}
+
+document.addEventListener('click', event => {
+  if (!event.target.closest('.library-actions-wrap')) closeLibraryActionsMenus();
+});
+
+function openLibraryActionModal(kind, action, show, name) {
+  closeLibraryActionsMenus();
+  const modal = document.getElementById('library-action-modal');
+  const titleEl = document.getElementById('library-action-modal-title');
+  const summaryEl = document.getElementById('library-action-modal-summary');
+  const select = document.getElementById('library-action-target');
+  const confirmBtn = document.getElementById('library-action-confirm');
+  const actionLabel = action === 'copy' ? 'Copy' : 'Move';
+  const optionsHtml = libraryActionOptionsHtml('', show);
+  if (titleEl) titleEl.textContent = `${actionLabel} ${kind === 'segments' ? 'Talk Segment' : 'Music Bumper'}`;
+  if (summaryEl) summaryEl.textContent = `${name} from ${allShows[show]?.name || show}`;
+  if (select) {
+    if (optionsHtml) {
+      select.innerHTML = optionsHtml;
+      const firstOption = select.querySelector('option');
+      if (firstOption) select.value = firstOption.value;
+      select.disabled = false;
+    } else {
+      select.innerHTML = '<option value="">No other shows available</option>';
+      select.value = '';
+      select.disabled = true;
+    }
+  }
+  if (confirmBtn) {
+    confirmBtn.textContent = actionLabel;
+    confirmBtn.disabled = !optionsHtml;
+  }
+  libraryPendingAction = { kind, action, show, name };
+  modal?.classList.remove('hidden');
+}
+
+function closeLibraryActionModal() {
+  document.getElementById('library-action-modal')?.classList.add('hidden');
+  libraryPendingAction = null;
+}
+
+async function confirmLibraryActionModal() {
+  const target = document.getElementById('library-action-target')?.value || '';
+  if (!libraryPendingAction) return;
+  if (!target) {
+    alert('Choose a destination show first.');
+    return;
+  }
+  const { kind, action, show, name } = libraryPendingAction;
+  closeLibraryActionModal();
+  await performLibraryAction(kind, action, show, name, target);
+}
+
+async function performLibraryAction(kind, action, show, name, targetShowId='') {
+  if ((action === 'copy' || action === 'move') && !targetShowId) {
+    alert('Choose a destination show first.');
+    return;
+  }
+  const label = action === 'copy' ? 'copy' : action === 'move' ? 'move' : 'reset the play count for';
+  if (action === 'reset' && !confirm(`Are you sure you want to ${label} "${name}"?`)) return;
+  const path = action === 'reset'
+    ? `/library/${kind}/${encodeURIComponent(show)}/${encodeURIComponent(name)}/reset-plays`
+    : `/library/${kind}/${encodeURIComponent(show)}/${encodeURIComponent(name)}/${action}`;
+  const opts = action === 'reset'
+    ? {method:'POST'}
+    : {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({target_show_id: targetShowId})};
+  try {
+    const result = await api(path, opts);
+    if (!result.ok) throw new Error('Action failed');
+    await loadLibrary();
+    const targetName = targetShowId ? (allShows[targetShowId]?.name || targetShowId) : '';
+    const message = action === 'reset'
+      ? `Reset play count for "${name}".`
+      : `${action === 'copy' ? 'Copied' : 'Moved'} "${name}"${targetName ? ` to ${targetName}` : ''}.`;
+    setLibraryStatus(message, false);
+  } catch (e) {
+    setLibraryStatus(`Library action failed for "${name}": ${e.message}`, true);
+    alert(`Library action failed: ${e.message}`);
+  }
+}
+
+function libraryActionFromButton(btn) {
+  const kind = btn.dataset.libraryKind;
+  const action = btn.dataset.libraryAction;
+  const show = btn.dataset.libraryShow;
+  const name = btn.dataset.libraryName;
+  if (action === 'copy' || action === 'move') return openLibraryActionModal(kind, action, show, name);
+  if (action === 'reset') return performLibraryAction(kind, action, show, name);
+  if (action === 'delete') return deleteLibraryItem(kind, show, name);
+}
+
+function renderLibrarySegmentItem(show, f) {
+  const eid = 'seg-' + CSS.escape(show + '-' + f.name).replace(/[^a-z0-9]/gi, '_');
+  const src = `/api/library/audio/${show}/${encodeURIComponent(f.name)}?type=segment`;
+  const playsLabel = f.play_count > 0
+    ? `<span class="pill pill-purple">${f.play_count}▶</span>`
+    : '<span class="text-gray-700 text-xs">unplayed</span>';
+  const promptText = f.prompt || '';
+  const metaEid = eid + '_meta';
+  return `
+    <div class="py-1 border-b border-gray-800 library-item" data-library-kind="segments" data-library-show="${show}" data-library-segment-type="${escapeHtml(f.segment_type || '')}" data-library-name="${escapeHtml(f.name)}">
+      <div class="flex flex-col gap-2">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-gray-100 truncate max-w-xs font-medium">${escapeHtml(f.name)}</span>
+              ${f.segment_type ? `<span class="pill pill-purple">${escapeHtml(f.segment_type)}</span>` : ''}
+              ${f.word_count ? `<span class="pill pill-blue">${f.word_count}w</span>` : ''}
+            </div>
+            ${f.voice_details ? `<div class="text-xs text-indigo-300 mt-1">${escapeHtml(libraryVoiceLine(f, 'segments'))}</div>` : ''}
+            ${renderLibraryItemMeta(f, 'segments')}
+          </div>
+          <div class="flex items-center gap-2 shrink-0 ml-auto">
+            ${playsLabel}
+            ${promptText ? `<button class="text-gray-500 hover:text-gray-300" onclick="toggleMeta('${metaEid}')">ⓘ prompt</button>` : ''}
+            <button class="text-indigo-400 hover:text-indigo-300" data-preview-eid="${eid}" data-preview-src="${escapeHtml(src)}" onclick="previewFromButton(this)">▶ preview</button>
+            ${libraryActionMenuHtml('segments', show, f.name, eid)}
+          </div>
+        </div>
+        <div class="text-xs text-gray-500">${librarySecondaryLine(f)}</div>
+      </div>
+      ${promptText ? `<div id="${metaEid}" class="hidden text-xs text-indigo-300 bg-indigo-950 rounded px-3 py-2 mt-1 italic">${escapeHtml(promptText)}</div>` : ''}
+      <div class="preview-bar" id="${eid}">
+        <audio controls preload="none" src="${src}" style="flex:1;height:28px;min-width:0"></audio>
+      </div>
+    </div>`;
+}
+
+function renderLibraryBumperItem(show, f) {
+  const eid = 'bump-' + CSS.escape(show + '-' + f.name).replace(/[^a-z0-9]/gi, '_');
+  const src = `/api/library/audio/${show}/${encodeURIComponent(f.name)}?type=bumper`;
+  const playsLabel = f.play_count > 0
+    ? `<span class="pill pill-purple">${f.play_count}▶</span>`
+    : '<span class="text-gray-700 text-xs">unplayed</span>';
+  const promptText = f.prompt || '';
+  const displayLabel = f.display_name ? `<span class="text-gray-500">${escapeHtml(f.display_name)}</span>` : '';
+  const metaEid = eid + '_meta';
+  return `
+    <div class="py-1 border-b border-gray-800 library-item" data-library-kind="bumpers" data-library-show="${show}" data-library-segment-type="" data-library-name="${escapeHtml(f.name)}">
+      <div class="flex flex-col gap-2">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-gray-100 truncate max-w-xs font-medium">${escapeHtml(f.name)}</span>
+              ${displayLabel}
+            </div>
+            ${f.voice_details ? `<div class="text-xs text-indigo-300 mt-1">${escapeHtml(libraryVoiceLine(f, 'bumpers'))}</div>` : ''}
+            ${renderLibraryItemMeta(f, 'bumpers')}
+          </div>
+          <div class="flex items-center gap-2 shrink-0 ml-auto">
+            ${playsLabel}
+            ${promptText ? `<button class="text-gray-500 hover:text-gray-300" onclick="toggleMeta('${metaEid}')">ⓘ prompt</button>` : ''}
+            <button class="text-indigo-400 hover:text-indigo-300" data-preview-eid="${eid}" data-preview-src="${escapeHtml(src)}" onclick="previewFromButton(this)">▶ preview</button>
+            ${libraryActionMenuHtml('bumpers', show, f.name, eid)}
+          </div>
+        </div>
+        <div class="text-xs text-gray-500">${librarySecondaryLine(f)}</div>
+      </div>
+      ${promptText ? `<div id="${metaEid}" class="hidden text-xs text-indigo-300 bg-indigo-950 rounded px-3 py-2 mt-1 italic">${escapeHtml(promptText)}</div>` : ''}
+      <div class="preview-bar" id="${eid}">
+        <audio controls preload="none" src="${src}" style="flex:1;height:28px;min-width:0"></audio>
+      </div>
+    </div>`;
+}
+
+function renderLibraryShowCard(kind, show, files, itemRenderer) {
+  const title = escapeHtml(allShows[show]?.name || show);
+  const emptyLabel = kind === 'segments' ? 'No talk segments' : 'No bumpers';
+  return `
+    <div class="card p-3 library-show-card" data-library-show="${show}" data-library-kind="${kind}">
+      <div class="flex justify-between items-center mb-2">
+        <div class="font-bold text-sm">${title}</div>
+        <div class="flex items-center gap-2">
+          <span class="pill pill-blue">${files.length} files</span>
+          <button class="btn btn-ghost text-xs px-2" onclick="deleteVisibleLibrary('${show}','${kind}')">Delete Visible</button>
+        </div>
+      </div>
+      <div class="space-y-1">${files.length ? files.map(f => itemRenderer(show, f)).join('') : `<div class="text-gray-600 text-sm">${emptyLabel}</div>`}</div>
+    </div>`;
+}
+
 function applyLibraryFilter() {
   document.querySelectorAll('.library-item').forEach(el => {
     const kind = el.dataset.libraryKind;
@@ -2125,160 +2972,59 @@ function applyLibraryFilter() {
 }
 
 async function loadLibrary() {
-  if (!Object.keys(allShows).length) allShows = await api('/shows');
-  if (!libraryFilterOptionsReady) {
-    if (!Object.keys(allSegmentTypes).length) {
-      const opts = await api('/generate/options').catch(() => ({}));
-      allSegmentTypes = opts.segment_type_defs || {};
-    }
-    const select = document.getElementById('library-filter-select');
-    if (select) {
-      const base = [
-        `<option value="all">All items</option>`,
-        `<option value="segments">Talk segments</option>`,
-        `<option value="bumpers">Music bumpers</option>`,
-      ];
-      const typeOpts = Object.entries(allSegmentTypes || {})
-        .sort((a, b) => (a[1].display_name || a[1].name || a[0]).localeCompare(b[1].display_name || b[1].name || b[0]))
-        .map(([slug, def]) => `<option value="type:${slug}">${escapeHtml(def.display_name || def.name || slug)}</option>`);
-      select.innerHTML = [...base, ...typeOpts].join('');
-      select.value = libraryFilter || 'all';
-    }
-    libraryFilterOptionsReady = true;
-  }
-  const [segs, bumps] = await Promise.all([api('/library/segments'), api('/library/bumpers')]);
-  setLibraryStatus('');
-
-  document.getElementById('seg-list').innerHTML = Object.entries(segs).map(([show, files]) => `
-    <div class="card p-3 library-show-card" data-library-show="${show}" data-library-kind="segments">
-      <div class="flex justify-between items-center mb-2">
-        <div class="font-bold text-sm">${escapeHtml(allShows[show]?.name||show)}</div>
-        <div class="flex items-center gap-2">
-          <span class="pill pill-blue">${files.length} files</span>
-          <button class="btn btn-ghost text-xs px-2" onclick="deleteVisibleLibrary('${show}','segments')">Delete Visible</button>
-        </div>
-      </div>
-      <div class="space-y-1">${files.map(f=>{
-        const eid = 'seg-' + CSS.escape(show + '-' + f.name).replace(/[^a-z0-9]/gi,'_');
-        const src = `/api/library/audio/${show}/${encodeURIComponent(f.name)}?type=segment`;
-        const playsLabel = f.play_count > 0
-          ? `<span class="pill pill-purple">${f.play_count}▶</span>`
-          : '<span class="text-gray-700 text-xs">unplayed</span>';
-        const lastPlayed = f.last_played ? f.last_played.substring(0,10) : '';
-        const promptText = f.prompt || '';
-        const metaEid = eid + '_meta';
-        const expiryLabel = f.expires_label ? `<span class="text-gray-500">${escapeHtml(f.expires_label)}</span>` : '';
-        return `
-        <div class="py-1 border-b border-gray-800 library-item" data-library-kind="segments" data-library-show="${show}" data-library-segment-type="${escapeHtml(f.segment_type || '')}">
-          <div class="flex justify-between items-center text-xs">
-            <div class="flex items-center gap-2 min-w-0">
-        <span class="text-gray-200 truncate max-w-xs font-medium">${escapeHtml(f.name)}</span>
-              ${f.segment_type ? `<span class="pill pill-purple text-xs">${escapeHtml(f.segment_type)}</span>` : ''}
-              ${f.word_count ? `<span class="text-gray-600">${f.word_count}w</span>` : ''}
-            </div>
-            <div class="flex items-center gap-3 ml-2 shrink-0">
-              ${playsLabel}
-              <span class="text-gray-600">${f.created_label ? 'created ' + f.created_label + ' · ' : ''}${f.duration_label || '?:??'} · ${f.size_kb}KB${lastPlayed ? ' · '+lastPlayed : ''}${expiryLabel ? ' · ' + expiryLabel : ''}</span>
-              ${promptText ? `<button class="text-gray-500 hover:text-gray-300" onclick="toggleMeta('${metaEid}')">ⓘ prompt</button>` : ''}
-              <button class="text-indigo-400 hover:text-indigo-300" data-preview-eid="${eid}" data-preview-src="${escapeHtml(src)}" onclick="previewFromButton(this)">▶ preview</button>
-              <button class="text-red-400 hover:text-red-300" data-delete-kind="segment" data-delete-show="${escapeHtml(show)}" data-delete-name="${escapeHtml(f.name)}" onclick="deleteLibraryFromButton(this)">✕</button>
-            </div>
-          </div>
-          <div class="mt-2">${libraryActionMenuHtml('segments', show, f.name, eid)}</div>
-          ${promptText ? `<div id="${metaEid}" class="hidden text-xs text-indigo-300 bg-indigo-950 rounded px-3 py-2 mt-1 italic">${escapeHtml(promptText)}</div>` : ''}
-          <div class="preview-bar" id="${eid}">
-            <audio controls preload="none" src="${src}" style="flex:1;height:28px;min-width:0"></audio>
-          </div>
-        </div>`;}).join('')}
-      </div>
-    </div>`).join('') || '<div class="text-gray-600 text-sm">No talk segments</div>';
-
-  document.getElementById('bump-list').innerHTML = Object.entries(bumps).map(([show, files]) => `
-    <div class="card p-3 library-show-card" data-library-show="${show}" data-library-kind="bumpers">
-      <div class="flex justify-between items-center mb-2">
-        <div class="font-bold text-sm">${escapeHtml(allShows[show]?.name||show)}</div>
-        <div class="flex items-center gap-2">
-          <span class="pill pill-blue">${files.length} files</span>
-          <button class="btn btn-ghost text-xs px-2" onclick="deleteVisibleLibrary('${show}','bumpers')">Delete Visible</button>
-        </div>
-      </div>
-      <div class="space-y-1">${files.map(f=>{
-        const eid = 'bump-' + CSS.escape(show + '-' + f.name).replace(/[^a-z0-9]/gi,'_');
-        const src = `/api/library/audio/${show}/${encodeURIComponent(f.name)}?type=bumper`;
-        const playsLabel = f.play_count > 0
-          ? `<span class="pill pill-purple">${f.play_count}▶</span>`
-          : '<span class="text-gray-700 text-xs">unplayed</span>';
-        const lastPlayed = f.last_played ? f.last_played.substring(0,10) : '';
-        const promptText = f.prompt || '';
-        const displayLabel = f.display_name ? `<span class="text-gray-500">${escapeHtml(f.display_name)}</span>` : '';
-        const metaEid = eid + '_meta';
-        const expiryLabel = f.expires_label ? `<span class="text-gray-500">${escapeHtml(f.expires_label)}</span>` : '';
-        return `
-        <div class="py-1 border-b border-gray-800 library-item" data-library-kind="bumpers" data-library-show="${show}" data-library-segment-type="">
-          <div class="flex justify-between items-center text-xs">
-            <div class="flex items-center gap-2 min-w-0">
-              <span class="text-gray-200 truncate max-w-xs font-medium">${escapeHtml(f.name)}</span>
-              ${displayLabel}
-            </div>
-            <div class="flex items-center gap-3 ml-2 shrink-0">
-              ${playsLabel}
-              <span class="text-gray-600">${f.created_label ? 'created ' + f.created_label + ' · ' : ''}${f.duration_label || '?:??'} · ${f.size_kb}KB${lastPlayed ? ' · '+lastPlayed : ''}${expiryLabel ? ' · ' + expiryLabel : ''}</span>
-              ${promptText ? `<button class="text-gray-500 hover:text-gray-300" onclick="toggleMeta('${metaEid}')">ⓘ prompt</button>` : ''}
-              <button class="text-indigo-400 hover:text-indigo-300" data-preview-eid="${eid}" data-preview-src="${escapeHtml(src)}" onclick="previewFromButton(this)">▶ preview</button>
-              <button class="text-red-400 hover:text-red-300" data-delete-kind="bumper" data-delete-show="${escapeHtml(show)}" data-delete-name="${escapeHtml(f.name)}" onclick="deleteLibraryFromButton(this)">✕</button>
-            </div>
-          </div>
-          <div class="mt-2">${libraryActionMenuHtml('bumpers', show, f.name, eid)}</div>
-          ${promptText ? `<div id="${metaEid}" class="hidden text-xs text-indigo-300 bg-indigo-950 rounded px-3 py-2 mt-1 italic">${escapeHtml(promptText)}</div>` : ''}
-          <div class="preview-bar" id="${eid}">
-            <audio controls preload="none" src="${src}" style="flex:1;height:28px;min-width:0"></audio>
-          </div>
-        </div>`;}).join('')}
-      </div>
-    </div>`).join('') || '<div class="text-gray-600 text-sm">No bumpers</div>';
-  applyLibraryFilter();
-}
-
-async function deleteSegment(show, name) {
-  if (!confirm(`Delete "${name}"?`)) return;
-  await api(`/library/segments/${show}/${encodeURIComponent(name)}`, {method:'DELETE'});
-  loadLibrary();
-}
-async function deleteBumper(show, name) {
-  if (!confirm(`Delete "${name}"?`)) return;
-  await api(`/library/bumpers/${show}/${encodeURIComponent(name)}`, {method:'DELETE'});
-  loadLibrary();
-}
-
-async function libraryAction(kind, action, show, name, targetSelectId=null) {
-  const target = targetSelectId ? document.getElementById(targetSelectId)?.value : '';
-  if ((action === 'copy' || action === 'move') && !target) {
-    alert('Choose a destination show first.');
-    return;
-  }
-  const label = action === 'copy' ? 'copy' : action === 'move' ? 'move' : 'reset the play count for';
-  if (!confirm(`Are you sure you want to ${label} "${name}"?`)) return;
-  const path = action === 'reset'
-    ? `/library/${kind}/${encodeURIComponent(show)}/${encodeURIComponent(name)}/reset-plays`
-    : `/library/${kind}/${encodeURIComponent(show)}/${encodeURIComponent(name)}/${action}`;
-  const opts = action === 'reset'
-    ? {method:'POST'}
-    : {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({target_show_id: target})};
+  setLibraryLoading(true);
+  setLibraryStatus('Loading library...');
   try {
-    const result = await api(path, opts);
-    if (!result.ok) throw new Error('Action failed');
-    await loadLibrary();
-    const targetName = target ? (allShows[target]?.name || target) : '';
-    const message = action === 'reset'
-      ? `Reset play count for "${name}".`
-      : `${action === 'copy' ? 'Copied' : 'Moved'} "${name}"${targetName ? ` to ${targetName}` : ''}.`;
-    setLibraryStatus(message, false);
-  } catch (e) {
-    setLibraryStatus(`Library action failed for "${name}": ${e.message}`, true);
-    alert(`Library action failed: ${e.message}`);
+    await new Promise(requestAnimationFrame);
+    const needsShows = !Object.keys(allShows).length;
+    const needsSegmentTypes = !Object.keys(allSegmentTypes).length;
+    const needsGenOptions = !libraryFilterOptionsReady && needsSegmentTypes;
+    const [shows, opts, segs, bumps] = await Promise.all([
+      needsShows ? api('/shows').catch(() => ({})) : Promise.resolve(null),
+      needsGenOptions ? api('/generate/options').catch(() => ({})) : Promise.resolve(null),
+      api('/library/segments'),
+      api('/library/bumpers'),
+    ]);
+    if (shows) allShows = shows;
+    if (!libraryFilterOptionsReady) {
+      if (opts && opts.segment_type_defs) {
+        allSegmentTypes = opts.segment_type_defs || {};
+      }
+      const select = document.getElementById('library-filter-select');
+      if (select) {
+        const base = [
+          `<option value="all">All items</option>`,
+          `<option value="segments">Talk segments</option>`,
+          `<option value="bumpers">Music bumpers</option>`,
+        ];
+        const typeOpts = Object.entries(allSegmentTypes || {})
+          .sort((a, b) => (a[1].display_name || a[1].name || a[0]).localeCompare(b[1].display_name || b[1].name || b[0]))
+          .map(([slug, def]) => `<option value="type:${slug}">${escapeHtml(def.display_name || def.name || slug)}</option>`);
+        select.innerHTML = [...base, ...typeOpts].join('');
+        select.value = libraryFilter || 'all';
+      }
+      libraryFilterOptionsReady = true;
+    }
+    setLibraryStatus('');
+
+    document.getElementById('seg-list').innerHTML = Object.entries(segs).map(([show, files]) => {
+      return renderLibraryShowCard('segments', show, files, renderLibrarySegmentItem);
+    }).join('') || '<div class="text-gray-600 text-sm">No talk segments</div>';
+
+    document.getElementById('bump-list').innerHTML = Object.entries(bumps).map(([show, files]) => {
+      return renderLibraryShowCard('bumpers', show, files, renderLibraryBumperItem);
+    }).join('') || '<div class="text-gray-600 text-sm">No bumpers</div>';
+    applyLibraryFilter();
+  } finally {
+    setLibraryLoading(false);
   }
 }
 
+async function deleteLibraryItem(kind, show, name) {
+  if (!confirm(`Delete "${name}"?`)) return;
+  await api(`/library/${kind}/${show}/${encodeURIComponent(name)}`, {method:'DELETE'});
+  loadLibrary();
+}
 function setLibraryStatus(message, isError=false) {
   const el = document.getElementById('library-status');
   if (!el) return;
@@ -2297,14 +3043,10 @@ async function deleteVisibleLibrary(show, kind) {
   let deleted = 0;
   for (const row of rows) {
     const rowShow = row.dataset.libraryShow;
-    const filename = row.querySelector('[data-delete-name]')?.dataset.deleteName;
+    const filename = row.dataset.libraryName;
     if (!rowShow || !filename) continue;
     try {
-      if (kind === 'segments') {
-        await api(`/library/segments/${rowShow}/${encodeURIComponent(filename)}`, {method:'DELETE'});
-      } else {
-        await api(`/library/bumpers/${rowShow}/${encodeURIComponent(filename)}`, {method:'DELETE'});
-      }
+      await api(`/library/${kind}/${rowShow}/${encodeURIComponent(filename)}`, {method:'DELETE'});
       deleted += 1;
     } catch (e) {
       console.warn('Delete failed', e);
@@ -2365,8 +3107,8 @@ async function loadSchedulerStatus() {
       <div class="flex justify-between items-center mb-3">
         <div class="font-bold text-sm">${showName}</div>
         <div class="flex gap-2">
-          <button class="btn btn-primary text-xs" title="Run this show's default generators now" onclick="triggerShowNow('${showId}')">▶ Generate Now</button>
-          <button class="btn btn-ghost text-xs" onclick="triggerNow('${showId}','talk')">▶ Talk Now</button>
+          <button class="btn btn-primary text-xs" title="Run this show's default generators now" onclick="triggerShowNow('${showId}')">↻ Generate Now</button>
+          <button class="btn btn-ghost text-xs" onclick="triggerNow('${showId}','talk')">↻ Talk Now</button>
           <button class="btn btn-ghost text-xs" onclick="triggerNow('${showId}','music')">♪ Music Now</button>
         </div>
       </div>
@@ -2617,11 +3359,13 @@ function togglePreview(id, src) {
 // Hosts tab
 // ============================================================
 async function loadHosts() {
-  if (!Object.keys(genOptions).length) genOptions = await api('/generate/options');
-  const [hosts, voiceSamples] = await Promise.all([
+  const needsGenOptions = !Object.keys(genOptions).length;
+  const [hosts, voiceSamples, options] = await Promise.all([
     api('/hosts'),
     api('/voice-samples').catch(() => ({kokoro: [], minimax: []})),
+    needsGenOptions ? api('/generate/options').catch(() => ({})) : Promise.resolve(null),
   ]);
+  if (options) genOptions = options;
   allHosts = hosts;
   voiceSamplesCatalog = voiceSamples || {kokoro: [], minimax: []};
   const list = document.getElementById('hosts-list');
@@ -2877,6 +3621,8 @@ async function loadSettings() {
     updateStationBranding(stationSettings.station_name || 'Station');
     document.getElementById('settings-status').textContent =
       `Current station: ${stationSettings.station_name || 'WRIT-FM'} · timezone: ${stationSettings.timezone || 'local'}`;
+    const tzLabel = document.getElementById('schedule-timezone-label');
+    if (tzLabel) tzLabel.textContent = scheduleTimezoneLabel(resolvedScheduleTimezone());
   } catch(e) {
     document.getElementById('settings-status').textContent = `Failed to load settings: ${e.message}`;
   }

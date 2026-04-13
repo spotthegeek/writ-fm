@@ -48,9 +48,17 @@ BUMPERS_DIR = PROJECT_ROOT / "output" / "music_bumpers"
 SCRIPTS_DIR = PROJECT_ROOT / "output" / "scripts"
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python3"
 STREAMER_API = os.environ.get("WRIT_STREAMER_API", "http://localhost:8001")
+STATION_SERVICE = os.environ.get("WRIT_STATION_SERVICE", "writ-fm.service")
+LEGACY_STREAMER_SERVICE = os.environ.get("WRIT_LEGACY_STREAMER_SERVICE", "writ-fm-streamer.service")
 
 AUDIO_EXTS = {".wav", ".mp3", ".flac"}
 JOBS_DIR = PROJECT_ROOT / "output" / "jobs"
+INVENTORY_CACHE_TTL = float(os.environ.get("WRIT_INVENTORY_CACHE_TTL", "300"))
+_inventory_cache_lock = threading.Lock()
+_inventory_cache: dict[str, dict[str, Any]] = {
+    "segments": {"ts": 0.0, "value": {}},
+    "bumpers": {"ts": 0.0, "value": {}},
+}
 
 from mac.voice_samples import (
     KOKORO_VOICES,
@@ -101,7 +109,7 @@ app = FastAPI(title="Station Admin", version="1.0")
 @app.on_event("startup")
 def _start_scheduler():
     check_interval = int(os.environ.get("WRIT_SCHEDULER_INTERVAL", "300"))
-    _sched.start_scheduler(_jobs, check_interval=check_interval)
+    _sched.start_scheduler(_jobs, check_interval=check_interval, cache_invalidator=_invalidate_inventory_cache)
     print(f"[admin] Scheduler started (interval={check_interval}s)")
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -651,14 +659,17 @@ def get_segment_types_api() -> dict[str, dict]:
     }
 
 
-def segment_inventory() -> dict[str, list[dict]]:
+def _build_segment_inventory() -> dict[str, list[dict]]:
     """Return per-show segment inventory."""
     inv: dict[str, list[dict]] = {}
     if not TALK_SEGMENTS_DIR.exists():
         return inv
+    all_hosts = get_all_hosts()
+    schedule_data = load_schedule()
     for show_dir in sorted(TALK_SEGMENTS_DIR.iterdir()):
         if not show_dir.is_dir():
             continue
+        host_meta = _show_primary_host_meta(show_dir.name, schedule_data)
         files = []
         for f in sorted(show_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
             if f.is_file() and f.suffix.lower() in AUDIO_EXTS:
@@ -671,7 +682,16 @@ def segment_inventory() -> dict[str, list[dict]]:
                         created_at = _station_from_timestamp(f.stat().st_mtime)
                     except Exception:
                         created_at = _station_now()
-                expiry = _expiry_info(f, show_dir.name, "talk", plays_meta)
+                expiry = _expiry_info(f, show_dir.name, "talk", plays_meta, schedule_data)
+                voices = gen_meta.get("voices") if isinstance(gen_meta.get("voices"), dict) else {}
+                host_id = str(gen_meta.get("host") or host_meta["host_id"]).strip() or host_meta["host_id"]
+                host_entry = all_hosts.get(host_id, {})
+                host_name = str(gen_meta.get("host_name") or host_entry.get("name") or host_meta["host_name"])
+                backend = str(gen_meta.get("tts_backend") or host_meta["backend"] or "kokoro")
+                voice = "" if backend == "youtube_ingest" else str(gen_meta.get("voice") or voices.get("host") or host_meta["voice"])
+                speaker_labels = gen_meta.get("speaker_labels") if isinstance(gen_meta.get("speaker_labels"), dict) else {}
+                speaker_count = len(speaker_labels) if speaker_labels else max(1, len(voices) if voices else 1)
+                voice_details = ", ".join(f"{role}: {value}" for role, value in voices.items() if value) or voice
                 files.append({
                     "name": f.name,
                     "show_id": show_dir.name,
@@ -686,6 +706,17 @@ def segment_inventory() -> dict[str, list[dict]]:
                     "first_played": plays_meta.get("first_played_at", "")[:16],
                     "last_played": plays_meta.get("last_played_at", "")[:16],
                     **expiry,
+                    "host_id": host_id,
+                    "host_name": host_name,
+                    "voice": voice,
+                    "voices": voices,
+                    "speaker_labels": speaker_labels,
+                    "voice_details": voice_details,
+                    "tts_backend": backend,
+                    "audio_backend": backend,
+                    "backend_origin": _backend_origin_label(backend),
+                    "backend_label": _backend_label(backend),
+                    "speaker_count": speaker_count,
                     "prompt": gen_meta.get("topic", ""),
                     "segment_type": gen_meta.get("type", ""),
                     "word_count": gen_meta.get("word_count", 0),
@@ -713,11 +744,12 @@ def _read_gen_meta(f: Path) -> dict:
     2. Matching entry in output/scripts/ by timestamp (legacy files)
     """
     sidecar = f.with_suffix(".json")
+    meta: dict = {}
     if sidecar.exists():
         try:
-            return json.loads(sidecar.read_text())
+            meta = json.loads(sidecar.read_text()) or {}
         except Exception:
-            pass
+            meta = {}
 
     # Fallback: extract timestamp from filename and search output/scripts/
     # Filename pattern: {segment_type}_{topic_slug}_{YYYYMMDD_HHMMSS}.ext
@@ -727,11 +759,21 @@ def _read_gen_meta(f: Path) -> dict:
         ts = m.group(1)
         for sf in SCRIPTS_DIR.glob(f"talk_*_{ts}.json"):
             try:
-                return json.loads(sf.read_text())
+                script_meta = json.loads(sf.read_text()) or {}
+                if isinstance(meta, dict):
+                    # Prefer the richer script metadata when the lightweight
+                    # audio sidecar omits voice/backend fields.
+                    merged = dict(script_meta)
+                    for key, value in meta.items():
+                        if value in (None, "", [], {}, ()):
+                            continue
+                        merged[key] = value
+                    return merged
+                return script_meta
             except Exception:
                 pass
 
-    return {}
+    return meta if isinstance(meta, dict) else {}
 
 
 def _format_duration(seconds: float | int | None) -> str:
@@ -767,7 +809,18 @@ def _audio_duration_seconds(f: Path, gen_meta: dict | None = None) -> float | No
             timeout=10,
         )
         if result.returncode == 0 and result.stdout.strip():
-            return float(result.stdout.strip())
+            value = float(result.stdout.strip())
+            try:
+                sidecar = f.with_suffix(".json")
+                payload: dict[str, Any] = {}
+                if sidecar.exists():
+                    payload = json.loads(sidecar.read_text()) or {}
+                if payload.get("duration_seconds") in (None, ""):
+                    payload["duration_seconds"] = value
+                    sidecar.write_text(json.dumps(payload, indent=2))
+            except Exception:
+                pass
+            return value
     except Exception:
         pass
     return None
@@ -782,8 +835,12 @@ def _station_datetime_from_iso(value: str | None) -> datetime | None:
         return None
 
 
-def _show_lifecycle(show_id: str, content_type: str) -> dict[str, Any]:
-    data = load_schedule()
+def _show_lifecycle(
+    show_id: str,
+    content_type: str,
+    schedule_data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    data = schedule_data or load_schedule()
     show = data.get("shows", {}).get(show_id, {})
     lifecycle = show.get("content_lifecycle", {}) if isinstance(show.get("content_lifecycle", {}), dict) else {}
     current = lifecycle.get(content_type, {}) if isinstance(lifecycle.get(content_type, {}), dict) else {}
@@ -793,8 +850,14 @@ def _show_lifecycle(show_id: str, content_type: str) -> dict[str, Any]:
     }
 
 
-def _expiry_info(audio_path: Path, show_id: str, content_type: str, plays_meta: dict | None = None) -> dict[str, Any]:
-    lifecycle = _show_lifecycle(show_id, content_type)
+def _expiry_info(
+    audio_path: Path,
+    show_id: str,
+    content_type: str,
+    plays_meta: dict | None = None,
+    schedule_data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    lifecycle = _show_lifecycle(show_id, content_type, schedule_data)
     max_plays = lifecycle.get("max_plays")
     max_days = lifecycle.get("max_days")
     meta = plays_meta or _read_plays_meta(audio_path)
@@ -840,13 +903,76 @@ def _expiry_info(audio_path: Path, show_id: str, content_type: str, plays_meta: 
     }
 
 
-def bumper_inventory() -> dict[str, list[dict]]:
+def _backend_label(backend: str | None) -> str:
+    value = str(backend or "").strip().lower()
+    if value.startswith("kokoro"):
+        return "Kokoro"
+    if value.startswith("minimax"):
+        return "MiniMax"
+    if value == "youtube_ingest":
+        return "YouTube ingest"
+    if value in {"music-gen", "music_gen", "musicgen"}:
+        return "MiniMax music"
+    return value or "unknown"
+
+
+def _backend_origin_label(backend: str | None) -> str:
+    value = str(backend or "").strip().lower()
+    if value.startswith("kokoro"):
+        return "local"
+    if value.startswith("minimax"):
+        return "cloud"
+    if value == "youtube_ingest":
+        return "source"
+    if value in {"music-gen", "music_gen", "musicgen"}:
+        return "cloud"
+    return "unknown"
+
+
+def _show_primary_host_meta(show_id: str, schedule_data: dict[str, Any] | None = None) -> dict[str, str]:
+    """Resolve the primary host details for a show from the live schedule."""
+    try:
+        data = schedule_data or load_schedule()
+    except Exception:
+        data = {}
+    show = (data.get("shows") or {}).get(show_id, {}) if isinstance(data, dict) else {}
+    hosts = show.get("hosts") or []
+    primary = next((h for h in hosts if h.get("role") == "primary"), None)
+    if not primary:
+        primary = {
+            "id": show.get("host", show_id),
+            "tts_backend": show.get("tts_backend", "kokoro"),
+            "voice_kokoro": (show.get("voices") or {}).get("host", "am_michael"),
+            "voice_minimax": "Deep_Voice_Man",
+        }
+    roster = get_all_hosts()
+    host_id = str(primary.get("id") or show.get("host") or show_id).strip() or show_id
+    host_entry = roster.get(host_id, {})
+    host_name = host_entry.get("name") or host_id
+    backend = str(primary.get("tts_backend") or show.get("tts_backend") or host_entry.get("tts_backend") or "kokoro")
+    voice = (
+        primary.get("voice_kokoro")
+        if backend != "minimax"
+        else primary.get("voice_minimax")
+    ) or (show.get("voices") or {}).get("host") or host_entry.get("tts_voice") or "am_michael"
+    return {
+        "host_id": host_id,
+        "host_name": host_name,
+        "backend": backend,
+        "voice": str(voice),
+    }
+
+
+def _build_bumper_inventory() -> dict[str, list[dict]]:
     inv: dict[str, list[dict]] = {}
     if not BUMPERS_DIR.exists():
         return inv
+    all_hosts = get_all_hosts()
+    schedule_data = load_schedule()
     for show_dir in sorted(BUMPERS_DIR.iterdir()):
         if not show_dir.is_dir():
             continue
+        host_meta = _show_primary_host_meta(show_dir.name, schedule_data)
         files = []
         for f in sorted(show_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
             if f.is_file() and f.suffix.lower() in AUDIO_EXTS:
@@ -859,7 +985,14 @@ def bumper_inventory() -> dict[str, list[dict]]:
                         created_at = _station_from_timestamp(f.stat().st_mtime)
                     except Exception:
                         created_at = _station_now()
-                expiry = _expiry_info(f, show_dir.name, "music", plays_meta)
+                expiry = _expiry_info(f, show_dir.name, "music", plays_meta, schedule_data)
+                host_id = str(gen_meta.get("host") or host_meta["host_id"]).strip() or host_meta["host_id"]
+                host_entry = all_hosts.get(host_id, {})
+                host_name = str(gen_meta.get("host_name") or host_entry.get("name") or host_meta["host_name"])
+                backend = str(gen_meta.get("generation_backend") or gen_meta.get("audio_backend") or "music-gen")
+                voice = str(gen_meta.get("voice") or ("vocal" if not gen_meta.get("instrumental", True) else "instrumental"))
+                speaker_count = 1 if voice == "vocal" else 0
+                voice_details = voice
                 files.append({
                     "name": f.name,
                     "show_id": show_dir.name,
@@ -873,6 +1006,15 @@ def bumper_inventory() -> dict[str, list[dict]]:
                     "first_played": plays_meta.get("first_played_at", "")[:16],
                     "last_played": plays_meta.get("last_played_at", "")[:16],
                     **expiry,
+                    "host_id": host_id,
+                    "host_name": host_name,
+                    "voice": voice,
+                    "tts_backend": backend,
+                    "audio_backend": backend,
+                    "backend_origin": _backend_origin_label(backend),
+                    "backend_label": _backend_label(backend),
+                    "speaker_count": speaker_count,
+                    "voice_details": voice_details,
                     "prompt": gen_meta.get("caption", gen_meta.get("topic", "")),
                     "display_name": gen_meta.get("display_name", ""),
                     "generated_at": gen_meta.get("generated_at", ""),
@@ -881,13 +1023,55 @@ def bumper_inventory() -> dict[str, list[dict]]:
     return inv
 
 
+def _cached_inventory(kind: str) -> dict[str, list[dict]]:
+    now = time.monotonic()
+    with _inventory_cache_lock:
+        cached = _inventory_cache[kind]
+        if cached["value"] and (now - float(cached["ts"] or 0.0)) < INVENTORY_CACHE_TTL:
+            return cached["value"]
+    value = _build_segment_inventory() if kind == "segments" else _build_bumper_inventory()
+    with _inventory_cache_lock:
+        _inventory_cache[kind] = {"ts": now, "value": value}
+    return value
+
+
+def _invalidate_inventory_cache(kind: str | None = None) -> None:
+    with _inventory_cache_lock:
+        kinds = [kind] if kind in _inventory_cache else list(_inventory_cache.keys()) if kind is None else []
+        for k in kinds:
+            _inventory_cache[k] = {"ts": 0.0, "value": {}}
+
+
+def _streamer_request(path: str, method: str = "GET", payload: dict | None = None, timeout: float = 5.0) -> dict:
+    import urllib.request as _ur
+    import urllib.error as _ue
+
+    url = f"{STREAMER_API}{path}"
+    data = None
+    headers = {}
+    if payload is not None:
+        data = json.dumps(payload).encode()
+        headers["Content-Type"] = "application/json"
+    req = _ur.Request(url, data=data, headers=headers, method=method)
+    try:
+        with _ur.urlopen(req, timeout=timeout) as r:
+            raw = r.read().decode() or "{}"
+            return json.loads(raw)
+    except _ue.HTTPError as e:
+        body = e.read().decode() if hasattr(e, "read") else ""
+        detail = body or e.reason or str(e)
+        raise HTTPException(e.code, f"Streamer request failed: {detail}")
+    except Exception as e:
+        raise HTTPException(502, f"Streamer request failed: {e}")
+
+
 # ---------------------------------------------------------------------------
 # API: Status
 # ---------------------------------------------------------------------------
 
 @app.get("/api/status")
 def get_status():
-    import urllib.request, urllib.error
+    import urllib.request
     streamer_ok = False
     now_playing = {}
     try:
@@ -904,10 +1088,10 @@ def get_status():
     except Exception:
         pass
 
-    segments = segment_inventory()
+    segments = _cached_inventory("segments")
     total_segments = sum(len(v) for v in segments.values())
 
-    bumpers = bumper_inventory()
+    bumpers = _cached_inventory("bumpers")
     total_bumpers = sum(len(v) for v in bumpers.values())
 
     return {
@@ -919,6 +1103,32 @@ def get_status():
         "segments_per_show": {k: len(v) for k, v in segments.items()},
         "timestamp": _station_iso_now(),
     }
+
+
+@app.get("/api/live/status")
+def get_live_status():
+    status = get_status()
+    try:
+        queue = _streamer_request("/queue")
+    except HTTPException as e:
+        queue = {"error": e.detail}
+    return {
+        **status,
+        "queue": queue,
+    }
+
+
+@app.post("/api/live/skip")
+def skip_live_current():
+    return _streamer_request("/control", method="POST", payload={"action": "skip"})
+
+
+@app.post("/api/live/control")
+def live_control(payload: dict):
+    action = str(payload.get("action", "")).strip().lower()
+    if not action:
+        raise HTTPException(400, "action required")
+    return _streamer_request("/control", method="POST", payload=payload)
 
 
 # ---------------------------------------------------------------------------
@@ -1172,6 +1382,31 @@ def update_settings(update: SettingsUpdate):
     data["station_name"] = (update.station_name or "WRIT-FM").strip() or "WRIT-FM"
     save_schedule(data)
     return {"ok": True, "timezone": data["timezone"], "station_name": data["station_name"]}
+
+
+@app.post("/api/station/refresh")
+def refresh_station():
+    """Restart the streamer so it reloads the latest schedule/config."""
+    try:
+        services = [STATION_SERVICE]
+        if LEGACY_STREAMER_SERVICE and LEGACY_STREAMER_SERVICE != STATION_SERVICE:
+            services.append(LEGACY_STREAMER_SERVICE)
+        for service in services:
+            result = subprocess.run(
+                ["systemctl", "restart", service],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            if result.returncode != 0:
+                details = (result.stderr or result.stdout or "").strip()
+                raise HTTPException(500, f"Failed to restart {service}: {details or 'unknown error'}")
+        return {"ok": True, "service": STATION_SERVICE, "legacy_service": LEGACY_STREAMER_SERVICE}
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise HTTPException(500, f"Failed to restart {STATION_SERVICE}: {e}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -1492,12 +1727,12 @@ def _library_copy_sidecars(src: Path, dest: Path, target_show_id: str, fresh_pla
 
 @app.get("/api/library/segments")
 def get_segments():
-    return segment_inventory()
+    return _cached_inventory("segments")
 
 
 @app.get("/api/library/bumpers")
 def get_bumpers():
-    return bumper_inventory()
+    return _cached_inventory("bumpers")
 
 
 @app.delete("/api/library/segments/{show_id}/{filename}")
@@ -1506,6 +1741,7 @@ def delete_segment(show_id: str, filename: str):
     if not path.exists():
         raise HTTPException(404, "File not found")
     path.unlink()
+    _invalidate_inventory_cache("segments")
     return {"ok": True}
 
 
@@ -1515,6 +1751,7 @@ def delete_bumper(show_id: str, filename: str):
     if not path.exists():
         raise HTTPException(404, "File not found")
     path.unlink()
+    _invalidate_inventory_cache("bumpers")
     return {"ok": True}
 
 
@@ -1573,6 +1810,7 @@ def _copy_or_move_library_item(kind: str, show_id: str, filename: str, target_sh
             sidecar.write_text(json.dumps(meta, indent=2))
         except Exception:
             pass
+    _invalidate_inventory_cache(base.name == "talk_segments" and "segments" or "bumpers")
 
     return {"ok": True, "target_show_id": target_show_id, "filename": dest.name}
 
@@ -1604,6 +1842,7 @@ def reset_library_plays(kind: str, show_id: str, filename: str):
     if "created_at" not in meta:
         meta["created_at"] = _station_iso_now()
     sidecar.write_text(json.dumps(meta, indent=2))
+    _invalidate_inventory_cache("segments" if kind == "segments" else "bumpers")
     return {"ok": True}
 
 
@@ -1803,6 +2042,10 @@ def _run_generation_job(job_id: str, req: GenerateRequest):
 
         proc.wait()
         if proc.returncode == 0:
+            if req.content_type == "music":
+                _invalidate_inventory_cache("bumpers")
+            else:
+                _invalidate_inventory_cache("segments")
             _jobs[job_id]["status"] = "completed"
             _log_job(job_id, f"Generation complete.")
         else:

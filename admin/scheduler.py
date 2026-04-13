@@ -153,6 +153,7 @@ class SchedulerState:
 
 # Singleton
 state = SchedulerState()
+_inventory_invalidator: Callable[[str | None], None] | None = None
 
 
 def _count_inventory(directory: Path, show_id: str) -> int:
@@ -215,7 +216,7 @@ def _build_generation_env() -> dict:
     }
 
 
-def _run_talk_generation(show_id: str, count: int, job_registry: dict, env: dict):
+def _run_talk_generation(show_id: str, count: int, job_registry: dict, env: dict, cache_invalidator: Callable[[str | None], None] | None = None):
     """Generate talk segments for a show in a background thread."""
     gen_script = PROJECT_ROOT / "mac" / "content_generator" / "talk_generator.py"
     cmd = [str(VENV_PYTHON), str(gen_script), "--show", show_id, "--count", str(count)]
@@ -260,9 +261,11 @@ def _run_talk_generation(show_id: str, count: int, job_registry: dict, env: dict
     state.record_run(show_id, "talk")
     if job_id in job_registry:
         job_registry[job_id]["status"] = final_status
+    if final_status == "completed" and cache_invalidator:
+        cache_invalidator("segments")
 
 
-def _run_music_generation(show_id: str, count: int, bumper_style: str, job_registry: dict, env: dict):
+def _run_music_generation(show_id: str, count: int, bumper_style: str, job_registry: dict, env: dict, cache_invalidator: Callable[[str | None], None] | None = None):
     """Generate music bumpers for a show in a background thread."""
     gen_script = PROJECT_ROOT / "mac" / "content_generator" / "music_bumper_generator.py"
     if not gen_script.exists():
@@ -306,6 +309,8 @@ def _run_music_generation(show_id: str, count: int, bumper_style: str, job_regis
         state.active_jobs.pop(job_id, None)
 
     state.record_run(show_id, "music")
+    if final_status == "completed" and cache_invalidator:
+        cache_invalidator("bumpers")
 
 
 def _check_and_generate(job_registry: dict):
@@ -350,7 +355,7 @@ def _check_and_generate(job_registry: dict):
                     f"Inventory {inventory} < min {minimum} → generating {needed}")
                 t = threading.Thread(
                     target=_run_talk_generation,
-                    args=(show_id, needed, job_registry, env),
+                    args=(show_id, needed, job_registry, env, _inventory_invalidator),
                     daemon=True,
                 )
                 t.start()
@@ -376,7 +381,7 @@ def _check_and_generate(job_registry: dict):
                     f"Bumper inventory {inventory} < min {minimum} → generating {needed}")
                 t = threading.Thread(
                     target=_run_music_generation,
-                    args=(show_id, needed, bumper_style, job_registry, env),
+                    args=(show_id, needed, bumper_style, job_registry, env, _inventory_invalidator),
                     daemon=True,
                 )
                 t.start()
@@ -402,8 +407,14 @@ def run_scheduler(job_registry: dict, check_interval: int = 300):
         time.sleep(check_interval)
 
 
-def start_scheduler(job_registry: dict, check_interval: int = 300) -> threading.Thread:
+def start_scheduler(
+    job_registry: dict,
+    check_interval: int = 300,
+    cache_invalidator: Callable[[str | None], None] | None = None,
+) -> threading.Thread:
     """Start the scheduler in a daemon thread. Returns the thread."""
+    global _inventory_invalidator
+    _inventory_invalidator = cache_invalidator
     t = threading.Thread(
         target=run_scheduler,
         args=(job_registry, check_interval),
@@ -430,27 +441,25 @@ def trigger_now(show_id: str, content_type: str, job_registry: dict) -> str:
     env = _build_generation_env()
 
     def _trigger_talk(needed_override: int | None = None) -> str:
-        cfg = talk_cfg
         inventory = _count_inventory(TALK_DIR, show_id)
-        needed = max(1, needed_override if needed_override is not None else cfg["target_inventory"] - inventory)
+        needed = max(1, needed_override if needed_override is not None else talk_cfg["target_inventory"] - inventory)
         state.add_log(show_id, "talk", "Manual trigger requested")
         t = threading.Thread(
             target=_run_talk_generation,
-            args=(show_id, needed, job_registry, env),
+            args=(show_id, needed, job_registry, env, _inventory_invalidator),
             daemon=True,
         )
         t.start()
         return f"talk ({needed} segments)"
 
     def _trigger_music(needed_override: int | None = None) -> str:
-        cfg = music_cfg
         inventory = _count_inventory(BUMPERS_DIR, show_id)
-        needed = max(1, needed_override if needed_override is not None else cfg["target_inventory"] - inventory)
+        needed = max(1, needed_override if needed_override is not None else music_cfg["target_inventory"] - inventory)
         bumper_style = show.get("bumper_style", "ambient")
         state.add_log(show_id, "music", "Manual trigger requested")
         t = threading.Thread(
             target=_run_music_generation,
-            args=(show_id, needed, bumper_style, job_registry, env),
+            args=(show_id, needed, bumper_style, job_registry, env, _inventory_invalidator),
             daemon=True,
         )
         t.start()
@@ -462,12 +471,8 @@ def trigger_now(show_id: str, content_type: str, job_registry: dict) -> str:
         return f"Triggered {_trigger_music(1)} for {show_id}"
     elif content_type in {"show", "all"}:
         parts = []
-        if talk_cfg.get("enabled"):
-            parts.append(_trigger_talk(1))
-        if music_cfg.get("enabled"):
-            parts.append(_trigger_music(1))
-        if not parts and show.get("show_type") in {"content_ingest", "news_current_events", "hybrid", "live_community", "listener_driven"} and show.get("source_rules"):
-            parts.append(_trigger_talk(1))
+        parts.append(_trigger_talk())
+        parts.append(_trigger_music())
         if not parts:
             return f"No enabled generators configured for {show_id}"
         return f"Triggered {', '.join(parts)} for {show_id}"

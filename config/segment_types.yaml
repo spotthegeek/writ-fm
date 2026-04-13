@@ -27,7 +27,11 @@ segment_types:
 
       Output ONLY the spoken text.
 
-      '
+
+      Include the name of the show in the outro.
+
+      DO NOT make reference to the time, time-of-day (eg: do not use the words Night,
+      Tonight, Morning, Afternoon etc), date, or day of the week.'
   station_id:
     name: Station ID
     description: Very short station identification between longer segments.
@@ -166,8 +170,8 @@ segment_types:
   reddit_post:
     name: Reddit Post
     description: Radio retelling and discussion of a Reddit thread, including comments.
-    word_count_min: 1400
-    word_count_max: 2200
+    word_count_min: 500
+    word_count_max: 2000
     multi_voice: false
     prompt_template: 'Turn this Reddit thread into a compelling on-air segment.
 
@@ -183,9 +187,7 @@ segment_types:
       Distinguish between the original post, the community reaction, and the host''s
       own interpretation.
 
-      Output ONLY the spoken words.
-
-      '
+      Output ONLY the spoken words.'
   youtube:
     name: YouTube
     description: Radio segment built from a YouTube video's audio, captions, and metadata.
