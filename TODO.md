@@ -78,6 +78,16 @@ The station is live and the core system is working end to end:
 - Reorder queue
 - Inject specific library items into the queue
 
+### Review Follow-ups
+
+- Stop recording failed generation jobs as successful cadence runs so talk/music retries can happen on the next scheduler pass.
+- Either wire the live-control `segment` action into playback or remove the dead `force_segment` flag.
+- Fix listener stats so `/stats` reflects actual audience activity instead of poll frequency.
+
+### Proxy / Delivery
+
+- Keep the public user app pointed at the same origin it was loaded from when running behind Cloudflare Tunnel.
+
 ## Notes
 
 - `SESSION_SUMMARY.md` is now historical migration context only.

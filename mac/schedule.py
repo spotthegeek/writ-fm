@@ -36,6 +36,21 @@ DEFAULT_SEGMENT_TYPES = {
     "station_id", "show_intro", "show_outro",
 }
 
+DEFAULT_PLAYBACK_SEQUENCE = {
+    "intro_enabled": True,
+    "intro_segment_type": "show_intro",
+    "outro_enabled": True,
+    "outro_segment_type": "show_outro",
+    "station_id_enabled": True,
+    "station_id_segment_type": "station_id",
+    "station_id_every_n_speaking_segments": 3,
+    "station_id_before_bumper": True,
+    "bumper_count_between_talk_segments": 1,
+    "bumper_min_seconds": 15,
+    "bumper_max_seconds": 30,
+    "bumper_fade_seconds": 4,
+}
+
 
 def _valid_segment_types() -> set[str]:
     segment_types = set(DEFAULT_SEGMENT_TYPES)
@@ -78,6 +93,75 @@ def _default_segment_types_for_show_type(show_type: str) -> list[str]:
     if isinstance(defaults, list) and defaults:
         return [str(s).strip() for s in defaults if str(s).strip()]
     return ["deep_dive"]
+
+
+def _default_playback_sequence_for_show_type(show_type: str) -> dict[str, Any]:
+    cfg = _show_type_config(show_type)
+    defaults = cfg.get("playback_sequence_defaults")
+    if isinstance(defaults, dict) and defaults:
+        return _normalize_playback_sequence(defaults)
+    return dict(DEFAULT_PLAYBACK_SEQUENCE)
+
+
+def _normalize_playback_sequence(sequence: Any, base: dict[str, Any] | None = None) -> dict[str, Any]:
+    raw = sequence if isinstance(sequence, dict) else {}
+    merged = dict(base or DEFAULT_PLAYBACK_SEQUENCE)
+    fallback = dict(DEFAULT_PLAYBACK_SEQUENCE)
+
+    def _bool(name: str) -> bool:
+        return bool(raw.get(name, merged.get(name, fallback[name])))
+
+    def _int(name: str, *, minimum: int | None = None) -> int:
+        value = raw.get(name, merged.get(name, fallback[name]))
+        try:
+            out = int(value)
+        except Exception:
+            out = int(merged.get(name, fallback[name]))
+        if minimum is not None:
+            out = max(minimum, out)
+        return out
+
+    merged["intro_enabled"] = _bool("intro_enabled")
+    merged["intro_segment_type"] = str(raw.get("intro_segment_type", merged.get("intro_segment_type", fallback["intro_segment_type"]))).strip() or merged.get("intro_segment_type", fallback["intro_segment_type"])
+    merged["outro_enabled"] = _bool("outro_enabled")
+    merged["outro_segment_type"] = str(raw.get("outro_segment_type", merged.get("outro_segment_type", fallback["outro_segment_type"]))).strip() or merged.get("outro_segment_type", fallback["outro_segment_type"])
+    merged["station_id_enabled"] = _bool("station_id_enabled")
+    merged["station_id_segment_type"] = str(raw.get("station_id_segment_type", merged.get("station_id_segment_type", fallback["station_id_segment_type"]))).strip() or merged.get("station_id_segment_type", fallback["station_id_segment_type"])
+    merged["station_id_every_n_speaking_segments"] = _int("station_id_every_n_speaking_segments", minimum=1)
+    merged["station_id_before_bumper"] = _bool("station_id_before_bumper")
+    merged["bumper_count_between_talk_segments"] = _int("bumper_count_between_talk_segments", minimum=1)
+    merged["bumper_min_seconds"] = _int("bumper_min_seconds", minimum=1)
+    merged["bumper_max_seconds"] = max(
+        merged["bumper_min_seconds"],
+        _int("bumper_max_seconds", minimum=1),
+    )
+    merged["bumper_fade_seconds"] = _int("bumper_fade_seconds", minimum=0)
+    return merged
+
+
+def _merge_playback_sequence(show_type: str, sequence: Any) -> dict[str, Any]:
+    defaults = _default_playback_sequence_for_show_type(show_type)
+    return _normalize_playback_sequence(sequence, base=defaults)
+
+
+def default_playback_sequence_for_show_type(show_type: str) -> dict[str, Any]:
+    return _default_playback_sequence_for_show_type(show_type)
+
+
+def normalize_playback_sequence(sequence: Any, show_type: str | None = None) -> dict[str, Any]:
+    if show_type:
+        return _normalize_playback_sequence(sequence, base=_default_playback_sequence_for_show_type(show_type))
+    return _normalize_playback_sequence(sequence)
+
+
+def merge_playback_sequence(show_type: str, sequence: Any) -> dict[str, Any]:
+    return _merge_playback_sequence(show_type, sequence)
+
+
+def playback_sequence_overrides(show_type: str, sequence: Any) -> dict[str, Any]:
+    defaults = _default_playback_sequence_for_show_type(show_type)
+    merged = _merge_playback_sequence(show_type, sequence)
+    return {key: value for key, value in merged.items() if defaults.get(key) != value}
 
 
 class ScheduleError(RuntimeError):
@@ -176,6 +260,7 @@ class Show:
     bumper_style: str = "ambient"
     voices: dict[str, str] = field(default_factory=dict)
     source_rules: list[dict[str, Any]] = field(default_factory=list)
+    playback_sequence: dict[str, Any] = field(default_factory=dict)
     content_lifecycle: dict[str, Any] = field(default_factory=dict)
     # Legacy fields (optional, unused in talk-first mode)
     segment_after_tracks: int = 1
@@ -229,6 +314,7 @@ class ResolvedShow:
     bumper_style: str
     voices: dict[str, str]
     source_rules: list[dict[str, Any]]
+    playback_sequence: dict[str, Any]
     content_lifecycle: dict[str, Any]
     # Legacy (kept for backward compat)
     segment_after_tracks: int = 1
@@ -316,6 +402,7 @@ class StationSchedule:
                     bumper_style=show.bumper_style,
                     voices=dict(show.voices),
                     source_rules=list(show.source_rules),
+                    playback_sequence=_merge_playback_sequence(show.show_type, show.playback_sequence),
                     content_lifecycle=dict(show.content_lifecycle),
                 )
 
@@ -336,6 +423,7 @@ class StationSchedule:
                     bumper_style=show.bumper_style,
                     voices=dict(show.voices),
                     source_rules=list(show.source_rules),
+                    playback_sequence=_merge_playback_sequence(show.show_type, show.playback_sequence),
                     content_lifecycle=dict(show.content_lifecycle),
                 )
 
@@ -389,6 +477,7 @@ def load_schedule(path: Path) -> StationSchedule:
         # Voice config
         voices = cfg.get("voices") if isinstance(cfg.get("voices"), dict) else {}
         source_rules = cfg.get("source_rules") if isinstance(cfg.get("source_rules"), list) else cfg.get("research_sources") if isinstance(cfg.get("research_sources"), list) else []
+        playback_sequence = cfg.get("playback_sequence") if isinstance(cfg.get("playback_sequence"), dict) else cfg.get("sequence") if isinstance(cfg.get("sequence"), dict) else {}
         content_lifecycle = cfg.get("content_lifecycle") if isinstance(cfg.get("content_lifecycle"), dict) else {}
 
         if not hosts:
@@ -398,6 +487,7 @@ def load_schedule(path: Path) -> StationSchedule:
                 "tts_backend": tts_backend,
                 "voice_kokoro": voices.get("host", "am_michael"),
                 "voice_minimax": "Deep_Voice_Man",
+                "voice_google": "Kore",
             }
             hosts = [primary]
             if "guest" in voices:
@@ -407,6 +497,7 @@ def load_schedule(path: Path) -> StationSchedule:
                     "tts_backend": "kokoro",
                     "voice_kokoro": voices.get("guest", "af_bella"),
                     "voice_minimax": "Wise_Woman",
+                    "voice_google": "Puck",
                 })
 
         # Legacy fields (optional)
@@ -428,6 +519,7 @@ def load_schedule(path: Path) -> StationSchedule:
             bumper_style=bumper_style,
             voices={str(k): str(v) for k, v in voices.items()},
             source_rules=[dict(item) for item in source_rules if isinstance(item, dict)],
+            playback_sequence=dict(playback_sequence) if playback_sequence else {},
             content_lifecycle=dict(content_lifecycle) if content_lifecycle else {},
             segment_after_tracks=segment_after_tracks,
             podcasts_enabled=podcasts_enabled,

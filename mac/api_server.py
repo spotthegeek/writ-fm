@@ -55,6 +55,7 @@ _live_queue_state: dict = {
     "host": None,
     "current_item": None,
     "upcoming": [],
+    "display_queue": [],
     "queue_length": 0,
     "updated_at": None,
 }
@@ -359,6 +360,7 @@ def get_live_queue() -> dict:
     with _live_queue_lock:
         state = dict(_live_queue_state)
         state["upcoming"] = list(_live_queue_state.get("upcoming", []))
+        state["display_queue"] = list(_live_queue_state.get("display_queue", []))
         return state
 
 

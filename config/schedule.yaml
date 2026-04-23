@@ -1,61 +1,6 @@
 station_name: Crouch-FM
 timezone: Australia/Adelaide
 shows:
-  midnight_signal:
-    name: Midnight Signal
-    description: Philosophy, memory, and the transmissions that only come through
-      after midnight.
-    show_type: research
-    host: liminal_operator
-    topic_focus: philosophy
-    segment_types:
-    - deep_dive
-    - story
-    - interview
-    - listener_mailbag
-    bumper_style: ambient
-    voices:
-      host: am_michael
-  the_night_garden:
-    name: The Night Garden
-    description: Dreams, darkness, and the things that bloom when no one is watching.
-    show_type: research
-    host: nyx
-    topic_focus: night_philosophy
-    segment_types:
-    - deep_dive
-    - story
-    - interview
-    bumper_style: ambient
-    voices:
-      host: af_heart
-  dawn_chorus:
-    name: Dawn Chorus
-    description: Morning reflections. The world rewrites itself at sunrise.
-    show_type: research
-    host: liminal_operator
-    topic_focus: philosophy
-    segment_types:
-    - deep_dive
-    - music_essay
-    - story
-    bumper_style: jazz
-    voices:
-      host: am_michael
-  sonic_archaeology:
-    name: Sonic Archaeology
-    description: Deep cuts, lost sessions, genre genealogy, and the music they forgot
-      to remember.
-    show_type: research
-    host: dr_resonance
-    topic_focus: music_history
-    segment_types:
-    - deep_dive
-    - music_essay
-    - interview
-    bumper_style: jazz
-    voices:
-      host: bm_daniel
   signal_report:
     name: Signal Report
     description: Current events decoded. The news behind the news, through a late-night
@@ -70,19 +15,6 @@ shows:
     bumper_style: downtempo
     voices:
       host: am_onyx
-  the_groove_lab:
-    name: The Groove Lab
-    description: Soul, funk, and the feeling of feeling something. Music as food.
-    show_type: music_first
-    host: ember
-    topic_focus: soul_music
-    segment_types:
-    - deep_dive
-    - music_essay
-    - story
-    bumper_style: soul
-    voices:
-      host: af_bella
   crosswire:
     name: Crosswire
     description: Two voices, one topic. Where ideas collide and sparks fly.
@@ -144,13 +76,13 @@ shows:
     - reddit_storytelling
     bumper_style: ambient
     hosts:
-    - id: liminal_operator
+    - id: the_archivist
       role: primary
-      tts_backend: kokoro
+      tts_backend: minimax
       voice_kokoro: am_michael
-      voice_minimax: Deep_Voice_Man
-    host: liminal_operator
-    tts_backend: kokoro
+      voice_minimax: Patient_Man
+    host: the_archivist
+    tts_backend: minimax
     voices:
       host: am_michael
     topic_focus: ''
@@ -171,6 +103,7 @@ shows:
         min_inventory: 4
         target_inventory: 8
         cadence: weekly
+    playback_sequence: {}
   alien_theory:
     name: /r/alien_theory
     description: Reddit discussions and theories about extraterrestrials or ancient
@@ -202,21 +135,15 @@ shows:
     - reddit_post
     bumper_style: ambient
     hosts:
-    - id: nyx
+    - id: nova
       role: primary
       tts_backend: kokoro
-      voice_kokoro: af_heart
-      voice_minimax: Calm_Woman
-    - id: signal
-      role: co-host
-      tts_backend: kokoro
-      voice_kokoro: am_onyx
-      voice_minimax: Deep_Voice_Man
-    host: nyx
+      voice_kokoro: am_puck
+      voice_minimax: Elegant_Man
+    host: nova
     tts_backend: kokoro
     voices:
-      host: af_heart
-      guest: am_onyx
+      host: am_puck
     topic_focus: ''
     research_sources: *id002
     content_lifecycle:
@@ -235,8 +162,9 @@ shows:
         min_inventory: 4
         target_inventory: 8
         cadence: weekly
+    playback_sequence: {}
   sysadmin:
-    name: /r/sysadmin/
+    name: /r/sysadmin
     description: Analysis and discussion of the top posts on /r/sysadmin and adjacent
       infrastructure communities
     show_type: content_ingest
@@ -249,9 +177,7 @@ shows:
       selection_strategy: top
       segment_type: reddit_post
     source_rules: *id003
-    guests:
-    - name: The 30 year greybeard sysadmin veteran
-      expertise: systems administration and engineering
+    guests: []
     segment_types:
     - show_intro
     - show_outro
@@ -259,11 +185,16 @@ shows:
     - reddit_post
     bumper_style: rock
     hosts:
-    - id: ember
+    - id: root
       role: primary
       tts_backend: kokoro
-      voice_kokoro: af_bella
-      voice_minimax: Friendly_Person
+      voice_kokoro: am_liam
+      voice_minimax: Deep_Voice_Man
+    - id: sudo
+      role: co-host
+      tts_backend: kokoro
+      voice_kokoro: af_nova
+      voice_minimax: Lively_Girl
     content_lifecycle:
       talk:
         max_days: 3
@@ -280,10 +211,12 @@ shows:
         min_inventory: 4
         target_inventory: 8
         cadence: weekly
-    host: ember
+    host: root
     tts_backend: kokoro
     voices:
-      host: af_bella
+      host: am_liam
+      guest: af_nova
+    playback_sequence: {}
   youtube-ai:
     name: YouTube AI
     description: Audio from top subscribed AI related videos from YouTube.
@@ -319,11 +252,11 @@ shows:
     - youtube
     bumper_style: rock
     hosts:
-    - id: liminal_operator
+    - id: vector
       role: primary
       tts_backend: kokoro
-      voice_kokoro: am_michael
-      voice_minimax: Deep_Voice_Man
+      voice_kokoro: am_liam
+      voice_minimax: Friendly_Person
     content_lifecycle:
       talk:
         max_days: 3
@@ -340,22 +273,35 @@ shows:
         min_inventory: 4
         target_inventory: 8
         cadence: weekly
-    host: liminal_operator
+    host: vector
     tts_backend: kokoro
     voices:
-      host: am_michael
+      host: am_liam
+    playback_sequence: {}
 schedule:
   base:
   - start: 00:00
-    end: 06:00
+    end: 03:00
     show: alien_theory
-  - start: 06:00
-    end: '12:00'
+  - start: 03:00
+    end: 06:00
     show: nosleep
-  - start: '12:00'
-    end: '18:00'
+  - start: 06:00
+    end: 09:00
     show: sysadmin
+  - start: 09:00
+    end: '12:00'
+    show: youtube-ai
+  - start: '12:00'
+    end: '15:00'
+    show: alien_theory
+  - start: '15:00'
+    end: '18:00'
+    show: nosleep
   - start: '18:00'
+    end: '21:00'
+    show: sysadmin
+  - start: '21:00'
     end: 00:00
     show: youtube-ai
   overrides: []

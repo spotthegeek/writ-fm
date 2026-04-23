@@ -73,6 +73,8 @@ skip_current = False
 skip_was_requested = False
 force_segment = False
 last_bumper_path: Path | None = None
+_duration_cache_lock = threading.Lock()
+_duration_cache: dict[str, float | None] = {}
 _live_queue_lock = threading.Lock()
 _live_queue_state: dict = {
     "show_id": None,
@@ -80,6 +82,7 @@ _live_queue_state: dict = {
     "host": None,
     "current_item": None,
     "upcoming": [],
+    "display_queue": [],
     "queue_length": 0,
     "updated_at": None,
 }
@@ -235,6 +238,7 @@ class ProgramContext:
     segment_types: list[str]
     bumper_style: str
     voices: dict[str, str] = field(default_factory=dict)
+    playback_sequence: dict[str, object] = field(default_factory=dict)
     talk_lifecycle: ContentLifecycle = field(default_factory=ContentLifecycle)
     music_lifecycle: ContentLifecycle = field(default_factory=ContentLifecycle)
 
@@ -254,6 +258,7 @@ def get_program_context(station_schedule=None) -> ProgramContext:
         segment_types=resolved.segment_types,
         bumper_style=resolved.bumper_style,
         voices=dict(resolved.voices),
+        playback_sequence=dict(resolved.playback_sequence),
         talk_lifecycle=_load_lifecycle(resolved.show_id, "talk"),
         music_lifecycle=_load_lifecycle(resolved.show_id, "music"),
     )
@@ -385,15 +390,41 @@ def _queue_item_duration(filepath: Path) -> float:
     return float(duration) if duration else 0.0
 
 
-def _queue_item_snapshot(filepath: Path, index: int, total: int, started_at: datetime | None = None) -> dict:
-    duration = _queue_item_duration(filepath)
+def _queue_item_snapshot(
+    filepath: Path | None,
+    index: int,
+    total: int,
+    started_at: datetime | None = None,
+    *,
+    kind: str = "speech",
+    actionable: bool = True,
+    label_override: str | None = None,
+    name_override: str | None = None,
+    segment_type_override: str | None = None,
+    filename_override: str | None = None,
+    path_override: str | None = None,
+    duration_seconds_override: float | None = None,
+) -> dict:
+    duration = duration_seconds_override
+    if duration is None and filepath is not None:
+        duration = _queue_item_duration(filepath)
     snapshot = {
         "index": index,
         "total": total,
-        "filename": filepath.name,
-        "path": str(filepath),
-        "name": clean_name(filepath, is_speech=True),
-        "segment_type": _extract_segment_type(filepath),
+        "kind": kind,
+        "actionable": actionable,
+        "label": label_override if label_override is not None else (
+            "Speaking segment" if kind == "speech" else
+            "Intro" if kind == "intro" else
+            "Outro" if kind == "outro" else
+            "Station ID" if kind == "station_id" else
+            "Music bumper slot" if kind == "bumper_slot" else
+            kind.replace("_", " ").title()
+        ),
+        "filename": filename_override if filename_override is not None else (filepath.name if filepath is not None else None),
+        "path": path_override if path_override is not None else (str(filepath) if filepath is not None else None),
+        "name": name_override if name_override is not None else (clean_name(filepath, is_speech=True) if filepath is not None else "Planned item"),
+        "segment_type": segment_type_override if segment_type_override is not None else (_extract_segment_type(filepath) if filepath is not None else kind),
         "duration_seconds": round(duration, 2) if duration else None,
     }
     if started_at is not None:
@@ -401,6 +432,137 @@ def _queue_item_snapshot(filepath: Path, index: int, total: int, started_at: dat
         if duration:
             snapshot["estimated_end_at"] = (started_at + timedelta(seconds=duration)).isoformat()
     return snapshot
+
+
+def _placeholder_queue_item(
+    label: str,
+    index: int,
+    total: int,
+    *,
+    segment_type: str,
+    kind: str,
+    duration_seconds: float | None = None,
+) -> dict:
+    return _queue_item_snapshot(
+        None,
+        index,
+        total,
+        kind=kind,
+        actionable=False,
+        label_override=label,
+        name_override=label,
+        segment_type_override=segment_type,
+        duration_seconds_override=duration_seconds,
+    )
+
+
+def _build_display_queue(
+    intro_seg: Path | None,
+    main_segments: list[Path],
+    outro_seg: Path | None,
+    station_pool: list[Path],
+    sequence: dict[str, object],
+) -> list[dict]:
+    display: list[dict] = []
+    bumper_count = max(1, int(sequence.get("bumper_count_between_talk_segments", 1)))
+    station_every = max(1, int(sequence.get("station_id_every_n_speaking_segments", 3)))
+    station_before = bool(sequence.get("station_id_before_bumper", True))
+    bumper_min_seconds = float(sequence.get("bumper_min_seconds", 15))
+    bumper_max_seconds = float(sequence.get("bumper_max_seconds", bumper_min_seconds))
+
+    station_idx = 0
+    idx = 0
+
+    if sequence.get("intro_enabled"):
+        if intro_seg:
+            display.append(_queue_item_snapshot(intro_seg, idx, 0, kind="intro", actionable=False, label_override="Show Intro"))
+        else:
+            display.append(
+                _placeholder_queue_item(
+                    "Show Intro (missing)",
+                    idx,
+                    0,
+                    segment_type=str(sequence.get("intro_segment_type", "show_intro")),
+                    kind="intro",
+                )
+            )
+        idx += 1
+
+    for speak_idx, seg in enumerate(main_segments, start=1):
+        display.append(_queue_item_snapshot(seg, idx, 0, kind="speech", actionable=True, label_override="Speaking segment"))
+        idx += 1
+        should_continue = speak_idx < len(main_segments)
+        if not should_continue:
+            continue
+
+        station_due = bool(station_pool) and (speak_idx % station_every == 0)
+        if station_due and station_before:
+            station_seg = station_pool[station_idx % len(station_pool)] if station_pool else None
+            if station_seg:
+                display.append(_queue_item_snapshot(station_seg, idx, 0, kind="station_id", actionable=False, label_override="Station ID"))
+            else:
+                display.append(
+                    _placeholder_queue_item(
+                        "Station ID (missing)",
+                        idx,
+                        0,
+                        segment_type=str(sequence.get("station_id_segment_type", "station_id")),
+                        kind="station_id",
+                    )
+                )
+            idx += 1
+            station_idx += 1
+
+        for bumper_slot in range(bumper_count):
+            label = "Music bumper" if bumper_count == 1 else f"Music bumper {bumper_slot + 1}"
+            display.append(
+                _placeholder_queue_item(
+                    label,
+                    idx,
+                    0,
+                    segment_type="bumper",
+                    kind="bumper_slot",
+                    duration_seconds=bumper_max_seconds if bumper_max_seconds else bumper_min_seconds,
+                )
+            )
+            idx += 1
+
+        if station_due and not station_before:
+            station_seg = station_pool[station_idx % len(station_pool)] if station_pool else None
+            if station_seg:
+                display.append(_queue_item_snapshot(station_seg, idx, 0, kind="station_id", actionable=False, label_override="Station ID"))
+            else:
+                display.append(
+                    _placeholder_queue_item(
+                        "Station ID (missing)",
+                        idx,
+                        0,
+                        segment_type=str(sequence.get("station_id_segment_type", "station_id")),
+                        kind="station_id",
+                    )
+                )
+            idx += 1
+            station_idx += 1
+
+    if sequence.get("outro_enabled"):
+        if outro_seg:
+            display.append(_queue_item_snapshot(outro_seg, idx, 0, kind="outro", actionable=False, label_override="Show Outro"))
+        else:
+            display.append(
+                _placeholder_queue_item(
+                    "Show Outro (missing)",
+                    idx,
+                    0,
+                    segment_type=str(sequence.get("outro_segment_type", "show_outro")),
+                    kind="outro",
+                )
+            )
+
+    total = len(display)
+    for item_index, item in enumerate(display):
+        item["index"] = item_index
+        item["total"] = total
+    return display
 
 
 def _resolve_queue_index(talk_queue: list[Path], ref: str, start_index: int = 0) -> int | None:
@@ -484,6 +646,7 @@ def _publish_live_queue_state(
     talk_queue: list[Path],
     current_index: int | None = None,
     current_started_at: datetime | None = None,
+    display_queue: list[dict] | None = None,
 ) -> None:
     upcoming = []
     current_item = None
@@ -506,6 +669,7 @@ def _publish_live_queue_state(
         "host": host,
         "current_item": current_item,
         "upcoming": upcoming,
+        "display_queue": list(display_queue or []),
         "queue_length": total,
         "updated_at": station_iso_now(),
     }
@@ -518,6 +682,7 @@ def get_live_queue_state() -> dict:
     with _live_queue_lock:
         state = dict(_live_queue_state)
         state["upcoming"] = list(_live_queue_state.get("upcoming", []))
+        state["display_queue"] = list(_live_queue_state.get("display_queue", []))
         if _live_queue_state.get("current_item"):
             state["current_item"] = dict(_live_queue_state["current_item"])
         return state
@@ -572,6 +737,10 @@ def clean_name(filepath: Path, is_speech: bool = False) -> str:
 
 def get_track_duration(filepath: Path) -> float | None:
     """Get track duration in seconds using ffprobe."""
+    cache_key = str(filepath)
+    with _duration_cache_lock:
+        if cache_key in _duration_cache:
+            return _duration_cache[cache_key]
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -579,9 +748,14 @@ def get_track_duration(filepath: Path) -> float | None:
             capture_output=True, text=True, timeout=10
         )
         if result.returncode == 0 and result.stdout.strip():
-            return float(result.stdout.strip())
+            duration = float(result.stdout.strip())
+            with _duration_cache_lock:
+                _duration_cache[cache_key] = duration
+            return duration
     except Exception:
         pass
+    with _duration_cache_lock:
+        _duration_cache[cache_key] = None
     return None
 
 
@@ -623,6 +797,23 @@ def get_talk_segments(show_id: str, lifecycle: ContentLifecycle | None = None) -
     return listener_responses + other_segments
 
 
+def _segment_type_pool(segments: list[Path]) -> dict[str, list[Path]]:
+    pools: dict[str, list[Path]] = {}
+    for seg in segments:
+        pools.setdefault(_extract_segment_type(seg), []).append(seg)
+    return pools
+
+
+def _pick_segment_from_pool(pool: list[Path], *, prefer_latest: bool = True) -> Path | None:
+    if not pool:
+        return None
+    if len(pool) == 1:
+        return pool[0]
+    if prefer_latest:
+        return max(pool, key=lambda p: p.stat().st_mtime)
+    return random.choice(pool)
+
+
 def get_listener_responses(show_id: str) -> list[Path]:
     """Check for new listener response segments (for mid-queue injection)."""
     show_dir = TALK_SEGMENTS_DIR / show_id
@@ -634,8 +825,13 @@ def get_listener_responses(show_id: str) -> list[Path]:
     )
 
 
-def select_ai_bumper(show_id: str, exclude: set[Path] | None = None,
-                     lifecycle: ContentLifecycle | None = None) -> tuple[Path, float, float, str | None, str | None] | None:
+def select_ai_bumper(
+    show_id: str,
+    exclude: set[Path] | None = None,
+    lifecycle: ContentLifecycle | None = None,
+    *,
+    max_seconds: float | None = None,
+) -> tuple[Path, float, float, str | None, str | None] | None:
     """Pick a pre-generated AI music bumper for the current show.
 
     Returns (path, start_time, duration, caption, display_name) or None if unavailable.
@@ -684,6 +880,11 @@ def select_ai_bumper(show_id: str, exclude: set[Path] | None = None,
 
     track = random.choice(candidates)
     duration = get_track_duration(track)
+    if max_seconds is not None:
+        if duration is None:
+            duration = max_seconds
+        else:
+            duration = min(duration, max_seconds)
 
     caption = None
     display_name = None
@@ -699,11 +900,69 @@ def select_ai_bumper(show_id: str, exclude: set[Path] | None = None,
     return (track, 0.0, duration or 90.0, caption, display_name)
 
 
+def _sequence_defaults() -> dict[str, object]:
+    return {
+        "intro_enabled": True,
+        "intro_segment_type": "show_intro",
+        "outro_enabled": True,
+        "outro_segment_type": "show_outro",
+        "station_id_enabled": True,
+        "station_id_segment_type": "station_id",
+        "station_id_every_n_speaking_segments": 3,
+        "station_id_before_bumper": True,
+        "bumper_count_between_talk_segments": 1,
+        "bumper_min_seconds": 15,
+        "bumper_max_seconds": 30,
+        "bumper_fade_seconds": 4,
+    }
+
+
+def _normalized_sequence(sequence: dict | None) -> dict[str, object]:
+    defaults = _sequence_defaults()
+    raw = sequence if isinstance(sequence, dict) else {}
+    out = dict(defaults)
+    for key, value in raw.items():
+        if key in {"intro_enabled", "outro_enabled", "station_id_enabled", "station_id_before_bumper"}:
+            out[key] = bool(value)
+        elif key in {
+            "intro_segment_type",
+            "outro_segment_type",
+            "station_id_segment_type",
+        }:
+            value = str(value).strip()
+            if value:
+                out[key] = value
+        elif key in {
+            "station_id_every_n_speaking_segments",
+            "bumper_count_between_talk_segments",
+            "bumper_min_seconds",
+            "bumper_max_seconds",
+            "bumper_fade_seconds",
+        }:
+            try:
+                out[key] = max(0 if "fade" in key else 1, int(value))
+            except Exception:
+                pass
+    if int(out["bumper_max_seconds"]) < int(out["bumper_min_seconds"]):
+        out["bumper_max_seconds"] = out["bumper_min_seconds"]
+    if int(out["bumper_count_between_talk_segments"]) < 1:
+        out["bumper_count_between_talk_segments"] = 1
+    if int(out["station_id_every_n_speaking_segments"]) < 1:
+        out["station_id_every_n_speaking_segments"] = 1
+    return out
+
+
 # =============================================================================
 # AUDIO PIPELINE (unchanged from original)
 # =============================================================================
 
-def decode_to_pcm(filepath: Path, start_time: float = 0, duration: float = None, is_speech: bool = False) -> subprocess.Popen:
+def decode_to_pcm(
+    filepath: Path,
+    start_time: float = 0,
+    duration: float = None,
+    is_speech: bool = False,
+    fade_seconds: float = 0.0,
+) -> subprocess.Popen:
     """Decode audio file to raw PCM, output to stdout."""
     cmd = ["ffmpeg", "-v", "warning"]
 
@@ -721,12 +980,19 @@ def decode_to_pcm(filepath: Path, start_time: float = 0, duration: float = None,
     else:
         filters = ["loudnorm=I=-16:TP=-1.5:LRA=11"]
 
-    # Fade in/out for music bumpers only
-    if not is_speech:
-        filters.append("afade=t=in:st=0:d=8")
-        if duration is not None and duration > 16:
-            fade_out_start = max(0, duration - 8)
-            filters.append(f"afade=t=out:st={fade_out_start}:d=8")
+    if fade_seconds > 0:
+        total_duration = duration
+        if total_duration is None:
+            total_duration = get_track_duration(filepath)
+        try:
+            fade = min(float(fade_seconds), max(0.0, float(total_duration) / 2 if total_duration else float(fade_seconds)))
+        except Exception:
+            fade = float(fade_seconds)
+        if fade > 0:
+            filters.append(f"afade=t=in:st=0:d={fade}")
+            if total_duration is not None and total_duration > fade:
+                fade_out_start = max(0.0, float(total_duration) - fade)
+                filters.append(f"afade=t=out:st={fade_out_start}:d={fade}")
 
     filters.append("aresample=44100")
 
@@ -785,18 +1051,43 @@ def wait_for_encoder_ready(encoder: subprocess.Popen, timeout: float = 2.0) -> b
     return True
 
 
-def pipe_track(filepath: Path, encoder: subprocess.Popen, start_time: float = 0, duration: float = None, is_speech: bool = False) -> bool:
-    """Decode a track and pipe PCM to encoder. Returns False if encoder died."""
+def pipe_track(
+    filepath: Path,
+    encoder: subprocess.Popen,
+    start_time: float = 0,
+    duration: float = None,
+    is_speech: bool = False,
+    fade_seconds: float = 0.0,
+    expected_show_id: str | None = None,
+    station_schedule=None,
+) -> str:
+    """Decode a track and pipe PCM to encoder.
+
+    Returns:
+        ok, skip, cutover, or failed.
+    """
     global running, skip_current, skip_was_requested, force_segment
 
     if not running or encoder.poll() is not None:
-        return False
+        return "failed"
 
     decoder = None
+    next_schedule_check_at = 0.0
+    next_command_check_at = 0.0
     try:
-        decoder = decode_to_pcm(filepath, start_time, duration, is_speech=is_speech)
+        decoder = decode_to_pcm(filepath, start_time, duration, is_speech=is_speech, fade_seconds=fade_seconds)
 
         while running and not skip_current:
+            now = time.monotonic()
+            if expected_show_id and station_schedule is not None and now >= next_schedule_check_at:
+                next_schedule_check_at = now + 1.0
+                try:
+                    new_ctx = get_program_context(station_schedule)
+                    if new_ctx.show_id != expected_show_id:
+                        log(f"Schedule changed to {new_ctx.show_name} - cutting over now...")
+                        return "cutover"
+                except Exception:
+                    pass
             chunk = decoder.stdout.read(8192)
             if not chunk:
                 break
@@ -810,23 +1101,27 @@ def pipe_track(filepath: Path, encoder: subprocess.Popen, start_time: float = 0,
                         log(f"Encoder pipe broke: {stderr[:200]}")
                 except Exception:
                     pass
-                return False
+                return "failed"
 
-            cmd = check_command()
-            if cmd == "skip":
-                log("Skipping...")
-                skip_current = True
-                skip_was_requested = True
-                break
-            elif cmd == "segment":
-                log("Will play segment next...")
-                force_segment = True
+            if now >= next_command_check_at:
+                next_command_check_at = now + 0.2
+                cmd = check_command()
+                if cmd == "skip":
+                    log("Skipping...")
+                    skip_current = True
+                    skip_was_requested = True
+                    break
+                elif cmd == "segment":
+                    log("Will play segment next...")
+                    force_segment = True
 
-        return True
+        if skip_was_requested:
+            return "skip"
+        return "ok"
 
     except Exception as e:
         log(f"Error piping {filepath.name}: {e}")
-        return False
+        return "failed"
     finally:
         if decoder:
             try:
@@ -1035,162 +1330,258 @@ def run():
             log(f"Show: {ctx.show_name} ({ctx.show_id})")
             log(f"  Host: {ctx.host} | Focus: {ctx.topic_focus}")
 
-            # Get talk segments for this show
-            talk_queue = get_talk_segments(ctx.show_id, ctx.talk_lifecycle)
-            # Listener responses are already sorted to front; shuffle only the rest
-            lr_count = sum(1 for s in talk_queue if "listener_response" in s.name)
-            if lr_count < len(talk_queue):
-                priority = talk_queue[:lr_count]
-                rest = talk_queue[lr_count:]
-                random.shuffle(rest)
-                talk_queue = priority + rest
+            # Get talk segments for this show and split out show-level specials.
+            sequence = _normalized_sequence(ctx.playback_sequence)
+            intro_type = str(sequence["intro_segment_type"])
+            outro_type = str(sequence["outro_segment_type"])
+            station_type = str(sequence["station_id_segment_type"])
+            special_types = {t for t in {intro_type, outro_type, station_type} if t}
 
-            if talk_queue:
-                log(f"  Talk queue: {len(talk_queue)} segments")
+            all_talk_segments = get_talk_segments(ctx.show_id, ctx.talk_lifecycle)
+            pools = _segment_type_pool(all_talk_segments)
+            intro_seg = _pick_segment_from_pool(pools.get(intro_type, []), prefer_latest=True) if sequence["intro_enabled"] else None
+            outro_seg = _pick_segment_from_pool(pools.get(outro_type, []), prefer_latest=True) if sequence["outro_enabled"] else None
+            station_pool = list(pools.get(station_type, [])) if sequence["station_id_enabled"] else []
+
+            main_segments = [s for s in all_talk_segments if _extract_segment_type(s) not in special_types]
+            lr_count = sum(1 for s in main_segments if "listener_response" in s.name)
+            if lr_count < len(main_segments):
+                priority = main_segments[:lr_count]
+                rest = main_segments[lr_count:]
+                random.shuffle(rest)
+                main_segments = priority + rest
+            display_queue = _build_display_queue(intro_seg, main_segments, outro_seg, station_pool, sequence)
+
+            if main_segments or intro_seg or outro_seg:
+                log(f"  Talk queue: {len(main_segments)} speaking segments")
+                if intro_seg:
+                    log(f"  Intro available: {clean_name(intro_seg, is_speech=True)}")
+                if outro_seg:
+                    log(f"  Outro available: {clean_name(outro_seg, is_speech=True)}")
+                if station_pool and sequence["station_id_enabled"]:
+                    log(f"  Station IDs queued: {len(station_pool)}")
                 if lr_count:
                     log(f"  Listener responses queued: {lr_count} (priority)")
 
-                talk_index = 0
-                _publish_live_queue_state(ctx.show_id, ctx.show_name, ctx.host, talk_queue, talk_index)
-                while running and encoder_proc.poll() is None and talk_index < len(talk_queue):
-                    for cmd in _drain_live_commands():
-                        talk_index = _apply_live_command_to_queue(cmd, talk_queue, talk_index)
-                    _publish_live_queue_state(ctx.show_id, ctx.show_name, ctx.host, talk_queue, talk_index)
-                    talk_seg = talk_queue[talk_index]
-                    if not running or encoder_proc.poll() is not None:
-                        break
+                bumper_fade = float(sequence["bumper_fade_seconds"])
+                bumper_min_seconds = float(sequence["bumper_min_seconds"])
+                bumper_max_seconds = float(sequence["bumper_max_seconds"])
+                bumper_count = max(1, int(sequence["bumper_count_between_talk_segments"]))
+                station_every = max(1, int(sequence["station_id_every_n_speaking_segments"]))
+                station_before = bool(sequence["station_id_before_bumper"])
 
-                    # Check if show changed
-                    new_ctx = get_program_context(station_schedule)
-                    if new_ctx.show_id != ctx.show_id:
-                        log(f"Show changed to {new_ctx.show_name} - switching...")
-                        break
-
-                    _publish_live_queue_state(ctx.show_id, ctx.show_name, ctx.host, talk_queue, talk_index)
-
-                    # Play talk segment
-                    seg_name = clean_name(talk_seg, is_speech=True)
-                    seg_type = _extract_segment_type(talk_seg)
-                    log(f"  TALK: {seg_name}")
+                def _play_speech_item(track: Path, item_type: str, *, label: str) -> bool:
+                    seg_name = clean_name(track, is_speech=True)
+                    log(f"  {label}: {seg_name}")
                     update_now_playing(
-                        seg_name, "talk",
+                        seg_name,
+                        "talk",
                         show_id=ctx.show_id,
                         show_name=ctx.show_name,
                         host=ctx.host,
-                        segment_type=seg_type,
+                        segment_type=item_type,
                     )
-
-                    if not pipe_track(talk_seg, encoder_proc, is_speech=True):
-                        log("Talk pipe failed, reconnecting...")
-                        break
-
+                    status = pipe_track(
+                        track,
+                        encoder_proc,
+                        is_speech=True,
+                        expected_show_id=ctx.show_id,
+                        station_schedule=station_schedule,
+                    )
+                    if status == "cutover":
+                        return "cutover"
+                    if status == "failed":
+                        log(f"{label} pipe failed, reconnecting...")
+                        return "failed"
                     if skip_was_requested:
-                        log("  Segment skipped by live control")
-                        skip_was_requested = False
-                        talk_index += 1
-                        _publish_live_queue_state(ctx.show_id, ctx.show_name, ctx.host, talk_queue, talk_index)
-                        continue
-
-                    # Update play count and retire if lifecycle limits exceeded
+                        log(f"  {label} skipped by live control")
+                        return "skip"
                     if CONSUME_SEGMENTS:
-                        meta = _record_play_lifecycle(talk_seg)
+                        meta = _record_play_lifecycle(track)
                         plays = meta.get("play_count", 1)
-                        if _should_retire(talk_seg, ctx.talk_lifecycle):
+                        if _should_retire(track, ctx.talk_lifecycle):
                             log(f"    (retired after {plays} play{'s' if plays != 1 else ''})")
-                            _retire(talk_seg)
+                            _retire(track)
                         else:
                             lc = ctx.talk_lifecycle
                             remaining_plays = (lc.max_plays - plays) if lc.max_plays else "∞"
                             log(f"    (play {plays}, {remaining_plays} plays remaining)")
                     else:
-                        _record_play_lifecycle(talk_seg)
-                        log(f"    (kept — consume disabled)")
+                        _record_play_lifecycle(track)
+                        log("    (kept — consume disabled)")
+                    record_play(track, seg_name, "talk", ctx.show_id)
+                    return "ok"
 
-                    record_play(talk_seg, seg_name, "talk", ctx.show_id)
+                def _play_bumper_item(track: Path, duration: float, caption: str | None, display_name: str | None) -> bool:
+                    bname = display_name or "AI Music"
+                    log(f"  MUSIC: {bname} ({int(duration)}s)")
+                    if caption:
+                        log(f"    {caption[:70]}...")
+                    update_now_playing(
+                        bname,
+                        "bumper",
+                        show_id=ctx.show_id,
+                        show_name=ctx.show_name,
+                        caption=caption,
+                    )
+                    status = pipe_track(
+                        track,
+                        encoder_proc,
+                        duration=duration,
+                        fade_seconds=bumper_fade,
+                        expected_show_id=ctx.show_id,
+                        station_schedule=station_schedule,
+                    )
+                    if status == "cutover":
+                        return "cutover"
+                    if status == "failed":
+                        log("Music pipe failed, continuing...")
+                        return "failed"
+                    if skip_was_requested:
+                        log("  Bumper skipped by live control")
+                        return "skip"
+                    record_play(track, bname, "ai_bumper", ctx.show_id)
+                    if CONSUME_SEGMENTS:
+                        bmeta = _record_play_lifecycle(track)
+                        bplays = bmeta.get("play_count", 1)
+                        if _should_retire(track, ctx.music_lifecycle):
+                            log(f"    (bumper retired after {bplays} play{'s' if bplays != 1 else ''})")
+                            _retire(track)
+                        else:
+                            blc = ctx.music_lifecycle
+                            brem = (blc.max_plays - bplays) if blc.max_plays else "∞"
+                            log(f"    (bumper play {bplays}, {brem} remaining)")
+                    else:
+                        _record_play_lifecycle(track)
+                    return "ok"
 
-                    # Play 2-3 songs between talk segments (~30% music)
-                    if running and encoder_proc.poll() is None:
-                        max_tracks = random.randint(3, 4)
+                def _play_special_end(track: Path, item_type: str, label: str) -> bool:
+                    return _play_speech_item(track, item_type, label=label)
+
+                speak_index = 0
+                cutover_to_next_show = False
+                if intro_seg:
+                    intro_status = _play_speech_item(intro_seg, intro_type, label="INTRO")
+                    if intro_status == "cutover":
+                        cutover_to_next_show = True
+                    elif intro_status == "failed":
+                        break
+                    if skip_was_requested:
+                        skip_was_requested = False
+                    intro_seg = None
+
+                if cutover_to_next_show:
+                    log("Cutover complete, refreshing for the next show...")
+                    continue
+
+                _publish_live_queue_state(ctx.show_id, ctx.show_name, ctx.host, main_segments, 0, display_queue=display_queue)
+                while running and encoder_proc.poll() is None and speak_index < len(main_segments):
+                    for cmd in _drain_live_commands():
+                        speak_index = _apply_live_command_to_queue(cmd, main_segments, speak_index)
+                    _publish_live_queue_state(ctx.show_id, ctx.show_name, ctx.host, main_segments, speak_index, display_queue=display_queue)
+                    talk_seg = main_segments[speak_index]
+                    if not running or encoder_proc.poll() is not None:
+                        break
+
+                    new_ctx = get_program_context(station_schedule)
+                    if new_ctx.show_id != ctx.show_id:
+                        log(f"Show changed to {new_ctx.show_name} - switching...")
+                        cutover_to_next_show = True
+                        break
+
+                    talk_status = _play_speech_item(talk_seg, _extract_segment_type(talk_seg), label="TALK")
+                    if talk_status == "cutover":
+                        cutover_to_next_show = True
+                        break
+                    if talk_status == "failed":
+                        break
+                    if skip_was_requested:
+                        skip_was_requested = False
+                        speak_index += 1
+                        _publish_live_queue_state(ctx.show_id, ctx.show_name, ctx.host, main_segments, speak_index, display_queue=display_queue)
+                        continue
+
+                    speak_index += 1
+                    _publish_live_queue_state(ctx.show_id, ctx.show_name, ctx.host, main_segments, speak_index, display_queue=display_queue)
+
+                    if not running or encoder_proc.poll() is not None:
+                        break
+
+                    should_play_bumper = speak_index < len(main_segments)
+                    station_due = sequence["station_id_enabled"] and (speak_index % station_every == 0)
+
+                    if station_due and station_before and should_play_bumper and station_pool:
+                        station_track = _pick_segment_from_pool(station_pool, prefer_latest=False)
+                        if station_track:
+                            station_status = _play_speech_item(station_track, station_type, label="STATION ID")
+                            if station_status == "cutover":
+                                cutover_to_next_show = True
+                                break
+                            if station_status == "failed":
+                                break
+                        if skip_was_requested:
+                            skip_was_requested = False
+
+                    if should_play_bumper:
                         set_count = 0
-
-                        while (running and encoder_proc.poll() is None
-                               and set_count < max_tracks):
-                            ai_bumper = select_ai_bumper(ctx.show_id)
+                        while running and encoder_proc.poll() is None and set_count < bumper_count:
+                            ai_bumper = select_ai_bumper(
+                                ctx.show_id,
+                                max_seconds=bumper_max_seconds,
+                            )
                             if not ai_bumper:
                                 if set_count == 0:
                                     log("  No AI bumpers available, skipping break")
                                 break
 
                             bpath, bstart, bdur, bcaption, bdisplay = ai_bumper
-                            bname = bdisplay or "AI Music"
                             set_count += 1
-                            log(f"  MUSIC {set_count}: {bname} ({int(bdur)}s)")
-                            if bcaption:
-                                log(f"    {bcaption[:70]}...")
-                            update_now_playing(
-                                bname, "bumper",
-                                show_id=ctx.show_id,
-                                show_name=ctx.show_name,
-                                caption=bcaption,
-                            )
-                            if not pipe_track(bpath, encoder_proc, bstart, bdur):
-                                log("Music pipe failed, continuing...")
+                            bumper_status = _play_bumper_item(bpath, bdur, bcaption, bdisplay)
+                            if bumper_status == "cutover":
+                                cutover_to_next_show = True
                                 break
-
+                            if bumper_status == "failed":
+                                break
                             if skip_was_requested:
-                                log("  Bumper skipped by live control")
                                 skip_was_requested = False
                                 break
-
-                            record_play(bpath, bname, "ai_bumper", ctx.show_id)
-                            if CONSUME_SEGMENTS:
-                                bmeta = _record_play_lifecycle(bpath)
-                                bplays = bmeta.get("play_count", 1)
-                                if _should_retire(bpath, ctx.music_lifecycle):
-                                    log(f"    (bumper retired after {bplays} play{'s' if bplays != 1 else ''})")
-                                    _retire(bpath)
-                                else:
-                                    blc = ctx.music_lifecycle
-                                    brem = (blc.max_plays - bplays) if blc.max_plays else "∞"
-                                    log(f"    (bumper play {bplays}, {brem} remaining)")
-                            else:
-                                _record_play_lifecycle(bpath)
                             last_bumper_path = bpath
 
                         if set_count > 0:
-                            log(f"  Music set: {set_count} tracks")
+                            log(f"  Music set: {set_count} track{'s' if set_count != 1 else ''}")
 
-                    # Check for new listener responses that arrived mid-queue
-                    if running and encoder_proc.poll() is None:
-                        fresh = get_listener_responses(ctx.show_id)
-                        # Only play ones not already in our queue
-                        queued_names = {s.name for s in talk_queue}
-                        fresh = [f for f in fresh if f.name not in queued_names]
-                        for resp in fresh:
-                            if not running or encoder_proc.poll() is not None:
-                                break
-                            resp_name = clean_name(resp, is_speech=True)
-                            log(f"  LISTENER RESPONSE (live): {resp_name}")
-                            update_now_playing(
-                                resp_name, "talk",
-                                show_id=ctx.show_id,
-                                show_name=ctx.show_name,
-                                host=ctx.host,
-                                segment_type="listener_response",
-                            )
-                            if pipe_track(resp, encoder_proc, is_speech=True):
-                                try:
-                                    resp.unlink()
-                                    log(f"    (consumed)")
-                                except Exception:
-                                    pass
+                        if station_due and not station_before and station_pool:
+                            station_track = _pick_segment_from_pool(station_pool, prefer_latest=False)
+                            if station_track:
+                                station_status = _play_speech_item(station_track, station_type, label="STATION ID")
+                                if station_status == "cutover":
+                                    cutover_to_next_show = True
+                                    break
+                                if station_status == "failed":
+                                    break
+                            if skip_was_requested:
+                                skip_was_requested = False
 
-                    talk_index += 1
-                    _publish_live_queue_state(ctx.show_id, ctx.show_name, ctx.host, talk_queue, talk_index)
+                if cutover_to_next_show:
+                    log("Cutover complete, refreshing for the next show...")
+                    continue
+
+                if outro_seg and running and encoder_proc.poll() is None:
+                    outro_status = _play_special_end(outro_seg, outro_type, "OUTRO")
+                    if outro_status == "cutover":
+                        cutover_to_next_show = True
+                    elif outro_status == "failed":
+                        break
+                    if skip_was_requested:
+                        skip_was_requested = False
+
+                if cutover_to_next_show:
+                    log("Cutover complete, refreshing for the next show...")
+                    continue
 
             else:
                 # No talk segments — play AI bumpers if available, otherwise fallback tone
-                ai_bumper = select_ai_bumper(ctx.show_id)
+                ai_bumper = select_ai_bumper(ctx.show_id, max_seconds=float(sequence["bumper_max_seconds"]))
                 if ai_bumper:
                     bpath, bstart, bdur, bcaption, bdisplay = ai_bumper
                     bname = bdisplay or clean_name(bpath)
@@ -1202,7 +1593,18 @@ def run():
                         host=None,
                         caption=bcaption,
                     )
-                    pipe_track(bpath, encoder_proc, start_time=bstart, duration=bdur)
+                    bumper_status = pipe_track(
+                        bpath,
+                        encoder_proc,
+                        start_time=bstart,
+                        duration=bdur,
+                        fade_seconds=float(sequence["bumper_fade_seconds"]),
+                        expected_show_id=ctx.show_id,
+                        station_schedule=station_schedule,
+                    )
+                    if bumper_status == "cutover":
+                        log("Cutover complete, refreshing for the next show...")
+                        continue
                     if skip_was_requested:
                         log("  Bumper skipped by live control")
                         skip_was_requested = False
@@ -1219,7 +1621,15 @@ def run():
                             show_name=ctx.show_name,
                             caption="Signal lost... awaiting data.",
                         )
-                        pipe_track(fallback_tone, encoder_proc)
+                        tone_status = pipe_track(
+                            fallback_tone,
+                            encoder_proc,
+                            expected_show_id=ctx.show_id,
+                            station_schedule=station_schedule,
+                        )
+                        if tone_status == "cutover":
+                            log("Cutover complete, refreshing for the next show...")
+                            continue
                     else:
                         time.sleep(10)
 

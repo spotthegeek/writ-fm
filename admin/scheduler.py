@@ -64,6 +64,23 @@ DEFAULT_MUSIC_CONFIG = {
 }
 
 
+def _summarize_process_failure(stderr: str, stdout: str, limit: int = 400) -> str:
+    """Return the most useful tail of a failed subprocess output."""
+    combined = ((stderr or "").strip() or (stdout or "").strip()).strip()
+    if not combined:
+        return "No error output captured"
+
+    lines = [line.strip() for line in combined.splitlines() if line.strip()]
+    if not lines:
+        return combined[:limit]
+
+    # Failures are usually at the end; warnings often appear first.
+    summary = " | ".join(lines[-6:])
+    if len(summary) > limit:
+        summary = summary[-limit:]
+    return summary
+
+
 def _default_generation_enabled(show_type: str, content_type: str) -> bool:
     """Infer whether a generator should be enabled when a show has no explicit config.
 
@@ -237,8 +254,8 @@ def _run_talk_generation(show_id: str, count: int, job_registry: dict, env: dict
             state.add_log(show_id, "talk", f"Generation complete ({count} requested)")
             final_status = "completed"
         else:
-            details = (proc.stderr or proc.stdout or "").strip()
-            state.add_log(show_id, "talk", f"Generation failed: {details[:200]}", "error")
+            details = _summarize_process_failure(proc.stderr, proc.stdout)
+            state.add_log(show_id, "talk", f"Generation failed: {details}", "error")
             final_status = "failed"
     except subprocess.TimeoutExpired:
         state.add_log(show_id, "talk", "Generation timed out", "error")
@@ -290,8 +307,8 @@ def _run_music_generation(show_id: str, count: int, bumper_style: str, job_regis
             state.add_log(show_id, "music", f"Bumper generation complete")
             final_status = "completed"
         else:
-            details = (proc.stderr or proc.stdout or "").strip()
-            state.add_log(show_id, "music", f"Bumper generation failed: {details[:200]}", "error")
+            details = _summarize_process_failure(proc.stderr, proc.stdout)
+            state.add_log(show_id, "music", f"Bumper generation failed: {details}", "error")
             final_status = "failed"
     except Exception as e:
         state.add_log(show_id, "music", f"Error: {e}", "error")

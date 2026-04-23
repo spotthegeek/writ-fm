@@ -36,7 +36,9 @@ import random
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 from html import unescape
@@ -44,12 +46,24 @@ from pathlib import Path
 import re
 import urllib.parse
 import urllib.request
+import urllib.error
 
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from helpers import log, preprocess_for_tts, fetch_headlines, format_headlines, run_claude
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"dropout option adds dropout after all but last recurrent layer.*",
+    category=UserWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"`torch\.nn\.utils\.weight_norm` is deprecated.*",
+    category=FutureWarning,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCHEDULE_PATH = PROJECT_ROOT / "config" / "schedule.yaml"
@@ -366,7 +380,7 @@ INTERVIEW_GUESTS = [
 
 REDDIT_USER_AGENT = os.environ.get(
     "WRIT_REDDIT_USER_AGENT",
-    "WRIT-FM/0.1 (+https://example.invalid; manual generation fetcher)"
+    "WRIT-FM/1.0 (contact: admin@writ.fm)"
 )
 REDDIT_TIMEOUT_SECONDS = int(os.environ.get("WRIT_REDDIT_TIMEOUT", "10"))
 REDDIT_COMMENT_LIMIT = int(os.environ.get("WRIT_REDDIT_COMMENT_LIMIT", "6"))
@@ -431,11 +445,30 @@ def _fetch_url(url: str, timeout: int = REDDIT_TIMEOUT_SECONDS) -> bytes:
         return response.read()
 
 
+def _reddit_listing_base() -> str:
+    return os.environ.get("WRIT_REDDIT_LISTING_BASE", "https://old.reddit.com").rstrip("/")
+
+
+def _reddit_thread_base() -> str:
+    return os.environ.get("WRIT_REDDIT_THREAD_BASE", "https://www.reddit.com").rstrip("/")
+
+
+def _pullpush_base() -> str:
+    return os.environ.get("WRIT_REDDIT_PULLPUSH_BASE", "https://api.pullpush.io").rstrip("/")
+
+
 def _clean_text_block(text: str) -> str:
     text = unescape(text or "")
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def _normalize_reddit_user_mentions(text: str) -> str:
+    text = text or ""
+    text = re.sub(r"(?<!\w)/u/([A-Za-z0-9_-]+)", r"\1", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<!\w)u/([A-Za-z0-9_-]+)", r"\1", text, flags=re.IGNORECASE)
+    return text
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -470,11 +503,11 @@ def _normalize_reddit_source(source_value: str) -> tuple[str, str]:
     if not value:
         return "", ""
     if value.startswith("/r/"):
-        return "subreddit", value[3:]
+        return "subreddit", value[3:].strip("/")
     if re.fullmatch(r"r/[A-Za-z0-9_]+", value):
-        return "subreddit", value[2:]
+        return "subreddit", value[2:].strip("/")
     if re.fullmatch(r"[A-Za-z0-9_]+", value):
-        return "subreddit", value
+        return "subreddit", value.strip("/")
     parsed = urllib.parse.urlparse(value if "://" in value else "https://" + value)
     path = parsed.path.rstrip("/")
     if "/comments/" in path:
@@ -628,7 +661,7 @@ def _extract_reddit_comments(children: list[dict], limit: int = REDDIT_COMMENT_L
         author = data.get("author", "unknown")
         score = data.get("score")
         score_text = f" ({score} upvotes)" if isinstance(score, int) else ""
-        comments.append(f"- u/{author}{score_text}: {_truncate(body, 400)}")
+        comments.append(f"- {author}{score_text}: {_truncate(_normalize_reddit_user_mentions(body), 400)}")
         if len(comments) >= limit:
             break
     return comments
@@ -644,8 +677,8 @@ def _fetch_reddit_thread_context(source_value: str) -> SourceContext:
 
     subreddit = str(post_data.get("subreddit", "")).lower()
     story_mode = subreddit in REDDIT_STORY_SUBREDDITS
-    title = _clean_text_block(post_data.get("title", "")) or "Untitled Reddit thread"
-    selftext = _clean_text_block(post_data.get("selftext", ""))
+    title = _normalize_reddit_user_mentions(_clean_text_block(post_data.get("title", ""))) or "Untitled Reddit thread"
+    selftext = _normalize_reddit_user_mentions(_clean_text_block(post_data.get("selftext", "")))
     permalink = "https://www.reddit.com" + post_data.get("permalink", "")
     author = post_data.get("author", "unknown")
     score = post_data.get("score", 0)
@@ -667,7 +700,7 @@ def _fetch_reddit_thread_context(source_value: str) -> SourceContext:
     source_material_parts = [
         f"Subreddit: r/{subreddit}" if subreddit else "",
         f"Thread title: {title}",
-        f"Posted by: u/{author}",
+        f"Posted by: {author}",
         f"Score: {score} | Comments: {comment_count}",
         f"Permalink: {permalink}",
         "",
@@ -700,27 +733,130 @@ def _fetch_reddit_thread_context(source_value: str) -> SourceContext:
     )
 
 
+def _reddit_context_from_listing_post(post_data: dict) -> SourceContext:
+    subreddit = str(post_data.get("subreddit", "")).lower()
+    story_mode = subreddit in REDDIT_STORY_SUBREDDITS
+    title = _normalize_reddit_user_mentions(_clean_text_block(post_data.get("title", ""))) or "Untitled Reddit thread"
+    selftext = _normalize_reddit_user_mentions(_clean_text_block(post_data.get("selftext", "")))
+    permalink_path = str(post_data.get("permalink", "")).strip()
+    permalink = f"{_reddit_thread_base()}{permalink_path}" if permalink_path.startswith("/") else permalink_path
+    author = post_data.get("author", "unknown")
+    score = post_data.get("score", 0)
+    comment_count = post_data.get("num_comments", 0)
+    external_url = post_data.get("url_overridden_by_dest") or post_data.get("url") or ""
+
+    linked_summary = ""
+    if external_url and "reddit.com" not in external_url and "redd.it" not in external_url:
+        linked_title, linked_text = _fetch_web_source(external_url)
+        if linked_text:
+            linked_summary = (
+                f"Linked material: {linked_title}\n"
+                f"URL: {external_url}\n"
+                f"{_truncate(linked_text, 3500)}"
+            )
+
+    source_material_parts = [
+        f"Subreddit: r/{subreddit}" if subreddit else "",
+        f"Thread title: {title}",
+        f"Posted by: {author}",
+        f"Score: {score} | Comments: {comment_count}",
+        f"Permalink: {permalink}" if permalink else "",
+        "",
+        "Original post:",
+        selftext or "[Thread JSON was unavailable. Rely on the title, listing metadata, and any linked material.]",
+    ]
+    if linked_summary:
+        source_material_parts.extend(["", linked_summary])
+
+    format_instructions = (
+        "Tell this as a story first. Preserve the emotional arc and key beats from the post title and body. "
+        "If comments are unavailable, focus on the original post and any linked material."
+        if story_mode else
+        "Balance retelling with commentary. Treat the post title and body as the spine of the segment. "
+        "If Reddit comments are unavailable, do not invent them; reflect on the post itself and any linked material."
+    )
+
+    return SourceContext(
+        source_type="reddit",
+        source_value=permalink or title,
+        title=title,
+        topic=title,
+        body=selftext,
+        comments=[],
+        source_material="\n".join(part for part in source_material_parts if part is not None),
+        format_instructions=format_instructions,
+        subreddit=subreddit,
+        story_mode=story_mode,
+    )
+
+
+def _pullpush_fetch_subreddit_posts(
+    subreddit: str,
+    *,
+    lookback_days: int = 7,
+    selection_strategy: str = "latest",
+) -> list[dict]:
+    strategy = (selection_strategy or "latest").strip().lower()
+    def _fetch(*, include_after: bool) -> list[dict]:
+        params = {
+            "subreddit": subreddit,
+            "size": "50",
+            "sort": "desc",
+            "sort_type": "created_utc",
+        }
+        if include_after:
+            after = int(time.time() - max(1, int(lookback_days)) * 86400)
+            params["after"] = str(after)
+        url = f"{_pullpush_base()}/reddit/search/submission/?{urllib.parse.urlencode(params)}"
+        payload = json.loads(_fetch_url(url).decode("utf-8", errors="ignore"))
+        data = payload.get("data") if isinstance(payload, dict) else []
+        return [item for item in (data or []) if isinstance(item, dict)]
+
+    posts = _fetch(include_after=True)
+    if not posts:
+        log(
+            f"PullPush has no posts for r/{subreddit} within the last {lookback_days} day(s); "
+            "retrying without the recency filter."
+        )
+        posts = _fetch(include_after=False)
+    if strategy in {"top", "popular"}:
+        posts.sort(key=lambda item: int(item.get("score") or 0), reverse=True)
+    elif strategy == "random":
+        random.shuffle(posts)
+    else:
+        posts.sort(key=lambda item: float(item.get("created_utc") or 0), reverse=True)
+    return posts
+
+
 def _fetch_reddit_subreddit_context(source_value: str) -> SourceContext:
     _, subreddit = _normalize_reddit_source(source_value)
-    listing_url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit=8"
-    payload = json.loads(_fetch_url(listing_url).decode("utf-8", errors="ignore"))
+    listing_url = f"{_reddit_listing_base()}/r/{subreddit}/hot.json?limit=8"
     posts = []
-    for child in payload.get("data", {}).get("children", []):
-        data = child.get("data", {})
-        if data.get("stickied") or data.get("over_18"):
-            continue
-        title = _clean_text_block(data.get("title", ""))
-        if not title:
-            continue
-        posts.append(data)
-        if len(posts) >= 5:
-            break
+    try:
+        payload = json.loads(_fetch_url(listing_url).decode("utf-8", errors="ignore"))
+        for child in payload.get("data", {}).get("children", []):
+            data = child.get("data", {})
+            if data.get("stickied") or data.get("over_18"):
+                continue
+            title = _clean_text_block(data.get("title", ""))
+            if not title:
+                continue
+            posts.append(data)
+            if len(posts) >= 5:
+                break
+    except Exception as exc:
+        log(f"Reddit hot listing blocked for r/{subreddit}; using PullPush fallback: {exc}")
+        posts = _pullpush_fetch_subreddit_posts(subreddit, lookback_days=7, selection_strategy="popular")[:5]
     if not posts:
         raise RuntimeError(f"No usable posts found for r/{subreddit}")
 
     chosen = posts[0]
-    permalink = "https://www.reddit.com" + chosen.get("permalink", "")
-    return _fetch_reddit_thread_context(permalink)
+    permalink = f"{_reddit_thread_base()}{chosen.get('permalink', '')}"
+    try:
+        return _fetch_reddit_thread_context(permalink)
+    except Exception as exc:
+        log(f"Reddit thread fetch blocked for {permalink}; using listing fallback: {exc}")
+        return _reddit_context_from_listing_post(chosen)
 
 
 def _fetch_reddit_subreddit_context_with_strategy(
@@ -737,7 +873,7 @@ def _fetch_reddit_subreddit_context_with_strategy(
         "popular": "hot",
         "random": "new",
     }.get(strategy, "new")
-    url = f"https://www.reddit.com/r/{subreddit}/{sort}.json?limit=25"
+    url = f"{_reddit_listing_base()}/r/{subreddit}/{sort}.json?limit=25"
     if sort == "top":
         if lookback_days <= 1:
             t = "day"
@@ -749,21 +885,34 @@ def _fetch_reddit_subreddit_context_with_strategy(
             t = "year"
         url += f"&t={t}"
 
-    payload = json.loads(_fetch_url(url).decode("utf-8", errors="ignore"))
-    children = payload.get("data", {}).get("children", [])
     cutoff = time.time() - max(1, int(lookback_days)) * 86400
     posts: list[dict] = []
-    for child in children:
-        data = (child or {}).get("data", {})
-        if data.get("stickied") or data.get("over_18"):
-            continue
-        created = data.get("created_utc")
-        if isinstance(created, (int, float)) and created < cutoff:
-            continue
-        title = _clean_text_block(data.get("title", ""))
-        if not title:
-            continue
-        posts.append(data)
+    try:
+        try:
+            payload = json.loads(_fetch_url(url).decode("utf-8", errors="ignore"))
+        except Exception as exc:
+            fallback_url = f"{_reddit_listing_base()}/r/{subreddit}/hot.json?limit=25"
+            log(f"Reddit listing fetch blocked for {url}; retrying hot listing: {exc}")
+            payload = json.loads(_fetch_url(fallback_url).decode("utf-8", errors="ignore"))
+        children = payload.get("data", {}).get("children", [])
+        for child in children:
+            data = (child or {}).get("data", {})
+            if data.get("stickied") or data.get("over_18"):
+                continue
+            created = data.get("created_utc")
+            if isinstance(created, (int, float)) and created < cutoff:
+                continue
+            title = _clean_text_block(data.get("title", ""))
+            if not title:
+                continue
+            posts.append(data)
+    except Exception as exc:
+        log(f"Reddit listing API failed for r/{subreddit}; using PullPush fallback: {exc}")
+        posts = _pullpush_fetch_subreddit_posts(
+            subreddit,
+            lookback_days=lookback_days,
+            selection_strategy=selection_strategy,
+        )
     if not posts:
         raise RuntimeError(f"No usable posts found for r/{subreddit}")
     used_source_keys = used_source_keys or set()
@@ -772,20 +921,24 @@ def _fetch_reddit_subreddit_context_with_strategy(
         candidates = posts[:]
         random.shuffle(candidates)
         for post in candidates:
-            permalink = "https://www.reddit.com" + post.get("permalink", "")
+            permalink = f"{_reddit_thread_base()}{post.get('permalink', '')}"
             if _canonical_source_key("reddit_thread", permalink) not in used_source_keys:
                 chosen = post
                 break
     else:
         for post in posts:
-            permalink = "https://www.reddit.com" + post.get("permalink", "")
+            permalink = f"{_reddit_thread_base()}{post.get('permalink', '')}"
             if _canonical_source_key("reddit_thread", permalink) not in used_source_keys:
                 chosen = post
                 break
     if chosen is None:
         raise RuntimeError(f"No unused posts found for r/{subreddit}")
-    permalink = "https://www.reddit.com" + chosen.get("permalink", "")
-    return _fetch_reddit_thread_context(permalink)
+    permalink = f"{_reddit_thread_base()}{chosen.get('permalink', '')}"
+    try:
+        return _fetch_reddit_thread_context(permalink)
+    except Exception as exc:
+        log(f"Reddit thread fetch blocked for {permalink}; using listing fallback: {exc}")
+        return _reddit_context_from_listing_post(chosen)
 
 
 def _build_reddit_story_script(source_context: SourceContext) -> str:
@@ -1112,7 +1265,7 @@ def _normalize_reddit_story_text(text: str) -> str:
     # Normalize repeated whitespace while keeping paragraph breaks.
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]{2,}", " ", text)
-    return text.strip()
+    return _normalize_reddit_user_mentions(text.strip())
 
 
 AUTO_SOURCE_SHOW_TYPES = {
@@ -1239,6 +1392,7 @@ def _primary_host_assignment(show) -> dict:
         "tts_backend": getattr(show, "tts_backend", "kokoro"),
         "voice_kokoro": show.voices.get("host", "am_michael"),
         "voice_minimax": "Deep_Voice_Man",
+        "voice_google": "Kore",
     }
 
 
@@ -1255,6 +1409,10 @@ def _secondary_host_assignment(show, primary: dict | None = None) -> dict | None
     return None
 
 
+def _uses_secondary_host_dialogue(show, segment_type: str) -> bool:
+    return _secondary_host_assignment(show) is not None
+
+
 def _selected_guest(show) -> dict:
     env_name = os.environ.get("WRIT_GUEST_NAME", "").strip()
     if env_name:
@@ -1264,6 +1422,7 @@ def _selected_guest(show) -> dict:
             "tts_backend": os.environ.get("WRIT_GUEST_TTS_BACKEND", "kokoro"),
             "voice_kokoro": os.environ.get("WRIT_GUEST_VOICE_KOKORO", "af_bella"),
             "voice_minimax": os.environ.get("WRIT_GUEST_VOICE_MINIMAX", "Wise_Woman"),
+            "voice_google": os.environ.get("WRIT_GUEST_VOICE_GOOGLE", "Puck"),
         }
     if getattr(show, "guests", None):
         guest = random.choice(show.guests)
@@ -1273,6 +1432,7 @@ def _selected_guest(show) -> dict:
             "tts_backend": guest.get("tts_backend", "kokoro"),
             "voice_kokoro": guest.get("voice_kokoro", "af_bella"),
             "voice_minimax": guest.get("voice_minimax", "Wise_Woman"),
+            "voice_google": guest.get("voice_google", "Puck"),
         }
     return random.choice(INTERVIEW_GUESTS)
 
@@ -1280,9 +1440,47 @@ def _selected_guest(show) -> dict:
 def _voice_for_assignment(assignment: dict | None, backend: str, fallback: str) -> str:
     if not assignment:
         return fallback
+    host_id = assignment.get("id", "")
+    roster_host = None
+    if host_id:
+        try:
+            roster_host = get_host(host_id)
+        except Exception:
+            roster_host = None
     if backend == "minimax":
-        return assignment.get("voice_minimax", fallback)
-    return assignment.get("voice_kokoro", fallback)
+        return assignment.get("voice_minimax") or (roster_host or {}).get("voice_minimax") or fallback
+    if backend == "google":
+        return assignment.get("voice_google") or (roster_host or {}).get("voice_google") or fallback
+    return assignment.get("voice_kokoro") or (roster_host or {}).get("tts_voice") or fallback
+
+
+def _pace_wpm_for_assignment(assignment: dict | None, backend: str = "kokoro", fallback_wpm: int = 130) -> int:
+    if not assignment:
+        return fallback_wpm
+    backend_key = f"speaking_pace_wpm_{backend}"
+    if assignment.get(backend_key):
+        try:
+            return int(assignment[backend_key])
+        except (TypeError, ValueError):
+            pass
+    if assignment.get("speaking_pace_wpm"):
+        try:
+            return int(assignment["speaking_pace_wpm"])
+        except (TypeError, ValueError):
+            pass
+    host_id = assignment.get("id", "")
+    if host_id:
+        try:
+            host = get_host(host_id)
+            pace = host.get(backend_key)
+            if pace:
+                return int(pace)
+            pace = host.get("speaking_pace_wpm")
+            if pace:
+                return int(pace)
+        except Exception:
+            pass
+    return fallback_wpm
 
 
 def _voice_plan(show, segment_type: str, backend: str) -> tuple[dict[str, str], dict[str, str]]:
@@ -1291,7 +1489,7 @@ def _voice_plan(show, segment_type: str, backend: str) -> tuple[dict[str, str], 
     primary_voice = _voice_for_assignment(
         primary,
         backend,
-        "Deep_Voice_Man" if backend == "minimax" else "am_michael",
+        "Deep_Voice_Man" if backend == "minimax" else "Kore" if backend == "google" else "am_michael",
     )
 
     override = os.environ.get("WRIT_HOST_VOICE", "").strip()
@@ -1299,13 +1497,17 @@ def _voice_plan(show, segment_type: str, backend: str) -> tuple[dict[str, str], 
         primary_voice = override
 
     labels = {"primary_host_name": _host_label(primary.get("id", show.host))}
-    voices = {"host": primary_voice}
+    voices = {
+        "host": primary_voice,
+        "host_speed": _kokoro_speed_from_wpm(_pace_wpm_for_assignment(primary, backend)),
+        "host_wpm": _pace_wpm_for_assignment(primary, backend),
+    }
 
-    if segment_type == "panel":
+    if _uses_secondary_host_dialogue(show, segment_type):
         secondary_voice = _voice_for_assignment(
             secondary,
             backend,
-            "Wise_Woman" if backend == "minimax" else "af_bella",
+            "Wise_Woman" if backend == "minimax" else "Puck" if backend == "google" else "af_bella",
         )
         secondary_name = None
         if secondary:
@@ -1315,6 +1517,8 @@ def _voice_plan(show, segment_type: str, backend: str) -> tuple[dict[str, str], 
                 secondary_name = "a guest voice from the station orbit"
         labels["secondary_host_name"] = secondary_name or "a trusted second voice from the station"
         voices["guest"] = secondary_voice
+        voices["guest_speed"] = _kokoro_speed_from_wpm(_pace_wpm_for_assignment(secondary, backend))
+        voices["guest_wpm"] = _pace_wpm_for_assignment(secondary, backend)
         return labels, voices
 
     if segment_type == "interview":
@@ -1325,11 +1529,78 @@ def _voice_plan(show, segment_type: str, backend: str) -> tuple[dict[str, str], 
         voices["guest"] = _voice_for_assignment(
             guest,
             backend,
-            "Wise_Woman" if backend == "minimax" else "af_bella",
+            "Wise_Woman" if backend == "minimax" else "Puck" if backend == "google" else "af_bella",
         )
+        voices["guest_speed"] = _kokoro_speed_from_wpm(_pace_wpm_for_assignment(guest, backend))
+        voices["guest_wpm"] = _pace_wpm_for_assignment(guest, backend)
         return labels, voices
 
     return labels, voices
+
+
+def _two_host_prompt_prefix(show, segment_type: str, speaker_labels: dict[str, str], source_context: SourceContext | None = None) -> str:
+    primary_name = speaker_labels.get("primary_host_name", "the primary host")
+    secondary_name = speaker_labels.get("secondary_host_name", "the co-host")
+    instructions = [
+        f"Write this as a two-host radio conversation between {primary_name} and {secondary_name}.",
+        "Format every spoken line with HOST_A: or HOST_B: markers.",
+        "Give both hosts distinct reactions, questions, and points of emphasis.",
+        "Keep the segment's original purpose, structure, and factual grounding intact.",
+        "Do not collapse the script back into a monologue.",
+    ]
+    if segment_type == "reddit_storytelling":
+        instructions.append(
+            "Stay close to the original Reddit post, but let the two hosts share the narration and reaction instead of reading it as a single uninterrupted monologue."
+        )
+    elif segment_type == "youtube":
+        instructions.append(
+            "Treat the source video as material the hosts are unpacking together, not raw audio to replay verbatim."
+        )
+    elif segment_type == "station_id":
+        instructions.append(
+            "Use exactly two very short lines, one from each host, totaling roughly 18-28 words."
+        )
+        instructions.append(
+            "Keep the exchange extremely tight and on-air friendly so it still works as a station ID."
+        )
+    elif segment_type in {"show_intro", "show_outro"}:
+        instructions.append(
+            "Use a concise back-and-forth with one to three short turns per host, not a long conversation."
+        )
+    elif source_context and source_context.source_type == "reddit":
+        instructions.append(
+            "Let the hosts react differently to the post and comments, and build toward a shared view."
+        )
+    return "\n".join(instructions)
+
+
+def _fallback_two_host_script(show, segment_type: str, speaker_labels: dict[str, str]) -> str | None:
+    primary_name = speaker_labels.get("primary_host_name", _host_label(show.host))
+    secondary_name = speaker_labels.get("secondary_host_name", "the co-host")
+    if segment_type == "station_id":
+        return (
+            f"HOST_A: This is {STATION_NAME}, with {show.name}.\n\n"
+            f"HOST_B: {primary_name} and {secondary_name}, still on the line."
+        )
+    return None
+
+
+def _slugify_topic(value: str, max_len: int = 30) -> str:
+    slug = (value or "").strip().lower()[:max_len]
+    slug = re.sub(r"[^a-z0-9]+", "_", slug)
+    slug = "_".join(filter(None, slug.split("_")))
+    return slug or "segment"
+
+
+def _minimax_performance_instructions(segment_type: str) -> str:
+    instructions = [
+        "When it helps the performance, you may use MiniMax speech interjection tags sparingly.",
+        "Allowed tags: (laughs), (chuckle), (coughs), (clear-throat), (groans), (breath), (pant), (inhale), (exhale), (gasps), (sniffs), (sighs), (snorts), (burps), (lip-smacking), (humming), (hissing), (emm), (sneezes).",
+        "Use them only occasionally at natural emotional beats. Do not stack tags or overuse them.",
+    ]
+    if segment_type in {"panel", "interview", "reddit_post", "reddit_storytelling", "youtube"}:
+        instructions.append("In conversation, let the tags appear naturally inside a speaker's line, not as standalone stage directions.")
+    return "\n".join(instructions)
 
 
 def build_generation_prompt(
@@ -1337,6 +1608,7 @@ def build_generation_prompt(
     segment_type: str,
     topic: str,
     speaker_labels: dict[str, str],
+    backend: str = "kokoro",
     station_name: str = STATION_NAME,
     source_context: SourceContext | None = None,
 ) -> str:
@@ -1391,6 +1663,12 @@ def build_generation_prompt(
         missing = exc.args[0]
         log(f"Segment template '{segment_type}' referenced missing variable '{missing}'")
 
+    if _uses_secondary_host_dialogue(show, segment_type):
+        prompt_template = (
+            f"{_two_host_prompt_prefix(show, segment_type, special_context, source_context)}\n\n"
+            f"{prompt_template}"
+        )
+
     # For long-form segments, add a hard length reminder at the end of the prompt
     is_long_form = min_words >= 500
     length_reminder = (
@@ -1399,6 +1677,8 @@ def build_generation_prompt(
         f"Keep developing ideas, adding examples, and exploring tangents until you have reached the minimum. "
         f"A response under {min_words} words is incomplete and will be rejected."
     ) if is_long_form else ""
+    if (backend or "").strip().lower() == "minimax":
+        length_reminder += f"\n\n{_minimax_performance_instructions(segment_type)}"
 
     source_block = ""
     if source_context and source_context.source_material:
@@ -1461,15 +1741,16 @@ def run_generation(prompt: str, segment_type: str) -> str | None:
     min_acceptable = int(min_words * 0.8)
     temperature = 0.8
     num_predict = 8192
+    multi_host_prompt = "HOST_A:" in prompt or "HOST_B:" in prompt
 
     if segment_type in {"station_id", "show_intro", "show_outro"}:
         timeout = min(timeout, 60)
     if segment_type == "station_id":
-        temperature = 0.15
-        num_predict = 96
+        temperature = 0.25 if multi_host_prompt else 0.15
+        num_predict = 160 if multi_host_prompt else 96
     elif segment_type in {"show_intro", "show_outro"}:
-        temperature = 0.35
-        num_predict = 256
+        temperature = 0.4 if multi_host_prompt else 0.35
+        num_predict = 384 if multi_host_prompt else 256
 
     script = run_claude(
         prompt,
@@ -1539,6 +1820,14 @@ except ImportError:
     KOKORO_AVAILABLE = False
 
 _KOKORO_PIPELINE = None
+_DIALOGUE_MARKER_PATTERN = (
+    r"((?:HOST|GUEST|HOST_A|HOST_B|HOSTA|HOSTB|[A-Z][A-Z\s.]+)"
+    r"(?:\s*\([^)]+\))?:)"
+)
+_DIALOGUE_SPEAKER_PATTERN = re.compile(
+    r"^(?P<speaker>(?:HOST|GUEST|HOST_A|HOST_B|HOSTA|HOSTB|[A-Z][A-Z\s.]+))"
+    r"(?:\s*\([^)]+\))?:$"
+)
 
 def get_kokoro_pipeline():
     global _KOKORO_PIPELINE
@@ -1555,16 +1844,34 @@ def get_kokoro_pipeline():
             return None
     return _KOKORO_PIPELINE
 
+
+def _normalize_dialogue_speaker(marker: str) -> str | None:
+    match = _DIALOGUE_SPEAKER_PATTERN.match((marker or "").strip())
+    if not match:
+        return None
+    return match.group("speaker").strip()
+
+
+def _kokoro_speed_from_wpm(wpm: int | float | None, baseline_wpm: float = 130.0) -> float:
+    try:
+        value = float(wpm)
+    except (TypeError, ValueError):
+        value = baseline_wpm
+    if value <= 0:
+        value = baseline_wpm
+    return max(0.75, min(1.35, value / baseline_wpm))
+
 def _parse_dialogue_parts(script: str) -> list[tuple[str, str]]:
-    segments = re.split(r'((?:HOST|GUEST|HOST_A|HOST_B|[A-Z][A-Z\s.]+):)', script)
+    segments = re.split(_DIALOGUE_MARKER_PATTERN, script)
     parts: list[tuple[str, str]] = []
     current_speaker = None
     for seg in segments:
         seg = seg.strip()
         if not seg:
             continue
-        if re.match(r'^(?:HOST|GUEST|HOST_A|HOST_B|[A-Z][A-Z\s.]+):$', seg):
-            current_speaker = seg.rstrip(':').strip()
+        normalized = _normalize_dialogue_speaker(seg)
+        if normalized:
+            current_speaker = normalized
         elif current_speaker:
             parts.append((current_speaker, seg))
         else:
@@ -1622,7 +1929,14 @@ def _split_tts_text(text: str, max_chars: int = 900) -> list[str]:
     return [c for c in chunks if c.strip()]
 
 
-def render_single_voice(script: str, output_path: Path, voice: str, backend: str = "kokoro") -> bool:
+def render_single_voice(
+    script: str,
+    output_path: Path,
+    voice: str,
+    backend: str = "kokoro",
+    speed: float = 1.0,
+    wpm: int | None = None,
+) -> bool:
     """Render a single-voice script to audio."""
     if backend == "minimax":
         try:
@@ -1639,17 +1953,37 @@ def render_single_voice(script: str, output_path: Path, voice: str, backend: str
         except Exception as e:
             log(f"  MiniMax rendering error: {e}")
             return False
+    if backend == "google":
+        try:
+            from google_tts import generate_speech
+        except Exception as e:
+            log(f"  Google TTS import error: {e}")
+            return False
+        log(f"  Rendering single Google voice '{voice}' to {output_path.name}...")
+        try:
+            success = generate_speech(
+                script,
+                output_path,
+                voice_id=voice,
+                wpm=wpm or int(round(130 * speed)),
+            )
+            if success:
+                log("  Finished Google render.")
+            return success
+        except Exception as e:
+            log(f"  Google rendering error: {e}")
+            return False
 
     pipe = get_kokoro_pipeline()
     if not pipe:
         return False
 
     if len(script) > 1400 or "\n\n" in script:
-        return render_single_voice_chunked(script, output_path, voice, backend=backend)
+        return render_single_voice_chunked(script, output_path, voice, backend=backend, speed=speed)
 
     log(f"  Rendering single voice '{voice}' to {output_path.name}...")
     try:
-        generator = pipe(script, voice=voice, speed=1.0)
+        generator = pipe(script, voice=voice, speed=speed)
         
         with sf.SoundFile(str(output_path), mode='w', samplerate=24000, channels=1) as f:
             chunk_count = 0
@@ -1672,10 +2006,16 @@ def render_single_voice(script: str, output_path: Path, voice: str, backend: str
         return False
 
 
-def render_single_voice_chunked(script: str, output_path: Path, voice: str, backend: str = "kokoro") -> bool:
+def render_single_voice_chunked(
+    script: str,
+    output_path: Path,
+    voice: str,
+    backend: str = "kokoro",
+    speed: float = 1.0,
+) -> bool:
     """Render a long single-voice script in smaller pieces."""
     if backend != "kokoro":
-        return render_single_voice(script, output_path, voice, backend=backend)
+        return render_single_voice(script, output_path, voice, backend=backend, speed=speed)
 
     pipe = get_kokoro_pipeline()
     if not pipe:
@@ -1692,12 +2032,12 @@ def render_single_voice_chunked(script: str, output_path: Path, voice: str, back
         with sf.SoundFile(str(output_path), mode="w", samplerate=24000, channels=1) as f:
             total_chunks = 0
             for i, part in enumerate(parts):
-                text = preprocess_for_tts(part)
+                text = preprocess_for_tts(part, backend=backend)
                 if not text.strip():
                     continue
                 if i > 0:
                     f.write(gap_audio)
-                generator = pipe(text, voice=voice, speed=1.0)
+                generator = pipe(text, voice=voice, speed=speed)
                 for _, _, audio in generator:
                     if audio is not None:
                         f.write(audio)
@@ -1717,9 +2057,208 @@ def render_single_voice_chunked(script: str, output_path: Path, voice: str, back
 def render_multi_voice(script: str, output_path: Path, voices: dict[str, str], backend: str = "kokoro") -> bool:
     """Render a multi-voice script (panel/interview) to audio."""
     if backend == "minimax":
-        log("  MiniMax multi-voice rendering is not available yet; falling back to the primary voice.")
-        flattened = re.sub(r'^(?:HOST|GUEST|HOST_A|HOST_B|[A-Z][A-Z\s.]+):\s*', '', script, flags=re.MULTILINE)
-        return render_single_voice(flattened, output_path, voices.get("host", "Deep_Voice_Man"), backend="minimax")
+        try:
+            from minimax_tts import generate_speech
+        except Exception as e:
+            log(f"  MiniMax import error: {e}")
+            return False
+
+        parts = _parse_dialogue_parts(script)
+        host_voice = voices.get("host", "Deep_Voice_Man")
+        guest_voice = voices.get("guest", "Wise_Woman")
+        host_speed = float(voices.get("host_speed", 1.0))
+        guest_speed = float(voices.get("guest_speed", 1.0))
+        if not parts:
+            flattened = re.sub(
+                r'^(?:HOST|GUEST|HOST_A|HOST_B|HOSTA|HOSTB|[A-Z][A-Z\s.]+)(?:\s*\([^)]+\))?:\s*',
+                '',
+                script,
+                flags=re.MULTILINE,
+            )
+            return render_single_voice(
+                flattened,
+                output_path,
+                host_voice,
+                backend="minimax",
+                speed=host_speed,
+            )
+
+        voice_map = {}
+        for key in ("HOST", "HOST_A", "HOSTA"):
+            voice_map[key] = host_voice
+        for key in ("GUEST", "HOST_B", "HOSTB"):
+            voice_map[key] = guest_voice
+        speed_map = {}
+        for key in ("HOST", "HOST_A", "HOSTA"):
+            speed_map[key] = host_speed
+        for key in ("GUEST", "HOST_B", "HOSTB"):
+            speed_map[key] = guest_speed
+
+        log(f"  Rendering {len(parts)} MiniMax dialogue segments to {output_path.name}...")
+        try:
+            with tempfile.TemporaryDirectory(prefix="writ_minimax_dialogue_") as tmpdir:
+                tmp = Path(tmpdir)
+                concat_entries: list[Path] = []
+                silence_path = tmp / "gap.mp3"
+                silence_cmd = [
+                    "ffmpeg", "-y",
+                    "-f", "lavfi",
+                    "-i", "anullsrc=r=32000:cl=mono",
+                    "-t", "0.3",
+                    "-q:a", "9",
+                    str(silence_path),
+                ]
+                silence_proc = subprocess.run(silence_cmd, capture_output=True, text=True)
+                if silence_proc.returncode != 0:
+                    log(f"  Failed to create MiniMax silence gap: {(silence_proc.stderr or '').strip()[:200]}")
+                    return False
+
+                rendered_parts = 0
+                for i, (speaker, text) in enumerate(parts):
+                    voice = voice_map.get(speaker, host_voice)
+                    speed = speed_map.get(speaker, host_speed)
+                    text = preprocess_for_tts(text, backend=backend)
+                    if not text.strip():
+                        continue
+                    if rendered_parts > 0:
+                        concat_entries.append(silence_path)
+                    segment_path = tmp / f"segment_{i:03d}.mp3"
+                    success = generate_speech(
+                        text,
+                        segment_path,
+                        voice_id=voice,
+                        speed=speed,
+                    )
+                    if not success or not segment_path.exists():
+                        log(f"  MiniMax rendering failed for dialogue segment {i + 1}")
+                        return False
+                    concat_entries.append(segment_path)
+                    rendered_parts += 1
+
+                if not concat_entries:
+                    log("  No dialogue parts rendered")
+                    return False
+
+                concat_list = tmp / "concat.txt"
+                concat_list.write_text(
+                    "".join(f"file '{path.as_posix()}'\n" for path in concat_entries),
+                    encoding="utf-8",
+                )
+                concat_cmd = [
+                    "ffmpeg", "-y",
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-i", str(concat_list),
+                    "-c", "copy",
+                    str(output_path),
+                ]
+                concat_proc = subprocess.run(concat_cmd, capture_output=True, text=True)
+                if concat_proc.returncode != 0:
+                    log(f"  MiniMax concat failed: {(concat_proc.stderr or '').strip()[:200]}")
+                    return False
+                log(f"  Finished rendering {rendered_parts} MiniMax dialogue segments.")
+                return True
+        except Exception as e:
+            log(f"  MiniMax multi-voice rendering error: {e}")
+            return False
+    if backend == "google":
+        try:
+            from google_tts import generate_speech
+        except Exception as e:
+            log(f"  Google TTS import error: {e}")
+            return False
+
+        parts = _parse_dialogue_parts(script)
+        host_voice = voices.get("host", "Kore")
+        guest_voice = voices.get("guest", "Puck")
+        if not parts:
+            flattened = re.sub(
+                r'^(?:HOST|GUEST|HOST_A|HOST_B|HOSTA|HOSTB|[A-Z][A-Z\s.]+)(?:\s*\([^)]+\))?:\s*',
+                '',
+                script,
+                flags=re.MULTILINE,
+            )
+            return render_single_voice(
+                flattened,
+                output_path,
+                host_voice,
+                backend="google",
+                wpm=int(voices.get("host_wpm", 130)),
+            )
+
+        voice_map = {}
+        for key in ("HOST", "HOST_A", "HOSTA"):
+            voice_map[key] = host_voice
+        for key in ("GUEST", "HOST_B", "HOSTB"):
+            voice_map[key] = guest_voice
+
+        log(f"  Rendering {len(parts)} Google dialogue segments to {output_path.name}...")
+        try:
+            with tempfile.TemporaryDirectory(prefix="writ_google_dialogue_") as tmpdir:
+                tmp = Path(tmpdir)
+                concat_entries: list[Path] = []
+                silence_path = tmp / "gap.wav"
+                silence_cmd = [
+                    "ffmpeg", "-y",
+                    "-f", "lavfi",
+                    "-i", "anullsrc=r=24000:cl=mono",
+                    "-t", "0.3",
+                    "-c:a", "pcm_s16le",
+                    str(silence_path),
+                ]
+                silence_proc = subprocess.run(silence_cmd, capture_output=True, text=True)
+                if silence_proc.returncode != 0:
+                    log(f"  Failed to create Google silence gap: {(silence_proc.stderr or '').strip()[:200]}")
+                    return False
+
+                rendered_parts = 0
+                for i, (speaker, text) in enumerate(parts):
+                    voice = voice_map.get(speaker, host_voice)
+                    text = preprocess_for_tts(text, backend=backend)
+                    if not text.strip():
+                        continue
+                    if rendered_parts > 0:
+                        concat_entries.append(silence_path)
+                    segment_path = tmp / f"segment_{i:03d}.wav"
+                    current_wpm = int(voices.get("host_wpm", 130)) if speaker in {"HOST", "HOST_A", "HOSTA"} else int(voices.get("guest_wpm", 130))
+                    success = generate_speech(
+                        text,
+                        segment_path,
+                        voice_id=voice,
+                        wpm=current_wpm,
+                    )
+                    if not success or not segment_path.exists():
+                        log(f"  Google rendering failed for dialogue segment {i + 1}")
+                        return False
+                    concat_entries.append(segment_path)
+                    rendered_parts += 1
+
+                if not concat_entries:
+                    log("  No dialogue parts rendered")
+                    return False
+
+                concat_list = tmp / "concat.txt"
+                concat_list.write_text(
+                    "".join(f"file '{path.as_posix()}'\n" for path in concat_entries),
+                    encoding="utf-8",
+                )
+                concat_cmd = [
+                    "ffmpeg", "-y",
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-i", str(concat_list),
+                    "-c", "copy",
+                    str(output_path),
+                ]
+                concat_proc = subprocess.run(concat_cmd, capture_output=True, text=True)
+                if concat_proc.returncode != 0:
+                    log(f"  Google concat failed: {(concat_proc.stderr or '').strip()[:200]}")
+                    return False
+                log(f"  Finished rendering {rendered_parts} Google dialogue segments.")
+                return True
+        except Exception as e:
+            log(f"  Google multi-voice rendering error: {e}")
+            return False
 
     pipe = get_kokoro_pipeline()
     if not pipe:
@@ -1728,15 +2267,22 @@ def render_multi_voice(script: str, output_path: Path, voices: dict[str, str], b
     parts = _parse_dialogue_parts(script)
 
     host_voice = voices.get("host", "am_michael")
+    host_speed = float(voices.get("host_speed", 1.0))
     if not parts:
-        return render_single_voice(script, output_path, host_voice, backend=backend)
+        return render_single_voice(script, output_path, host_voice, backend=backend, speed=host_speed)
 
     guest_voice = voices.get("guest", "af_bella")
+    guest_speed = float(voices.get("guest_speed", 1.0))
     voice_map = {}
-    for key in ("HOST", "HOST_A"):
+    for key in ("HOST", "HOST_A", "HOSTA"):
         voice_map[key] = host_voice
-    for key in ("GUEST", "HOST_B"):
+    for key in ("GUEST", "HOST_B", "HOSTB"):
         voice_map[key] = guest_voice
+    speed_map = {}
+    for key in ("HOST", "HOST_A", "HOSTA"):
+        speed_map[key] = host_speed
+    for key in ("GUEST", "HOST_B", "HOSTB"):
+        speed_map[key] = guest_speed
 
     log(f"  Rendering {len(parts)} dialogue segments to {output_path.name}...")
     
@@ -1747,8 +2293,9 @@ def render_multi_voice(script: str, output_path: Path, voices: dict[str, str], b
             total_chunks = 0
             for i, (speaker, text) in enumerate(parts):
                 voice = voice_map.get(speaker, host_voice)
+                speed = speed_map.get(speaker, host_speed)
                 
-                text = preprocess_for_tts(text)
+                text = preprocess_for_tts(text, backend=backend)
                 if not text.strip():
                     continue
                 
@@ -1756,7 +2303,7 @@ def render_multi_voice(script: str, output_path: Path, voices: dict[str, str], b
                 if i > 0:
                     f.write(gap_audio)
                     
-                generator = pipe(text, voice=voice, speed=1.0)
+                generator = pipe(text, voice=voice, speed=speed)
                 for _, _, audio in generator:
                     if audio is not None:
                         f.write(audio)
@@ -1861,6 +2408,10 @@ def generate_segment(
     log(f"  Topic: {topic[:80]}...")
     log(f"  Target: {min_words}-{max_words} words")
     log(f"  Host: {primary.get('id', show.host)} (voice: {voices.get('host', 'am_michael')})")
+    if _uses_secondary_host_dialogue(show, segment_type):
+        secondary = _secondary_host_assignment(show, primary)
+        if secondary:
+            log(f"  Co-host: {secondary.get('id', 'guest')} (voice: {voices.get('guest', 'af_bella')})")
     log(f"  TTS backend: {backend}")
     if source_context:
         log(f"  Source: {source_context.source_type} ({source_context.title or source_context.source_value})")
@@ -1876,10 +2427,20 @@ def generate_segment(
                 log(f"  Cached audio: {source_context.audio_path}")
 
     script = None
-    if source_context and source_context.source_type == "reddit" and segment_type == "reddit_storytelling":
+    if (
+        source_context
+        and source_context.source_type == "reddit"
+        and segment_type == "reddit_storytelling"
+        and not _uses_secondary_host_dialogue(show, segment_type)
+    ):
         script = _build_reddit_story_script(source_context)
         log("  Using direct Reddit story read-through; skipping LLM generation.")
-    elif source_context and source_context.source_type == "youtube" and segment_type == "youtube":
+    elif (
+        source_context
+        and source_context.source_type == "youtube"
+        and segment_type == "youtube"
+        and not _uses_secondary_host_dialogue(show, segment_type)
+    ):
         if not source_context.audio_path:
             log("  YouTube source has no cached audio file; cannot ingest.")
             return None
@@ -1894,10 +2455,7 @@ def generate_segment(
         show_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = station_now().strftime("%Y%m%d_%H%M%S")
-        topic_slug = topic[:30].lower()
-        for char in ' -:,\'".?!()':
-            topic_slug = topic_slug.replace(char, '_')
-        topic_slug = '_'.join(filter(None, topic_slug.split('_')))
+        topic_slug = _slugify_topic(topic)
 
         output_path = show_dir / f"{segment_type}_{topic_slug}_{timestamp}{source_audio.suffix or '.mp3'}"
         shutil.copy2(source_audio, output_path)
@@ -1932,7 +2490,7 @@ def generate_segment(
             "transcript_source": source_context.transcript_source,
             "tts_backend": backend_used,
             "audio_backend": backend_used,
-            "backend_origin": "local" if backend_used == "kokoro" else "cloud" if backend_used in {"minimax", "minimax_async"} else "source" if backend_used == "youtube_ingest" else backend_used,
+            "backend_origin": "local" if backend_used == "kokoro" else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
             "generated_at": station_iso_now(),
         }
         with open(meta_path, "w") as f:
@@ -1959,7 +2517,7 @@ def generate_segment(
                 "source_audio_path": source_context.audio_path,
                 "tts_backend": backend_used,
                 "audio_backend": backend_used,
-                "backend_origin": "local" if backend_used == "kokoro" else "cloud" if backend_used in {"minimax", "minimax_async"} else "source" if backend_used == "youtube_ingest" else backend_used,
+                "backend_origin": "local" if backend_used == "kokoro" else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
                 "generated_at": station_iso_now(),
             }, f, indent=2)
 
@@ -1972,6 +2530,7 @@ def generate_segment(
             segment_type=segment_type,
             topic=topic,
             speaker_labels=speaker_labels,
+            backend=backend,
             station_name=station_name,
             source_context=source_context,
         )
@@ -1986,8 +2545,16 @@ def generate_segment(
                 time.sleep(3)
 
         if not script:
-            log("  Failed to generate script")
-            return None
+            if _uses_secondary_host_dialogue(show, segment_type):
+                script = _fallback_two_host_script(show, segment_type, speaker_labels)
+                if script:
+                    log("  Using deterministic two-host fallback script.")
+                else:
+                    log("  Failed to generate script")
+                    return None
+            else:
+                log("  Failed to generate script")
+                return None
 
     word_count = len(script.split())
     est_minutes = word_count / 130
@@ -1998,16 +2565,13 @@ def generate_segment(
     show_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = station_now().strftime("%Y%m%d_%H%M%S")
-    topic_slug = topic[:30].lower()
-    for char in ' -:,\'".?!()':
-        topic_slug = topic_slug.replace(char, '_')
-    topic_slug = '_'.join(filter(None, topic_slug.split('_')))
+    topic_slug = _slugify_topic(topic)
 
     ext = ".mp3" if backend == "minimax" else ".wav"
     output_path = show_dir / f"{segment_type}_{topic_slug}_{timestamp}{ext}"
 
     # Preprocess for TTS
-    processed = preprocess_for_tts(script)
+    processed = preprocess_for_tts(script, backend=backend)
     processed_word_count = len(processed.split())
     min_acceptable = int(min_words * 0.8)
     if processed_word_count < min_acceptable:
@@ -2020,6 +2584,12 @@ def generate_segment(
     # Render audio
     log("  Rendering audio...")
     is_multi_voice = bool(get_segment_type_definition(segment_type).get("multi_voice", False))
+    if not is_multi_voice and re.search(
+        r"^(?:HOST|GUEST|HOST_A|HOST_B|HOSTA|HOSTB|[A-Z][A-Z\s.]+)(?:\s*\([^)]+\))?:",
+        processed,
+        re.MULTILINE,
+    ):
+        is_multi_voice = True
 
     use_minimax_final = backend == "minimax" and long_async_enabled and not is_multi_voice
     if backend == "minimax" and not is_multi_voice and not use_minimax_final and word_count >= 500:
@@ -2029,7 +2599,14 @@ def generate_segment(
         validate_voice = primary.get("voice_kokoro", show.voices.get("host", "am_michael"))
         validate_path = output_path.with_suffix(".wav")
         log(f"  Kokoro validation pass first using voice '{validate_voice}'...")
-        validation_ok = render_single_voice(processed, validate_path, validate_voice, backend="kokoro")
+        validation_ok = render_single_voice(
+            processed,
+            validate_path,
+            validate_voice,
+            backend="kokoro",
+            speed=float(voices.get("host_speed", 1.0)),
+            wpm=int(voices.get("host_wpm", 130)),
+        )
         if not validation_ok or not validate_path.exists():
             log("  Kokoro validation failed")
             return None
@@ -2062,24 +2639,52 @@ def generate_segment(
     elif backend == "minimax" and word_count >= 500 and not long_async_enabled:
         fallback_voice = primary.get("voice_kokoro", show.voices.get("host", "am_michael"))
         log(f"  Long-form MiniMax is disabled for this run; rendering Kokoro voice '{fallback_voice}' only.")
-        success = render_single_voice(processed, output_path.with_suffix(".wav"), fallback_voice, backend="kokoro")
+        success = render_single_voice(
+            processed,
+            output_path.with_suffix(".wav"),
+            fallback_voice,
+            backend="kokoro",
+            speed=float(voices.get("host_speed", 1.0)),
+            wpm=int(voices.get("host_wpm", 130)),
+        )
         if success:
             output_path = output_path.with_suffix(".wav")
             backend_used = "kokoro_longform"
     elif backend == "minimax":
         host_voice = voices.get("host", "Deep_Voice_Man")
-        success = render_single_voice(processed, output_path, host_voice, backend="minimax")
+        success = render_single_voice(
+            processed,
+            output_path,
+            host_voice,
+            backend="minimax",
+            speed=float(voices.get("host_speed", 1.0)),
+            wpm=int(voices.get("host_wpm", 130)),
+        )
         if not success:
             fallback_voice = primary.get("voice_kokoro", show.voices.get("host", "am_michael"))
             fallback_path = output_path.with_suffix(".wav")
             log(f"  MiniMax render failed; falling back to Kokoro voice '{fallback_voice}'")
-            success = render_single_voice(processed, fallback_path, fallback_voice, backend="kokoro")
+            success = render_single_voice(
+                processed,
+                fallback_path,
+                fallback_voice,
+                backend="kokoro",
+                speed=float(voices.get("host_speed", 1.0)),
+                wpm=int(voices.get("host_wpm", 130)),
+            )
             if success:
                 output_path = fallback_path
                 backend_used = "kokoro_fallback"
     else:
         host_voice = voices.get("host", "am_michael")
-        success = render_single_voice(processed, output_path, host_voice, backend=backend)
+        success = render_single_voice(
+            processed,
+            output_path,
+            host_voice,
+            backend=backend,
+            speed=float(voices.get("host_speed", 1.0)),
+            wpm=int(voices.get("host_wpm", 130)),
+        )
 
     if not success or not output_path.exists():
         log("  TTS rendering failed")
@@ -2111,7 +2716,7 @@ def generate_segment(
         "source_story_mode": bool(source_context.story_mode) if source_context else False,
         "tts_backend": backend_used,
         "audio_backend": backend_used,
-        "backend_origin": "local" if backend_used == "kokoro" else "cloud" if backend_used in {"minimax", "minimax_async"} else "source" if backend_used == "youtube_ingest" else backend_used,
+        "backend_origin": "local" if backend_used == "kokoro" else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
         "generated_at": station_iso_now(),
     }
     with open(meta_path, "w") as f:
@@ -2139,7 +2744,7 @@ def generate_segment(
             "source_audio_path": source_context.audio_path if source_context else "",
             "tts_backend": backend_used,
             "audio_backend": backend_used,
-            "backend_origin": "local" if backend_used == "kokoro" else "cloud" if backend_used in {"minimax", "minimax_async"} else "source" if backend_used == "youtube_ingest" else backend_used,
+            "backend_origin": "local" if backend_used == "kokoro" else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
             "generated_at": station_iso_now(),
         }, f, indent=2)
 

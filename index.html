@@ -396,8 +396,14 @@
 
     <script>
         // API Endpoints
-        const STREAM_URL = 'http://' + window.location.hostname + ':8000/stream';
-        const API_BASE = 'http://' + window.location.hostname + ':8001';
+        // When served through HTTPS, talk back to the same public origin so
+        // proxied deployments can route /now-playing and /stream consistently.
+        const API_BASE = window.location.protocol === 'https:'
+            ? window.location.origin
+            : 'http://' + window.location.hostname + ':8001';
+        const STREAM_URL = window.location.protocol === 'https:'
+            ? window.location.origin + '/stream'
+            : 'http://' + window.location.hostname + ':8000/stream';
 
         // Elements
         const audio = document.getElementById('audio-player');

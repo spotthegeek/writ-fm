@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Generate AI music bumpers for WRIT-FM shows using music-gen.server.
 
-Bumpers are 60-120 second instrumental tracks that play between talk segments.
-Each show has curated music captions reflecting its vibe and topic focus.
+Bumpers are short instrumental tracks that play between talk segments.
+Each show can configure its preferred bumper length range in schedule.yaml,
+and the generator trims MiniMax's longer output down to that range.
 
 Usage:
     uv run python music_bumper_generator.py --status
@@ -13,6 +14,7 @@ Usage:
 import argparse
 import json
 import random
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -21,7 +23,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "mac"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from schedule import load_schedule
+from schedule import load_schedule, merge_playback_sequence
 from time_utils import station_now, station_iso_now
 
 from music_gen_client import MUSIC_GEN_BASE_URL, generate_music, is_server_available
@@ -29,6 +31,7 @@ from helpers import run_claude
 from persona import get_host
 
 BUMPERS_DIR = PROJECT_ROOT / "output" / "music_bumpers"
+SCHEDULE_PATH = PROJECT_ROOT / "config" / "schedule.yaml"
 
 DEFAULT_MUSIC_POOL = [
     "cinematic radio bumper, warm synth bed, shortwave texture, polished and atmospheric",
@@ -309,9 +312,9 @@ _EXPANDED = {
 for _show_id, _new_pool in _EXPANDED.items():
     SHOW_MUSIC[_show_id].extend(_new_pool)
 
-# Duration range for bumpers (seconds)
-BUMPER_MIN = 120.0
-BUMPER_MAX = 240.0
+# Default duration range for bumpers (seconds). Show config can override this.
+BUMPER_MIN = 15.0
+BUMPER_MAX = 30.0
 
 
 def _generate_custom_lyrics(caption: str) -> str | None:
@@ -353,6 +356,89 @@ def _display_name(caption: str) -> str:
     first_part = caption.split(",")[0].strip()
     words = first_part.split()
     return " ".join(words[:3]).title()
+
+
+def _show_bumper_bounds(show_id: str) -> tuple[float, float]:
+    """Return the configured bumper duration range for a show."""
+    try:
+        schedule = load_schedule(SCHEDULE_PATH)
+        show = schedule.shows.get(show_id)
+        if show is not None:
+            resolved = merge_playback_sequence(show.show_type, show.playback_sequence)
+            min_seconds = float(resolved.get("bumper_min_seconds", BUMPER_MIN))
+            max_seconds = float(resolved.get("bumper_max_seconds", BUMPER_MAX))
+            return min_seconds, max(max_seconds, min_seconds)
+    except Exception:
+        pass
+
+    return BUMPER_MIN, BUMPER_MAX
+
+
+def _audio_duration_seconds(filepath: Path) -> float | None:
+    """Return the duration of an audio file using ffprobe."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(filepath),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        return float(result.stdout.strip())
+    except Exception:
+        return None
+
+
+def _trim_audio_to_duration(filepath: Path, duration_seconds: float) -> bool:
+    """Trim an MP3 to the requested duration using ffmpeg."""
+    if duration_seconds <= 0:
+        return False
+
+    tmp_path = filepath.with_suffix(".trim.mp3")
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(filepath),
+                "-t",
+                f"{duration_seconds:.2f}",
+                "-codec:a",
+                "libmp3lame",
+                "-b:a",
+                "256k",
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0 or not tmp_path.exists():
+            err = (result.stderr or result.stdout or "").strip()
+            if err:
+                print(f"[music_gen] ffmpeg trim failed: {err[:300]}")
+            return False
+        tmp_path.replace(filepath)
+        return True
+    except Exception as e:
+        print(f"[music_gen] Failed to trim audio: {e}")
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except Exception:
+            pass
+        return False
 
 
 def bumper_count(show_id: str) -> int:
@@ -419,7 +505,8 @@ def generate_one_bumper(show_id: str, verbose: bool = True,
             lyrics = "[Instrumental]"
             instrumental = True
 
-    duration = round(random.uniform(BUMPER_MIN, BUMPER_MAX), 1)
+    bumper_min, bumper_max = _show_bumper_bounds(show_id)
+    duration = round(random.uniform(bumper_min, bumper_max), 1)
 
     show_dir = BUMPERS_DIR / show_id
     show_dir.mkdir(parents=True, exist_ok=True)
@@ -440,6 +527,12 @@ def generate_one_bumper(show_id: str, verbose: bool = True,
 
     saved_path = audio_path if audio_path.exists() else audio_path.with_suffix(".mp3")
     if ok and saved_path.exists():
+        actual_duration = _audio_duration_seconds(saved_path)
+        if actual_duration is not None and actual_duration > duration + 0.25:
+            if _trim_audio_to_duration(saved_path, duration):
+                actual_duration = _audio_duration_seconds(saved_path) or duration
+            else:
+                actual_duration = _audio_duration_seconds(saved_path)
         host_id, host_name = _show_primary_host(show_id)
         meta = {
             "show_id": show_id,
@@ -447,7 +540,11 @@ def generate_one_bumper(show_id: str, verbose: bool = True,
             "host_name": host_name,
             "caption": caption,
             "display_name": _display_name(caption),
-            "duration": duration,
+            "duration": actual_duration or duration,
+            "requested_duration_seconds": duration,
+            "duration_seconds": actual_duration or duration,
+            "bumper_min_seconds": bumper_min,
+            "bumper_max_seconds": bumper_max,
             "instrumental": instrumental,
             "voice": "instrumental" if instrumental else "vocal",
             "generation_backend": "music-gen",
@@ -459,7 +556,8 @@ def generate_one_bumper(show_id: str, verbose: bool = True,
         }
         meta_path.write_text(json.dumps(meta, indent=2))
         if verbose:
-            print(f"  Saved: {saved_path.name} ({elapsed:.0f}s)")
+            actual_label = f"{int(actual_duration)}s" if actual_duration else f"{int(duration)}s"
+            print(f"  Saved: {saved_path.name} ({actual_label}, {elapsed:.0f}s gen)")
         return True
     else:
         if verbose:

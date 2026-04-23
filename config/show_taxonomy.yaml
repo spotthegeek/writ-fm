@@ -9,6 +9,19 @@ show_types:
     - deep_dive
     - interview
     - story
+    playback_sequence_defaults:
+      intro_enabled: true
+      intro_segment_type: show_intro
+      outro_enabled: true
+      outro_segment_type: show_outro
+      station_id_enabled: true
+      station_id_segment_type: station_id
+      station_id_every_n_speaking_segments: 3
+      station_id_before_bumper: true
+      bumper_count_between_talk_segments: 1
+      bumper_min_seconds: 15
+      bumper_max_seconds: 30
+      bumper_fade_seconds: 4
   hybrid:
     name: Hybrid
     description: Research-led shows that can also ingest Reddit, YouTube, or web sources.
@@ -21,6 +34,19 @@ show_types:
     - panel
     - reddit_post
     - youtube
+    playback_sequence_defaults:
+      intro_enabled: true
+      intro_segment_type: show_intro
+      outro_enabled: true
+      outro_segment_type: show_outro
+      station_id_enabled: true
+      station_id_segment_type: station_id
+      station_id_every_n_speaking_segments: 3
+      station_id_before_bumper: true
+      bumper_count_between_talk_segments: 1
+      bumper_min_seconds: 15
+      bumper_max_seconds: 30
+      bumper_fade_seconds: 4
   content_ingest:
     name: Content Ingest
     description: Feed-driven shows that pull from Reddit, YouTube, and other source
@@ -32,6 +58,19 @@ show_types:
     - reddit_post
     - reddit_storytelling
     - youtube
+    playback_sequence_defaults:
+      intro_enabled: true
+      intro_segment_type: show_intro
+      outro_enabled: true
+      outro_segment_type: show_outro
+      station_id_enabled: true
+      station_id_segment_type: station_id
+      station_id_every_n_speaking_segments: 3
+      station_id_before_bumper: true
+      bumper_count_between_talk_segments: 1
+      bumper_min_seconds: 15
+      bumper_max_seconds: 30
+      bumper_fade_seconds: 4
   music_first:
     name: Music First
     description: Mostly music bumpers and short IDs, with occasional editorial inserts.
@@ -42,6 +81,19 @@ show_types:
     - station_id
     - show_intro
     - show_outro
+    playback_sequence_defaults:
+      intro_enabled: true
+      intro_segment_type: show_intro
+      outro_enabled: true
+      outro_segment_type: show_outro
+      station_id_enabled: true
+      station_id_segment_type: station_id
+      station_id_every_n_speaking_segments: 3
+      station_id_before_bumper: true
+      bumper_count_between_talk_segments: 1
+      bumper_min_seconds: 15
+      bumper_max_seconds: 30
+      bumper_fade_seconds: 4
   live_community:
     name: Live / Community
     description: Listener-facing and conversational shows with lighter automation.
@@ -52,6 +104,19 @@ show_types:
     - listener_mailbag
     - panel
     - interview
+    playback_sequence_defaults:
+      intro_enabled: true
+      intro_segment_type: show_intro
+      outro_enabled: true
+      outro_segment_type: show_outro
+      station_id_enabled: true
+      station_id_segment_type: station_id
+      station_id_every_n_speaking_segments: 3
+      station_id_before_bumper: true
+      bumper_count_between_talk_segments: 1
+      bumper_min_seconds: 15
+      bumper_max_seconds: 30
+      bumper_fade_seconds: 4
   news_current_events:
     name: News / Current Events
     description: Source-driven current events shows built from the latest feeds and
@@ -63,6 +128,19 @@ show_types:
     - news_analysis
     - deep_dive
     - panel
+    playback_sequence_defaults:
+      intro_enabled: true
+      intro_segment_type: show_intro
+      outro_enabled: true
+      outro_segment_type: show_outro
+      station_id_enabled: true
+      station_id_segment_type: station_id
+      station_id_every_n_speaking_segments: 3
+      station_id_before_bumper: true
+      bumper_count_between_talk_segments: 1
+      bumper_min_seconds: 15
+      bumper_max_seconds: 30
+      bumper_fade_seconds: 4
   listener_driven:
     name: Listener Driven
     description: Shows built from listener prompts, calls, mailbag letters, and feedback.
@@ -73,12 +151,23 @@ show_types:
     - listener_mailbag
     - listener_response
     - interview
+    playback_sequence_defaults:
+      intro_enabled: true
+      intro_segment_type: show_intro
+      outro_enabled: true
+      outro_segment_type: show_outro
+      station_id_enabled: true
+      station_id_segment_type: station_id
+      station_id_every_n_speaking_segments: 3
+      station_id_before_bumper: true
+      bumper_count_between_talk_segments: 1
+      bumper_min_seconds: 15
+      bumper_max_seconds: 30
+      bumper_fade_seconds: 4
 topic_focuses:
 - philosophy
 - night_philosophy
-- music_history
 - current_events
-- soul_music
 - culture
 - listeners
 - technology

@@ -61,7 +61,26 @@ def get_time_of_day(hour: int | None = None, profile: str = "default") -> str:
     return "late_night"
 
 
-def preprocess_for_tts(text: str, *, include_cough: bool = True) -> str:
+def preprocess_for_tts(text: str, *, include_cough: bool = True, backend: str = "kokoro") -> str:
+    backend = (backend or "kokoro").strip().lower()
+
+    if backend == "minimax":
+        text = text or ""
+        # Preserve MiniMax-native interjection tags and translate our legacy cue style.
+        tag_map = {
+            "[laugh]": "(laughs)",
+            "[chuckle]": "(chuckle)",
+            "[cough]": "(coughs)" if include_cough else "",
+            "[sigh]": "(sighs)",
+            "[pause]": "<#0.4#>",
+        }
+        for src, dst in tag_map.items():
+            text = re.sub(re.escape(src), dst, text, flags=re.IGNORECASE)
+        text = re.sub(r"\[(?![^\]]*\])([^\]]+)\]", " ", text)
+        text = text.replace('"', "")
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
     # Drop standalone stage-direction lines before handing text to TTS.
     lines = []
     for raw_line in text.splitlines():

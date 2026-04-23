@@ -16,6 +16,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import threading
 import uuid
@@ -31,6 +32,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import scheduler as _sched
+from mac.schedule import (
+    ScheduleError as StationScheduleError,
+    default_playback_sequence_for_show_type,
+    load_schedule as validate_station_schedule,
+    merge_playback_sequence,
+    normalize_playback_sequence,
+    playback_sequence_overrides,
+)
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -129,6 +138,13 @@ def load_schedule() -> dict:
 def save_schedule(data: dict):
     with open(SCHEDULE_PATH, "w") as f:
         yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+def _validate_schedule_config(data: dict) -> None:
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=True) as tmp:
+        yaml.dump(data, tmp, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        tmp.flush()
+        validate_station_schedule(Path(tmp.name))
 
 
 def _validate_timezone_name(timezone_name: str) -> str:
@@ -236,9 +252,13 @@ def _hosts_yaml_to_api(hid: str, h: dict) -> dict:
         "anti_patterns": h.get("anti_patterns", ""),
         "tts_voice": h.get("tts_voice", "am_michael"),
         "voice_minimax": h.get("voice_minimax", "Deep_Voice_Man"),
+        "voice_google": h.get("voice_google", "Kore"),
         "tts_backend": h.get("tts_backend", "kokoro"),
         "topics": h.get("topics", []),
         "speaking_pace_wpm": h.get("speaking_pace_wpm", 130),
+        "speaking_pace_wpm_kokoro": h.get("speaking_pace_wpm_kokoro", h.get("speaking_pace_wpm", 130)),
+        "speaking_pace_wpm_minimax": h.get("speaking_pace_wpm_minimax", h.get("speaking_pace_wpm", 130)),
+        "speaking_pace_wpm_google": h.get("speaking_pace_wpm_google", h.get("speaking_pace_wpm", 130)),
     }
 
 
@@ -254,8 +274,12 @@ def get_hosts_from_persona() -> dict[str, dict]:
                 "id": hid,
                 "name": h.get("name", hid),
                 "tts_voice": h.get("tts_voice", "am_michael"),
+                "voice_google": h.get("voice_google", "Kore"),
                 "topics": h.get("topics", []),
                 "speaking_pace_wpm": h.get("speaking_pace_wpm", 130),
+                "speaking_pace_wpm_kokoro": h.get("speaking_pace_wpm_kokoro", h.get("speaking_pace_wpm", 130)),
+                "speaking_pace_wpm_minimax": h.get("speaking_pace_wpm_minimax", h.get("speaking_pace_wpm", 130)),
+                "speaking_pace_wpm_google": h.get("speaking_pace_wpm_google", h.get("speaking_pace_wpm", 130)),
         }
             for hid, h in persona.HOSTS.items()
         }
@@ -281,6 +305,7 @@ def _default_host_assignment(host_id: str, role: str = "primary") -> dict:
         "tts_backend": host.get("tts_backend", "kokoro"),
         "voice_kokoro": host.get("tts_voice", "am_michael"),
         "voice_minimax": host.get("voice_minimax", "Deep_Voice_Man"),
+        "voice_google": host.get("voice_google", "Kore"),
     }
 
 
@@ -503,6 +528,9 @@ def _segment_type_to_api(segment_type_id: str, config: dict) -> dict:
 
 
 def _show_type_to_api(show_type_id: str, config: dict) -> dict:
+    sequence_defaults = config.get("playback_sequence_defaults")
+    if not isinstance(sequence_defaults, dict):
+        sequence_defaults = default_playback_sequence_for_show_type(show_type_id)
     return {
         "id": show_type_id,
         "name": config.get("name", show_type_id.replace("_", " ").title()),
@@ -511,11 +539,13 @@ def _show_type_to_api(show_type_id: str, config: dict) -> dict:
         "uses_source_rules": bool(config.get("uses_source_rules", False)),
         "uses_bumper_style": bool(config.get("uses_bumper_style", True)),
         "default_segment_types": list(config.get("default_segment_types", [])),
+        "playback_sequence_defaults": normalize_playback_sequence(sequence_defaults, show_type_id),
     }
 
 
 def get_show_type_definitions() -> dict[str, dict]:
     taxonomy = load_show_taxonomy().get("show_types", {})
+    sequence_defaults = default_playback_sequence_for_show_type("research")
     defaults = {
         "research": {
             "name": "Research Based",
@@ -524,6 +554,7 @@ def get_show_type_definitions() -> dict[str, dict]:
             "uses_source_rules": True,
             "uses_bumper_style": True,
             "default_segment_types": ["deep_dive", "interview", "story"],
+            "playback_sequence_defaults": dict(sequence_defaults),
         },
         "hybrid": {
             "name": "Hybrid",
@@ -532,6 +563,7 @@ def get_show_type_definitions() -> dict[str, dict]:
             "uses_source_rules": True,
             "uses_bumper_style": True,
             "default_segment_types": ["deep_dive", "interview", "panel", "reddit_post", "youtube"],
+            "playback_sequence_defaults": dict(sequence_defaults),
         },
         "content_ingest": {
             "name": "Content Ingest",
@@ -540,6 +572,7 @@ def get_show_type_definitions() -> dict[str, dict]:
             "uses_source_rules": True,
             "uses_bumper_style": True,
             "default_segment_types": ["reddit_post", "reddit_storytelling", "youtube"],
+            "playback_sequence_defaults": dict(sequence_defaults),
         },
         "music_first": {
             "name": "Music First",
@@ -548,6 +581,7 @@ def get_show_type_definitions() -> dict[str, dict]:
             "uses_source_rules": False,
             "uses_bumper_style": True,
             "default_segment_types": ["station_id", "show_intro", "show_outro"],
+            "playback_sequence_defaults": dict(sequence_defaults),
         },
         "live_community": {
             "name": "Live / Community",
@@ -556,6 +590,7 @@ def get_show_type_definitions() -> dict[str, dict]:
             "uses_source_rules": True,
             "uses_bumper_style": True,
             "default_segment_types": ["listener_mailbag", "panel", "interview"],
+            "playback_sequence_defaults": dict(sequence_defaults),
         },
         "news_current_events": {
             "name": "News / Current Events",
@@ -564,6 +599,7 @@ def get_show_type_definitions() -> dict[str, dict]:
             "uses_source_rules": True,
             "uses_bumper_style": True,
             "default_segment_types": ["news_analysis", "deep_dive", "panel"],
+            "playback_sequence_defaults": dict(sequence_defaults),
         },
         "listener_driven": {
             "name": "Listener Driven",
@@ -572,6 +608,7 @@ def get_show_type_definitions() -> dict[str, dict]:
             "uses_source_rules": True,
             "uses_bumper_style": True,
             "default_segment_types": ["listener_mailbag", "listener_response", "interview"],
+            "playback_sequence_defaults": dict(sequence_defaults),
         },
     }
     merged = dict(defaults)
@@ -641,6 +678,32 @@ def get_taxonomy_api() -> dict[str, Any]:
 class ShowTaxonomyUpdate(BaseModel):
     topic_focuses: list[str] = []
     bumper_styles: list[str] = []
+    show_types: dict[str, Any] | None = None
+
+
+def _normalize_show_type_taxonomy(show_type_id: str, config: dict[str, Any] | None, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
+    raw = config or {}
+    base = dict(fallback or {})
+    if "name" in raw:
+        base["name"] = str(raw.get("name", base.get("name", show_type_id))).strip() or base.get("name", show_type_id)
+    if "description" in raw:
+        base["description"] = str(raw.get("description", base.get("description", ""))).strip()
+    if "uses_topic_focus" in raw:
+        base["uses_topic_focus"] = bool(raw.get("uses_topic_focus"))
+    if "uses_source_rules" in raw:
+        base["uses_source_rules"] = bool(raw.get("uses_source_rules"))
+    if "uses_bumper_style" in raw:
+        base["uses_bumper_style"] = bool(raw.get("uses_bumper_style"))
+    if "default_segment_types" in raw:
+        base["default_segment_types"] = [str(s).strip() for s in raw.get("default_segment_types", []) if str(s).strip()]
+    seq = raw.get("playback_sequence_defaults")
+    if isinstance(seq, dict):
+        base["playback_sequence_defaults"] = normalize_playback_sequence(seq, show_type_id)
+    elif "playback_sequence_defaults" in base:
+        base["playback_sequence_defaults"] = normalize_playback_sequence(base["playback_sequence_defaults"], show_type_id)
+    else:
+        base["playback_sequence_defaults"] = default_playback_sequence_for_show_type(show_type_id)
+    return base
 
 
 @app.put("/api/show-taxonomy")
@@ -648,6 +711,16 @@ def update_show_taxonomy(update: ShowTaxonomyUpdate):
     data = load_show_taxonomy()
     data["topic_focuses"] = _normalise_taxonomy_items(update.topic_focuses)
     data["bumper_styles"] = _normalise_taxonomy_items(update.bumper_styles)
+    existing_show_types = data.get("show_types", {}) if isinstance(data.get("show_types", {}), dict) else {}
+    if update.show_types is not None:
+        normalized_show_types = {}
+        for sid, cfg in existing_show_types.items():
+            if isinstance(sid, str) and sid.strip():
+                normalized_show_types[sid] = _normalize_show_type_taxonomy(sid, cfg, existing_show_types.get(sid))
+        for sid, cfg in update.show_types.items():
+            if isinstance(sid, str) and sid.strip():
+                normalized_show_types[sid] = _normalize_show_type_taxonomy(sid, cfg, existing_show_types.get(sid))
+        data["show_types"] = normalized_show_types
     save_show_taxonomy(data)
     return get_taxonomy_api()
 
@@ -909,6 +982,8 @@ def _backend_label(backend: str | None) -> str:
         return "Kokoro"
     if value.startswith("minimax"):
         return "MiniMax"
+    if value.startswith("google"):
+        return "Google Gemini"
     if value == "youtube_ingest":
         return "YouTube ingest"
     if value in {"music-gen", "music_gen", "musicgen"}:
@@ -921,6 +996,8 @@ def _backend_origin_label(backend: str | None) -> str:
     if value.startswith("kokoro"):
         return "local"
     if value.startswith("minimax"):
+        return "cloud"
+    if value.startswith("google"):
         return "cloud"
     if value == "youtube_ingest":
         return "source"
@@ -944,17 +1021,19 @@ def _show_primary_host_meta(show_id: str, schedule_data: dict[str, Any] | None =
             "tts_backend": show.get("tts_backend", "kokoro"),
             "voice_kokoro": (show.get("voices") or {}).get("host", "am_michael"),
             "voice_minimax": "Deep_Voice_Man",
+            "voice_google": "Kore",
         }
     roster = get_all_hosts()
     host_id = str(primary.get("id") or show.get("host") or show_id).strip() or show_id
     host_entry = roster.get(host_id, {})
     host_name = host_entry.get("name") or host_id
     backend = str(primary.get("tts_backend") or show.get("tts_backend") or host_entry.get("tts_backend") or "kokoro")
-    voice = (
-        primary.get("voice_kokoro")
-        if backend != "minimax"
-        else primary.get("voice_minimax")
-    ) or (show.get("voices") or {}).get("host") or host_entry.get("tts_voice") or "am_michael"
+    if backend == "minimax":
+        voice = primary.get("voice_minimax") or host_entry.get("voice_minimax") or "Deep_Voice_Man"
+    elif backend == "google":
+        voice = primary.get("voice_google") or host_entry.get("voice_google") or "Kore"
+    else:
+        voice = primary.get("voice_kokoro") or (show.get("voices") or {}).get("host") or host_entry.get("tts_voice") or "am_michael"
     return {
         "host_id": host_id,
         "host_name": host_name,
@@ -1191,6 +1270,10 @@ def _normalize_show(show_id: str, show: dict) -> dict:
         s["guests"] = []
     if "content_lifecycle" not in s:
         s["content_lifecycle"] = {}
+    s["playback_sequence"] = merge_playback_sequence(
+        s["show_type"],
+        s.get("playback_sequence") if isinstance(s.get("playback_sequence"), dict) else s.get("sequence") if isinstance(s.get("sequence"), dict) else {},
+    )
     for idx, host in enumerate(s["hosts"]):
         host_id = host.get("id")
         roster = all_hosts.get(host_id, {})
@@ -1211,6 +1294,7 @@ class ShowUpdate(BaseModel):
     guests: list[dict] = []
     segment_types: list[str]
     bumper_style: str
+    playback_sequence: dict = {}
     content_lifecycle: dict = {}
     generation: dict = {}
 
@@ -1249,6 +1333,7 @@ def update_show(show_id: str, update: ShowUpdate):
     show["segment_types"] = segment_types
     show["bumper_style"] = update.bumper_style
     show["hosts"] = update.hosts
+    show["playback_sequence"] = playback_sequence_overrides(update.show_type, update.playback_sequence)
     show["content_lifecycle"] = update.content_lifecycle
     show["generation"] = update.generation
 
@@ -1256,10 +1341,24 @@ def update_show(show_id: str, update: ShowUpdate):
     primary = next((h for h in update.hosts if h.get("role") == "primary"), update.hosts[0] if update.hosts else {})
     show["host"] = primary.get("id", "liminal_operator")
     show["tts_backend"] = primary.get("tts_backend", "kokoro")
-    voices = {"host": primary.get("voice_kokoro", "am_michael")}
+    if show["tts_backend"] == "minimax":
+        legacy_host_voice = primary.get("voice_minimax", "Deep_Voice_Man")
+        legacy_guest_voice = "Wise_Woman"
+    elif show["tts_backend"] == "google":
+        legacy_host_voice = primary.get("voice_google", "Kore")
+        legacy_guest_voice = "Puck"
+    else:
+        legacy_host_voice = primary.get("voice_kokoro", "am_michael")
+        legacy_guest_voice = "af_bella"
+    voices = {"host": legacy_host_voice}
     for h in update.hosts:
         if h.get("role") in ("guest", "co-host", "secondary"):
-            voices["guest"] = h.get("voice_kokoro", "af_bella")
+            if show["tts_backend"] == "minimax":
+                voices["guest"] = h.get("voice_minimax", legacy_guest_voice)
+            elif show["tts_backend"] == "google":
+                voices["guest"] = h.get("voice_google", legacy_guest_voice)
+            else:
+                voices["guest"] = h.get("voice_kokoro", legacy_guest_voice)
     show["voices"] = voices
 
     shows[show_id] = show
@@ -1302,13 +1401,19 @@ def create_show(show_id: str, update: ShowUpdate):
         "segment_types": segment_types,
         "bumper_style": update.bumper_style,
         "hosts": update.hosts,
+        "playback_sequence": playback_sequence_overrides(update.show_type, update.playback_sequence),
         "content_lifecycle": update.content_lifecycle,
         "generation": update.generation,
     }
     primary = next((h for h in update.hosts if h.get("role") == "primary"), update.hosts[0] if update.hosts else {})
     show["host"] = primary.get("id", "liminal_operator")
     show["tts_backend"] = primary.get("tts_backend", "kokoro")
-    show["voices"] = {"host": primary.get("voice_kokoro", "am_michael")}
+    if show["tts_backend"] == "minimax":
+        show["voices"] = {"host": primary.get("voice_minimax", "Deep_Voice_Man")}
+    elif show["tts_backend"] == "google":
+        show["voices"] = {"host": primary.get("voice_google", "Kore")}
+    else:
+        show["voices"] = {"host": primary.get("voice_kokoro", "am_michael")}
 
     shows[show_id] = show
     data["shows"] = shows
@@ -1353,6 +1458,10 @@ def update_schedule(update: ScheduleUpdate):
     data = load_schedule()
     data["timezone"] = _validate_timezone_name(update.timezone)
     data["schedule"] = {"base": update.base, "overrides": update.overrides}
+    try:
+        _validate_schedule_config(data)
+    except StationScheduleError as exc:
+        raise HTTPException(400, str(exc)) from exc
     save_schedule(data)
     return {"ok": True}
 
@@ -1427,7 +1536,11 @@ class HostUpdate(BaseModel):
     tts_backend: str = "kokoro"
     tts_voice: str = "am_michael"
     voice_minimax: str = "Deep_Voice_Man"
+    voice_google: str = "Kore"
     speaking_pace_wpm: int = 130
+    speaking_pace_wpm_kokoro: int = 130
+    speaking_pace_wpm_minimax: int = 130
+    speaking_pace_wpm_google: int = 130
     topics: list[str] = []
 
 
@@ -1441,7 +1554,11 @@ def _host_update_to_yaml(update: HostUpdate) -> dict:
         "tts_backend": update.tts_backend,
         "tts_voice": update.tts_voice,
         "voice_minimax": update.voice_minimax,
+        "voice_google": update.voice_google,
         "speaking_pace_wpm": update.speaking_pace_wpm,
+        "speaking_pace_wpm_kokoro": update.speaking_pace_wpm_kokoro,
+        "speaking_pace_wpm_minimax": update.speaking_pace_wpm_minimax,
+        "speaking_pace_wpm_google": update.speaking_pace_wpm_google,
         "topics": update.topics,
     }
 
@@ -1505,8 +1622,8 @@ def _preview_text() -> str:
 def tts_preview(body: dict, background_tasks: BackgroundTasks):
     """Generate a short TTS sample for voice auditioning.
 
-    Body: { backend: "kokoro"|"minimax", voice: "...", text?: "..." }
-    Returns audio file (WAV for Kokoro, MP3 for MiniMax).
+    Body: { backend: "kokoro"|"minimax"|"google", voice: "...", text?: "..." }
+    Returns audio file (WAV for Kokoro/Google, MP3 for MiniMax).
     """
     import importlib.util
     import tempfile
@@ -1559,6 +1676,26 @@ def tts_preview(body: dict, background_tasks: BackgroundTasks):
 
         _PREVIEW_CACHE[cache_key] = tmp
         return FileResponse(str(tmp), media_type="audio/mpeg", filename="preview.mp3")
+    elif backend == "google":
+        api_key = os.environ.get("GOOGLE_TTS_API_KEY", "") or os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")
+        if not api_key:
+            raise HTTPException(503, "GOOGLE_TTS_API_KEY or GEMINI_API_KEY not set")
+
+        spec = importlib.util.spec_from_file_location(
+            "google_tts", PROJECT_ROOT / "mac" / "google_tts.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        os.environ["GOOGLE_TTS_API_KEY"] = api_key
+        spec.loader.exec_module(mod)
+
+        tmp = Path(tempfile.mktemp(suffix=".wav", prefix="writ_preview_"))
+        ok = mod.generate_speech(text, tmp, voice_id=voice)
+        if not ok or not tmp.exists():
+            tmp.unlink(missing_ok=True)
+            raise HTTPException(500, "Google Gemini TTS preview failed")
+
+        _PREVIEW_CACHE[cache_key] = tmp
+        return FileResponse(str(tmp), media_type="audio/wav", filename="preview.wav")
 
     else:
         raise HTTPException(400, f"Unknown TTS backend: {backend!r}")
@@ -1578,7 +1715,7 @@ def get_voice_samples():
 def ensure_voice_samples_api(body: dict | None = None):
     body = body or {}
     force = bool(body.get("force", False))
-    backends = body.get("backends") or ["kokoro", "minimax"]
+    backends = body.get("backends") or ["kokoro", "minimax", "google"]
     created = ensure_voice_samples(backends=backends, force=force)
     return {"ok": True, "created": created}
 
@@ -1869,8 +2006,10 @@ def get_generate_options():
         "show_types": taxonomy["show_types"],
         "kokoro_voices": [v["voice"] for v in voices["kokoro"]],
         "minimax_voices": [v["voice"] for v in voices["minimax"]],
+        "google_voices": [v["voice"] for v in voices["google"]],
         "kokoro_voice_defs": voices["kokoro"],
         "minimax_voice_defs": voices["minimax"],
+        "google_voice_defs": voices["google"],
         "source_types": taxonomy["source_types"],
         "shows": list(load_schedule().get("shows", {}).keys()),
     }
@@ -1886,13 +2025,14 @@ class GenerateRequest(BaseModel):
     source_value: str = ""
     count: int = 1
     # Override TTS for this run
-    tts_backend: str = ""   # "kokoro", "minimax", or "" to use show default
+    tts_backend: str = ""   # "kokoro", "minimax", "google", or "" to use show default
     minimax_long_async: bool = False
     host_voice: str = ""    # override primary host voice
     # Guest for this run
     guest_name: str = ""
     guest_voice_kokoro: str = "af_bella"
     guest_voice_minimax: str = "Wise_Woman"
+    guest_voice_google: str = "Puck"
     guest_tts_backend: str = "kokoro"
 
 
@@ -1956,6 +2096,8 @@ def _run_generation_job(job_id: str, req: GenerateRequest):
         env["MINIMAX_API_KEY"] = env.get("MINIMAX_API_KEY", "")
         env["MINIMAX_TOKEN_PLAN_API_KEY"] = env.get("MINIMAX_TOKEN_PLAN_API_KEY", "")
         env["MINIMAX_MUSIC_MODEL"] = env.get("MINIMAX_MUSIC_MODEL", "music-2.6")
+        env["GOOGLE_TTS_API_KEY"] = env.get("GOOGLE_TTS_API_KEY", "") or env.get("GEMINI_API_KEY", "") or env.get("GOOGLE_API_KEY", "")
+        env["GOOGLE_TTS_MODEL"] = env.get("GOOGLE_TTS_MODEL", "gemini-3.1-flash-tts-preview")
 
         # Determine TTS backend
         tts_backend = req.tts_backend or show.get("tts_backend", "kokoro")
@@ -2013,6 +2155,7 @@ def _run_generation_job(job_id: str, req: GenerateRequest):
                     env["WRIT_GUEST_NAME"] = req.guest_name
                     env["WRIT_GUEST_VOICE_KOKORO"] = req.guest_voice_kokoro
                     env["WRIT_GUEST_VOICE_MINIMAX"] = req.guest_voice_minimax
+                    env["WRIT_GUEST_VOICE_GOOGLE"] = req.guest_voice_google
                     env["WRIT_GUEST_TTS_BACKEND"] = req.guest_tts_backend
 
             if is_youtube_ingest:

@@ -343,6 +343,7 @@
     </div>
     <button class="btn btn-primary" onclick="saveSchedule()">Save Schedule</button>
   </div>
+  <div id="schedule-status" class="text-xs text-gray-500 mb-4"></div>
 
   <div class="card p-4 mb-4">
     <div class="section-title">Base Schedule (all days unless overridden)</div>
@@ -470,7 +471,7 @@
                   <option value="vocal">Vocal (AI lyrics from style prompt)</option>
                 </select>
               </div>
-              <div class="text-xs text-gray-600">Generated via MiniMax music-2.6 · ~130s per track · for vocal tracks, lyrics are generated from the style prompt before rendering</div>
+              <div class="text-xs text-gray-600">Generated via MiniMax music-2.6 · trimmed to the show's bumper range · for vocal tracks, lyrics are generated from the style prompt before rendering</div>
             </div>
           </div>
           <div>
@@ -489,6 +490,7 @@
               <option value="">Use show default</option>
               <option value="kokoro">Kokoro (local)</option>
               <option value="minimax">MiniMax (cloud)</option>
+              <option value="google">Google Gemini (cloud)</option>
             </select>
           </div>
           <div id="gen-minimax-long-row" class="flex items-start gap-2">
@@ -526,7 +528,7 @@
             <label class="text-xs text-gray-400 block mb-1">Guest Character</label>
             <input id="gen-guest-name" class="input" placeholder="e.g. a retired jazz producer from Detroit" />
           </div>
-          <div class="grid grid-cols-2 gap-2">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
             <div>
               <label class="text-xs text-gray-400 block mb-1">Guest Voice (Kokoro)</label>
               <div class="flex gap-2">
@@ -541,12 +543,20 @@
                 <button id="gen-guest-voice-minimax-btn" class="btn btn-ghost text-xs px-3 shrink-0" onclick="previewGuestVoice('minimax', 'gen-guest-voice-minimax', 'gen-guest-voice-minimax-btn')" title="Play voice sample">▶</button>
               </div>
             </div>
+            <div>
+              <label class="text-xs text-gray-400 block mb-1">Guest Voice (Google Gemini)</label>
+              <div class="flex gap-2">
+                <select id="gen-guest-voice-google" class="input flex-1" onchange="syncVoiceSampleButtonFromSelect('gen-guest-voice-google', 'gen-guest-voice-google-btn', 'google')"></select>
+                <button id="gen-guest-voice-google-btn" class="btn btn-ghost text-xs px-3 shrink-0" onclick="previewGuestVoice('google', 'gen-guest-voice-google', 'gen-guest-voice-google-btn')" title="Play voice sample">▶</button>
+              </div>
+            </div>
           </div>
           <div>
             <label class="text-xs text-gray-400 block mb-1">Guest TTS Backend</label>
             <select id="gen-guest-tts" class="input">
               <option value="kokoro">Kokoro</option>
               <option value="minimax">MiniMax</option>
+              <option value="google">Google Gemini</option>
             </select>
           </div>
         </div>
@@ -705,10 +715,21 @@
 <!-- ===== HOST MODAL ===== -->
 <div id="host-modal" class="modal-overlay hidden">
   <div class="modal" style="width:720px">
-    <h2 class="text-base font-bold mb-4" id="host-modal-title">Edit Host</h2>
+    <div class="flex items-start justify-between gap-4 mb-3">
+      <div>
+        <h2 class="text-base font-bold" id="host-modal-title">Edit Host</h2>
+        <div class="text-xs text-gray-500 mt-1">Keep character writing and voice configuration separate.</div>
+      </div>
+      <button class="btn btn-ghost text-xs px-3" onclick="closeHostModal()">Close</button>
+    </div>
     <input id="host-modal-id" type="hidden" />
 
-    <div class="space-y-4">
+    <div class="show-modal-tabs mb-4">
+      <button id="host-modal-tab-profile" class="show-tab-btn active" onclick="switchHostModalTab('profile', this)">Profile</button>
+      <button id="host-modal-tab-voices" class="show-tab-btn" onclick="switchHostModalTab('voices', this)">Voices</button>
+    </div>
+
+    <div id="host-modal-panel-profile" class="space-y-4">
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="text-xs text-gray-400 block mb-1">Host ID <span class="text-gray-600">(slug, no spaces)</span></label>
@@ -744,25 +765,41 @@
         </div>
       </details>
 
-      <div class="grid grid-cols-3 gap-3">
+      <div>
+        <label class="text-xs text-gray-400 block mb-1">Topics <span class="text-gray-600">(comma-separated)</span></label>
+        <input id="host-modal-topics" class="input" placeholder="philosophy, music_history" />
+      </div>
+    </div>
+
+    <div id="host-modal-panel-voices" class="space-y-4 hidden">
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
         <div>
           <label class="text-xs text-gray-400 block mb-1">Default TTS Backend</label>
           <select id="host-modal-tts-backend" class="input">
             <option value="kokoro">Kokoro (local)</option>
             <option value="minimax">MiniMax (cloud)</option>
+            <option value="google">Google Gemini (cloud)</option>
           </select>
         </div>
         <div>
-          <label class="text-xs text-gray-400 block mb-1">Speaking Pace (wpm)</label>
+          <label class="text-xs text-gray-400 block mb-1">General WPM</label>
           <input id="host-modal-pace" type="number" min="80" max="220" value="130" class="input" />
         </div>
         <div>
-          <label class="text-xs text-gray-400 block mb-1">Topics <span class="text-gray-600">(comma-separated)</span></label>
-          <input id="host-modal-topics" class="input" placeholder="philosophy, music_history" />
+          <label class="text-xs text-gray-400 block mb-1">Kokoro WPM</label>
+          <input id="host-modal-pace-kokoro" type="number" min="80" max="220" value="130" class="input" />
+        </div>
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">MiniMax WPM</label>
+          <input id="host-modal-pace-minimax" type="number" min="80" max="220" value="130" class="input" />
+        </div>
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">Google WPM</label>
+          <input id="host-modal-pace-google" type="number" min="80" max="220" value="130" class="input" />
         </div>
       </div>
 
-      <div class="grid grid-cols-2 gap-4">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div>
           <label class="text-xs text-gray-400 block mb-1">Kokoro Voice</label>
           <div class="flex gap-2">
@@ -775,6 +812,13 @@
           <div class="flex gap-2">
             <select id="host-modal-voice-minimax" class="input flex-1" onchange="syncVoiceSampleButtonFromSelect('host-modal-voice-minimax', 'host-modal-voice-minimax-btn', 'minimax')"></select>
             <button id="host-modal-voice-minimax-btn" class="btn btn-ghost text-xs px-3 shrink-0" onclick="previewHostVoice('minimax', 'host-modal-voice-minimax', 'host-modal-voice-minimax-btn')" title="Play voice sample">▶</button>
+          </div>
+        </div>
+        <div>
+          <label class="text-xs text-gray-400 block mb-1">Google Gemini Voice</label>
+          <div class="flex gap-2">
+            <select id="host-modal-voice-google" class="input flex-1" onchange="syncVoiceSampleButtonFromSelect('host-modal-voice-google', 'host-modal-voice-google-btn', 'google')"></select>
+            <button id="host-modal-voice-google-btn" class="btn btn-ghost text-xs px-3 shrink-0" onclick="previewHostVoice('google', 'host-modal-voice-google', 'host-modal-voice-google-btn')" title="Play voice sample">▶</button>
           </div>
         </div>
       </div>
@@ -806,6 +850,7 @@
       <button class="tab-btn show-modal-tab-btn active px-3 py-1.5 text-xs rounded" onclick="switchShowModalTab('basics', this)">Basics</button>
       <button class="tab-btn show-modal-tab-btn px-3 py-1.5 text-xs rounded" onclick="switchShowModalTab('sources', this)">Source Rules</button>
       <button class="tab-btn show-modal-tab-btn px-3 py-1.5 text-xs rounded" onclick="switchShowModalTab('content', this)">Content & Hosts</button>
+      <button class="tab-btn show-modal-tab-btn px-3 py-1.5 text-xs rounded" onclick="switchShowModalTab('playback', this)">Playback</button>
       <button class="tab-btn show-modal-tab-btn px-3 py-1.5 text-xs rounded" onclick="switchShowModalTab('automation', this)">Automation</button>
     </div>
 
@@ -887,6 +932,14 @@
             <div class="text-xs text-gray-500 mb-3">Used for interview, panel, and mailbag-style segments.</div>
             <div id="modal-guests" class="space-y-2"></div>
           </div>
+        </div>
+      </div>
+
+      <div id="show-modal-pane-playback" class="modal-pane show-modal-pane hidden space-y-4">
+        <div class="card p-4">
+          <div class="section-title">Playback Sequence</div>
+          <div class="text-xs text-gray-500 mb-3">These settings control how the streamer orders intros, speaking segments, station IDs, and bumpers for this show.</div>
+          <div id="modal-playback-sequence" class="space-y-4"></div>
         </div>
       </div>
 
@@ -1013,7 +1066,7 @@ let allSegmentTypes = {};
 let stationSettings = {};
 let genOptions = {};
 let showTaxonomy = {show_types:{}, topic_focuses:[], bumper_styles:[], source_types:[]};
-let voiceSamplesCatalog = {kokoro: [], minimax: []};
+let voiceSamplesCatalog = {kokoro: [], minimax: [], google: []};
 let currentSchedule = {base: [], overrides: []};
 let activeShowsTab = 'active';
 let activeShowModalTab = 'basics';
@@ -1100,7 +1153,17 @@ function scheduleTimezoneLabel(tz) {
 // ============================================================
 async function api(path, opts={}) {
   const r = await fetch('/api' + path, opts);
-  if (!r.ok) throw new Error(await r.text());
+  if (!r.ok) {
+    let message = `Request failed: ${r.status}`;
+    try {
+      const data = await r.json();
+      message = data.detail || data.error || JSON.stringify(data);
+    } catch {
+      const text = await r.text();
+      if (text) message = text;
+    }
+    throw new Error(message);
+  }
   return r.json();
 }
 
@@ -1115,7 +1178,47 @@ function showTypeDef(id) {
     uses_topic_focus: true,
     uses_source_rules: true,
     uses_bumper_style: true,
+    playback_sequence_defaults: {
+      intro_enabled: true,
+      intro_segment_type: 'show_intro',
+      outro_enabled: true,
+      outro_segment_type: 'show_outro',
+      station_id_enabled: true,
+      station_id_segment_type: 'station_id',
+      station_id_every_n_speaking_segments: 3,
+      station_id_before_bumper: true,
+      bumper_count_between_talk_segments: 1,
+      bumper_min_seconds: 15,
+      bumper_max_seconds: 30,
+      bumper_fade_seconds: 4,
+    },
   };
+}
+
+function defaultPlaybackSequence() {
+  return {
+    intro_enabled: true,
+    intro_segment_type: 'show_intro',
+    outro_enabled: true,
+    outro_segment_type: 'show_outro',
+    station_id_enabled: true,
+    station_id_segment_type: 'station_id',
+    station_id_every_n_speaking_segments: 3,
+    station_id_before_bumper: true,
+    bumper_count_between_talk_segments: 1,
+    bumper_min_seconds: 15,
+    bumper_max_seconds: 30,
+    bumper_fade_seconds: 4,
+  };
+}
+
+function showTypePlaybackDefaults(showType) {
+  const defs = showTypeDef(showType);
+  return { ...defaultPlaybackSequence(), ...(defs.playback_sequence_defaults || {}) };
+}
+
+function playbackSequenceFromShow(show) {
+  return { ...showTypePlaybackDefaults(show?.show_type || 'research'), ...(show?.playback_sequence || {}) };
 }
 
 function renderShowTypeOptions(selected='research') {
@@ -1145,6 +1248,81 @@ function renderBumperStyleOptions(selected='ambient') {
   return (showTaxonomy.bumper_styles || ['ambient','jazz','soul','downtempo','indie','electronic','folk']).map(f =>
     `<option value="${f}" ${f===selected?'selected':''}>${f}</option>`
   ).join('');
+}
+
+function renderSegmentTypeOptions(selected='', includeBlank=false, blankLabel='Use default') {
+  const opts = [];
+  if (includeBlank) {
+    opts.push(`<option value="">${blankLabel}</option>`);
+  }
+  const entries = Object.entries(allSegmentTypes || {});
+  if (!entries.length) {
+    const fallback = ['show_intro', 'show_outro', 'station_id'];
+    fallback.forEach(t => {
+      opts.push(`<option value="${t}" ${t===selected?'selected':''}>${t}</option>`);
+    });
+    return opts.join('');
+  }
+  entries.forEach(([id, st]) => {
+    opts.push(`<option value="${id}" ${id===selected?'selected':''}>${st.name || id}</option>`);
+  });
+  return opts.join('');
+}
+
+function renderShowTypePlaybackEditor(showType, sequence) {
+  const seq = { ...showTypePlaybackDefaults(showType), ...(sequence || {}) };
+  return `
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <label class="flex items-center gap-2 text-xs text-gray-300">
+        <input type="checkbox" id="taxonomy-${showType}-intro-enabled" class="accent-indigo-500" ${seq.intro_enabled ? 'checked' : ''}>
+        Intro enabled
+      </label>
+      <div>
+        <label class="field-label">Intro segment type</label>
+        <select id="taxonomy-${showType}-intro-type" class="input">${renderSegmentTypeOptions(seq.intro_segment_type)}</select>
+      </div>
+      <label class="flex items-center gap-2 text-xs text-gray-300">
+        <input type="checkbox" id="taxonomy-${showType}-outro-enabled" class="accent-indigo-500" ${seq.outro_enabled ? 'checked' : ''}>
+        Outro enabled
+      </label>
+      <div>
+        <label class="field-label">Outro segment type</label>
+        <select id="taxonomy-${showType}-outro-type" class="input">${renderSegmentTypeOptions(seq.outro_segment_type)}</select>
+      </div>
+      <label class="flex items-center gap-2 text-xs text-gray-300">
+        <input type="checkbox" id="taxonomy-${showType}-station-enabled" class="accent-indigo-500" ${seq.station_id_enabled ? 'checked' : ''}>
+        Station ID enabled
+      </label>
+      <div>
+        <label class="field-label">Station ID type</label>
+        <select id="taxonomy-${showType}-station-type" class="input">${renderSegmentTypeOptions(seq.station_id_segment_type)}</select>
+      </div>
+      <div>
+        <label class="field-label">Station ID every N speaking segments</label>
+        <input id="taxonomy-${showType}-station-every" class="input" type="number" min="1" value="${seq.station_id_every_n_speaking_segments}">
+      </div>
+      <label class="flex items-center gap-2 text-xs text-gray-300 mt-6">
+        <input type="checkbox" id="taxonomy-${showType}-station-before" class="accent-indigo-500" ${seq.station_id_before_bumper ? 'checked' : ''}>
+        Station ID before bumper
+      </label>
+      <div>
+        <label class="field-label">Bumpers between talk segments</label>
+        <input id="taxonomy-${showType}-bumper-count" class="input" type="number" min="1" value="${seq.bumper_count_between_talk_segments}">
+      </div>
+      <div>
+        <label class="field-label">Bumper min seconds</label>
+        <input id="taxonomy-${showType}-bumper-min" class="input" type="number" min="1" value="${seq.bumper_min_seconds}">
+      </div>
+      <div>
+        <label class="field-label">Bumper max seconds</label>
+        <input id="taxonomy-${showType}-bumper-max" class="input" type="number" min="1" value="${seq.bumper_max_seconds}">
+      </div>
+      <div>
+        <label class="field-label">Bumper fade seconds</label>
+        <input id="taxonomy-${showType}-bumper-fade" class="input" type="number" min="0" value="${seq.bumper_fade_seconds}">
+      </div>
+    </div>
+  `;
 }
 
 function escapeHtml(value) {
@@ -1207,17 +1385,48 @@ function renderTaxonomyTab() {
     bumperRoot.innerHTML = items.map(v => taxonomyRowHtml(v, 'taxonomy-bumper-list')).join('') || '<div class="text-xs text-gray-600">No bumper styles defined.</div>';
   }
   if (showTypesRoot) {
-    showTypesRoot.innerHTML = Object.entries(showTypeDefs()).map(([id, st]) => `
-      <div class="border border-gray-800 rounded p-3">
-        <div class="flex items-center gap-2 mb-1">
-          <span class="font-bold">${escapeHtml(st.name)}</span>
-          <span class="text-gray-500">${escapeHtml(id)}</span>
-        </div>
-        <div class="text-gray-500 mb-1">${escapeHtml(st.description || '')}</div>
-        <div class="text-gray-600">Topic focus: ${st.uses_topic_focus ? 'yes' : 'no'} · Source rules: ${st.uses_source_rules ? 'yes' : 'no'} · Bumper style: ${st.uses_bumper_style ? 'yes' : 'no'}</div>
-      </div>
-    `).join('');
+    showTypesRoot.innerHTML = Object.entries(showTypeDefs()).map(([id, st]) => showTypeCardHtml(id, st)).join('');
   }
+}
+
+function showTypeCardHtml(id, st) {
+  const seq = st.playback_sequence_defaults || showTypePlaybackDefaults(id);
+  const defaults = (st.default_segment_types || []).join(', ');
+  return `
+    <div class="border border-gray-800 rounded p-3 space-y-3" data-show-type-card="${escapeHtml(id)}">
+      <div class="flex items-center justify-between gap-2">
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="font-bold">${escapeHtml(st.name || id)}</span>
+            <span class="text-gray-500">${escapeHtml(id)}</span>
+          </div>
+          <div class="text-gray-500 text-xs mt-1">${escapeHtml(st.description || '')}</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label class="field-label">Display name</label>
+          <input class="input" id="taxonomy-${id}-name" value="${escapeHtml(st.name || id)}">
+        </div>
+        <div>
+          <label class="field-label">Default segment types</label>
+          <input class="input" id="taxonomy-${id}-segments" value="${escapeHtml(defaults)}" placeholder="deep_dive, interview, story">
+        </div>
+      </div>
+      <div>
+        <label class="field-label">Description</label>
+        <textarea class="input h-20 resize-none" id="taxonomy-${id}-description">${escapeHtml(st.description || '')}</textarea>
+      </div>
+      <div class="grid grid-cols-3 gap-2 text-xs text-gray-300">
+        <label class="flex items-center gap-2"><input type="checkbox" id="taxonomy-${id}-topic" class="accent-indigo-500" ${st.uses_topic_focus ? 'checked' : ''}>Topic focus</label>
+        <label class="flex items-center gap-2"><input type="checkbox" id="taxonomy-${id}-source" class="accent-indigo-500" ${st.uses_source_rules ? 'checked' : ''}>Source rules</label>
+        <label class="flex items-center gap-2"><input type="checkbox" id="taxonomy-${id}-bumper" class="accent-indigo-500" ${st.uses_bumper_style ? 'checked' : ''}>Bumper style</label>
+      </div>
+      <div class="pt-2 border-t border-gray-800">
+        <div class="section-title mb-2">Playback Defaults</div>
+        ${renderShowTypePlaybackEditor(id, seq)}
+      </div>
+    </div>`;
 }
 
 function taxonomyRowHtml(value, containerId) {
@@ -1245,10 +1454,53 @@ function getTaxonomyItems(containerId) {
   return [...document.querySelectorAll(`#${containerId} .taxonomy-value`)].map(i => i.value.trim()).filter(Boolean);
 }
 
+function getShowTypePlaybackSequence(showType) {
+  const readBool = id => !!document.getElementById(id)?.checked;
+  const readValue = id => document.getElementById(id)?.value ?? '';
+  const readInt = (id, fallback) => {
+    const value = parseInt(readValue(id), 10);
+    return Number.isFinite(value) ? value : fallback;
+  };
+  return {
+    intro_enabled: readBool(`taxonomy-${showType}-intro-enabled`),
+    intro_segment_type: readValue(`taxonomy-${showType}-intro-type`),
+    outro_enabled: readBool(`taxonomy-${showType}-outro-enabled`),
+    outro_segment_type: readValue(`taxonomy-${showType}-outro-type`),
+    station_id_enabled: readBool(`taxonomy-${showType}-station-enabled`),
+    station_id_segment_type: readValue(`taxonomy-${showType}-station-type`),
+    station_id_every_n_speaking_segments: readInt(`taxonomy-${showType}-station-every`, 3),
+    station_id_before_bumper: readBool(`taxonomy-${showType}-station-before`),
+    bumper_count_between_talk_segments: readInt(`taxonomy-${showType}-bumper-count`, 1),
+    bumper_min_seconds: readInt(`taxonomy-${showType}-bumper-min`, 15),
+    bumper_max_seconds: readInt(`taxonomy-${showType}-bumper-max`, 30),
+    bumper_fade_seconds: readInt(`taxonomy-${showType}-bumper-fade`, 4),
+  };
+}
+
 async function saveTaxonomy() {
+  const showTypes = {};
+  Object.entries(showTypeDefs()).forEach(([id, st]) => {
+    const defaults = st.playback_sequence_defaults || showTypePlaybackDefaults(id);
+    showTypes[id] = {
+      name: document.getElementById(`taxonomy-${id}-name`)?.value.trim() || st.name || id,
+      description: document.getElementById(`taxonomy-${id}-description`)?.value.trim() || '',
+      uses_topic_focus: !!document.getElementById(`taxonomy-${id}-topic`)?.checked,
+      uses_source_rules: !!document.getElementById(`taxonomy-${id}-source`)?.checked,
+      uses_bumper_style: !!document.getElementById(`taxonomy-${id}-bumper`)?.checked,
+      default_segment_types: (document.getElementById(`taxonomy-${id}-segments`)?.value || '')
+        .split(',')
+        .map(v => v.trim())
+        .filter(Boolean),
+      playback_sequence_defaults: {
+        ...defaults,
+        ...getShowTypePlaybackSequence(id),
+      },
+    };
+  });
   const body = {
     topic_focuses: getTaxonomyItems('taxonomy-topic-list'),
     bumper_styles: getTaxonomyItems('taxonomy-bumper-list'),
+    show_types: showTypes,
   };
   const updated = await api('/show-taxonomy', {
     method: 'PUT',
@@ -1269,6 +1521,32 @@ function renderVoiceOptions(backend, voices, selected = '', allowBlank = false, 
     options.push(`<option value="${v}" ${v === selected ? 'selected' : ''}>${voiceLabel(backend, v)}</option>`);
   });
   return options.join('');
+}
+
+function voicesForBackend(backend) {
+  if (backend === 'minimax') return genOptions.minimax_voices || ['Deep_Voice_Man', 'Wise_Woman'];
+  if (backend === 'google') return genOptions.google_voices || ['Kore', 'Puck'];
+  return genOptions.kokoro_voices || ['am_michael', 'am_onyx', 'af_bella', 'af_heart'];
+}
+
+function defaultVoiceForBackend(backend, role = 'host') {
+  if (backend === 'minimax') return role === 'guest' ? 'Wise_Woman' : 'Deep_Voice_Man';
+  if (backend === 'google') return role === 'guest' ? 'Puck' : 'Kore';
+  return role === 'guest' ? 'af_bella' : 'am_michael';
+}
+
+function resolvedShowDefaultVoice(backend) {
+  const showId = document.getElementById('gen-show')?.value;
+  const show = allShows[showId];
+  const primary = (show?.hosts || []).find(h => h.role === 'primary') || (show?.hosts || [])[0];
+  const host = primary ? allHosts[primary.id] : null;
+  if (backend === 'minimax') {
+    return primary?.voice_minimax || host?.voice_minimax || defaultVoiceForBackend('minimax');
+  }
+  if (backend === 'google') {
+    return primary?.voice_google || host?.voice_google || defaultVoiceForBackend('google');
+  }
+  return primary?.voice_kokoro || host?.tts_voice || defaultVoiceForBackend('kokoro');
 }
 
 // ============================================================
@@ -1360,23 +1638,38 @@ function formatLiveTime(value) {
   return formatStationTime(value);
 }
 
-function renderLiveQueueItem(item, showId, isCurrent = false) {
+function formatLiveDuration(seconds) {
+  const total = Number(seconds);
+  if (!Number.isFinite(total) || total < 0) return 'n/a';
+  const rounded = Math.round(total);
+  if (rounded < 60) return `${rounded}s`;
+  const minutes = Math.floor(rounded / 60);
+  const secs = rounded % 60;
+  return `${minutes}:${String(secs).padStart(2, '0')}`;
+}
+
+function renderLiveQueueItem(item, showId, displayIndex = null, isCurrent = false) {
   if (!item) return '<div class="text-gray-600 text-sm">Nothing queued.</div>';
+  const actionable = item.actionable !== false && !!item.path;
   const badge = isCurrent
     ? '<span class="pill pill-green">Current</span>'
-    : `<span class="pill pill-blue">#${(item.index ?? 0) + 1}</span>`;
+    : `<span class="pill pill-blue">#${displayIndex ?? (item.index ?? 0) + 1}</span>`;
+  const label = item.label ? `<span class="pill pill-yellow">${escapeHtml(item.label)}</span>` : '';
   const segmentType = item.segment_type ? `<span class="pill pill-purple">${escapeHtml(item.segment_type)}</span>` : '';
-  const controls = isCurrent ? `
+  const kind = item.kind && item.kind !== 'speech'
+    ? `<span class="pill pill-yellow">${escapeHtml(item.kind.replace(/_/g, ' '))}</span>`
+    : '';
+  const controls = !actionable ? '' : (isCurrent ? `
       <button class="btn btn-danger text-xs px-2 py-1" onclick="skipLiveCurrent()">Skip</button>
     ` : `
       <button class="btn btn-ghost text-xs px-2 py-1" onclick="liveControlAction('play_next', ${JSON.stringify(item.path || '')})">Play Next</button>
       <button class="btn btn-ghost text-xs px-2 py-1" onclick="liveControlAction('move_up', ${JSON.stringify(item.path || '')})">↑</button>
       <button class="btn btn-ghost text-xs px-2 py-1" onclick="liveControlAction('move_down', ${JSON.stringify(item.path || '')})">↓</button>
       <button class="btn btn-ghost text-xs px-2 py-1 text-red-300" onclick="liveControlAction('remove', ${JSON.stringify(item.path || '')})">Remove</button>
-    `;
+    `);
   const stamp = item.started_at || item.estimated_start_at;
   const stampLabel = stamp ? `Starts ${formatLiveTime(stamp)}` : 'Start time unavailable';
-  const durationLabel = item.duration_seconds ? ` · ${Math.round(item.duration_seconds)}s` : '';
+  const durationLabel = item.duration_seconds ? ` · ${formatLiveDuration(item.duration_seconds)}` : '';
   return `
     <div class="rounded border border-gray-800 bg-gray-950/70 p-3">
       <div class="flex items-start justify-between gap-3">
@@ -1384,10 +1677,13 @@ function renderLiveQueueItem(item, showId, isCurrent = false) {
           <div class="flex items-center gap-2 flex-wrap">
             ${badge}
             <span class="font-medium text-gray-100 truncate">${escapeHtml(item.name || item.filename || 'Unknown item')}</span>
+            ${label}
+            ${kind}
             ${segmentType}
           </div>
-          <div class="text-xs text-gray-500 mt-1">${escapeHtml(item.filename || '')}</div>
+          <div class="text-xs text-gray-500 mt-1">${escapeHtml(item.filename || item.note || '')}</div>
           <div class="text-xs text-gray-500 mt-1">${stampLabel}${durationLabel}</div>
+          ${!actionable ? '<div class="text-[11px] text-gray-600 mt-1">Planned slot</div>' : ''}
         </div>
         <div class="flex gap-1 flex-wrap justify-end">${controls}</div>
       </div>
@@ -1400,6 +1696,7 @@ function renderLiveCurrentProgram(queue, s) {
   const nowTrack = s.now_playing?.track || 'No track reported';
   const nowType = s.now_playing?.type || 'unknown';
   const currentItem = queue.current_item;
+  const queueCount = queue.display_queue?.length ?? queue.queue_length ?? 0;
   const audioSrc = currentItem ? liveAudioSrc(queue.show_id, currentItem) : '';
   return `
     <div class="space-y-3">
@@ -1422,14 +1719,14 @@ function renderLiveCurrentProgram(queue, s) {
           ${currentItem ? `
             <audio class="w-full mt-2" controls preload="metadata" src="${escapeHtml(audioSrc)}"></audio>
             <div id="live-current-file-meta" class="text-xs text-gray-500 mt-2">
-              Started ${formatLiveTime(currentItem.started_at)} · Ends ${formatLiveTime(currentItem.estimated_end_at)} · ${Math.round(currentItem.duration_seconds || 0)}s
+              Started ${formatLiveTime(currentItem.started_at)} · Ends ${formatLiveTime(currentItem.estimated_end_at)} · ${formatLiveDuration(currentItem.duration_seconds)}
             </div>
           ` : '<div id="live-current-file-meta" class="text-gray-600 text-sm mt-1">No current file available.</div>'}
         </div>
       </div>
       <div>
         <div class="text-gray-500 text-xs uppercase tracking-wider">Queue</div>
-        <div id="live-current-queue-meta">${queue.queue_length ?? 0} items · updated ${queue.updated_at ? formatStationTime(queue.updated_at) : 'n/a'}</div>
+        <div id="live-current-queue-meta">${queueCount} items · updated ${queue.updated_at ? formatStationTime(queue.updated_at) : 'n/a'}</div>
       </div>
     </div>`;
 }
@@ -1461,23 +1758,33 @@ async function loadLiveControl() {
       if (typeEl) typeEl.textContent = s.now_playing?.type || 'unknown';
       if (fileMetaEl) {
         fileMetaEl.textContent = currentItem
-          ? `Started ${formatLiveTime(currentItem.started_at)} · Ends ${formatLiveTime(currentItem.estimated_end_at)} · ${Math.round(currentItem.duration_seconds || 0)}s`
+          ? `Started ${formatLiveTime(currentItem.started_at)} · Ends ${formatLiveTime(currentItem.estimated_end_at)} · ${formatLiveDuration(currentItem.duration_seconds)}`
           : 'No current file available.';
       }
       if (queueMetaEl) {
         queueMetaEl.textContent = `${liveQueueState.queue_length ?? 0} items · updated ${liveQueueState.updated_at ? formatStationTime(liveQueueState.updated_at) : 'n/a'}`;
       }
     }
-    const upcoming = liveQueueState.upcoming || [];
-    queueEl.innerHTML = [
-      renderLiveQueueItem(liveQueueState.current_item, liveQueueState.show_id, true),
-      ...(upcoming.length ? upcoming.map(item => renderLiveQueueItem(item, liveQueueState.show_id, false)) : ['<div class="text-gray-600 text-sm">No upcoming items queued.</div>'])
-    ].join('');
+    const displayQueue = liveQueueState.display_queue || [];
+    const queueItems = displayQueue.length
+      ? displayQueue
+      : [
+          liveQueueState.current_item,
+          ...(liveQueueState.upcoming || []),
+        ].filter(Boolean);
+    const currentItemPath = liveQueueState.current_item?.path || '';
+    queueEl.innerHTML = queueItems.length
+      ? queueItems.map((item, idx) => {
+          const relativeIndex = displayQueue.length ? idx + 1 : idx;
+          const isCurrent = !!currentItemPath && item?.path === currentItemPath;
+          return renderLiveQueueItem(item, liveQueueState.show_id, relativeIndex, isCurrent);
+        }).join('')
+      : '<div class="text-gray-600 text-sm">No upcoming items queued.</div>';
     if (statusEl) {
       const statusBits = [
         s.streamer ? 'streamer up' : 'streamer down',
         s.icecast ? 'icecast up' : 'icecast down',
-        `${liveQueueState.queue_length ?? 0} queued`,
+        `${(liveQueueState.display_queue?.length ?? liveQueueState.queue_length ?? 0)} queued`,
       ];
       statusEl.textContent = statusBits.join(' · ');
     }
@@ -1685,7 +1992,7 @@ function openShowModal(showId) {
 
   // Hosts
   const defaultHostId = Object.keys(allHosts)[0] || 'liminal_operator';
-  renderHosts(show?.hosts || [{id:defaultHostId,role:'primary',voice_kokoro:allHosts[defaultHostId]?.tts_voice||'am_michael',voice_minimax:allHosts[defaultHostId]?.voice_minimax||'Deep_Voice_Man',tts_backend:allHosts[defaultHostId]?.tts_backend||'kokoro'}]);
+  renderHosts(show?.hosts || [{id:defaultHostId,role:'primary',voice_kokoro:allHosts[defaultHostId]?.tts_voice||'am_michael',voice_minimax:allHosts[defaultHostId]?.voice_minimax||'Deep_Voice_Man',voice_google:allHosts[defaultHostId]?.voice_google||'Kore',tts_backend:allHosts[defaultHostId]?.tts_backend||'kokoro'}]);
 
   // Guests
   renderGuests(show?.guests || []);
@@ -1770,6 +2077,65 @@ function renderShowModalFields(show) {
 
   topicSel.innerHTML = renderTopicFocusOptions(show?.topic_focus || '');
   document.getElementById('modal-bumper-style').innerHTML = renderBumperStyleOptions(show?.bumper_style || 'ambient');
+  const playbackRoot = document.getElementById('modal-playback-sequence');
+  if (playbackRoot) playbackRoot.innerHTML = renderShowModalPlaybackEditor(show);
+}
+
+function renderShowModalPlaybackEditor(show) {
+  const showType = show?.show_type || document.getElementById('modal-show-type')?.value || 'research';
+  const seq = playbackSequenceFromShow(show || {show_type: showType});
+  return `
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <label class="flex items-center gap-2 text-xs text-gray-300">
+        <input type="checkbox" id="modal-playback-intro-enabled" class="accent-indigo-500" ${seq.intro_enabled ? 'checked' : ''}>
+        Intro enabled
+      </label>
+      <div>
+        <label class="field-label">Intro segment type</label>
+        <select id="modal-playback-intro-type" class="input">${renderSegmentTypeOptions(seq.intro_segment_type)}</select>
+      </div>
+      <label class="flex items-center gap-2 text-xs text-gray-300">
+        <input type="checkbox" id="modal-playback-outro-enabled" class="accent-indigo-500" ${seq.outro_enabled ? 'checked' : ''}>
+        Outro enabled
+      </label>
+      <div>
+        <label class="field-label">Outro segment type</label>
+        <select id="modal-playback-outro-type" class="input">${renderSegmentTypeOptions(seq.outro_segment_type)}</select>
+      </div>
+      <label class="flex items-center gap-2 text-xs text-gray-300">
+        <input type="checkbox" id="modal-playback-station-enabled" class="accent-indigo-500" ${seq.station_id_enabled ? 'checked' : ''}>
+        Station ID enabled
+      </label>
+      <div>
+        <label class="field-label">Station ID type</label>
+        <select id="modal-playback-station-type" class="input">${renderSegmentTypeOptions(seq.station_id_segment_type)}</select>
+      </div>
+      <div>
+        <label class="field-label">Station ID every N speaking segments</label>
+        <input id="modal-playback-station-every" class="input" type="number" min="1" value="${seq.station_id_every_n_speaking_segments}">
+      </div>
+      <label class="flex items-center gap-2 text-xs text-gray-300 mt-6">
+        <input type="checkbox" id="modal-playback-station-before" class="accent-indigo-500" ${seq.station_id_before_bumper ? 'checked' : ''}>
+        Station ID before bumper
+      </label>
+      <div>
+        <label class="field-label">Bumpers between talk segments</label>
+        <input id="modal-playback-bumper-count" class="input" type="number" min="1" value="${seq.bumper_count_between_talk_segments}">
+      </div>
+      <div>
+        <label class="field-label">Bumper min seconds</label>
+        <input id="modal-playback-bumper-min" class="input" type="number" min="1" value="${seq.bumper_min_seconds}">
+      </div>
+      <div>
+        <label class="field-label">Bumper max seconds</label>
+        <input id="modal-playback-bumper-max" class="input" type="number" min="1" value="${seq.bumper_max_seconds}">
+      </div>
+      <div>
+        <label class="field-label">Bumper fade seconds</label>
+        <input id="modal-playback-bumper-fade" class="input" type="number" min="0" value="${seq.bumper_fade_seconds}">
+      </div>
+    </div>
+  `;
 }
 
 function onShowTypeChange(showType) {
@@ -1915,6 +2281,7 @@ function renderHosts(hosts) {
   const hostIds = Object.keys(allHosts);
   const kokoroVoices = genOptions.kokoro_voices || ['am_michael','am_onyx','af_bella','af_heart'];
   const minimaxVoices = genOptions.minimax_voices || ['Deep_Voice_Man','Wise_Woman'];
+  const googleVoices = genOptions.google_voices || ['Kore','Puck'];
   document.getElementById('modal-hosts').innerHTML = hosts.map((h,i) => `
     <div class="card p-3 space-y-2">
       <div class="flex gap-2 items-center">
@@ -1927,10 +2294,11 @@ function renderHosts(hosts) {
         <select class="input host-tts" style="width:100px">
           <option value="kokoro" ${h.tts_backend==='kokoro'?'selected':''}>Kokoro</option>
           <option value="minimax" ${h.tts_backend==='minimax'?'selected':''}>MiniMax</option>
+          <option value="google" ${h.tts_backend==='google'?'selected':''}>Google</option>
         </select>
         <button class="btn btn-ghost text-xs px-2" onclick="removeHost(${i})">✕</button>
       </div>
-      <div class="flex gap-2">
+      <div class="grid grid-cols-3 gap-2">
         <div class="flex-1">
           <label class="text-xs text-gray-500">Kokoro voice</label>
           <select class="input host-voice-kokoro">
@@ -1941,6 +2309,12 @@ function renderHosts(hosts) {
           <label class="text-xs text-gray-500">MiniMax voice</label>
           <select class="input host-voice-minimax">
             ${minimaxVoices.map(v=>`<option value="${v}" ${v===h.voice_minimax?'selected':''}>${v}</option>`).join('')}
+          </select>
+        </div>
+        <div class="flex-1">
+          <label class="text-xs text-gray-500">Google voice</label>
+          <select class="input host-voice-google">
+            ${googleVoices.map(v=>`<option value="${v}" ${v===h.voice_google?'selected':''}>${v}</option>`).join('')}
           </select>
         </div>
       </div>
@@ -1955,6 +2329,7 @@ function addHost() {
     role:'co-host',
     voice_kokoro:allHosts[firstHostId]?.tts_voice || 'am_michael',
     voice_minimax:allHosts[firstHostId]?.voice_minimax || 'Deep_Voice_Man',
+    voice_google:allHosts[firstHostId]?.voice_google || 'Kore',
     tts_backend:allHosts[firstHostId]?.tts_backend || 'kokoro'
   });
   renderHosts(hosts);
@@ -1970,6 +2345,7 @@ function syncHostRowDefaults(row) {
   row.querySelector('.host-tts').value = host.tts_backend || 'kokoro';
   row.querySelector('.host-voice-kokoro').value = host.tts_voice || 'am_michael';
   row.querySelector('.host-voice-minimax').value = host.voice_minimax || 'Deep_Voice_Man';
+  row.querySelector('.host-voice-google').value = host.voice_google || 'Kore';
 }
 
 function getHosts() {
@@ -1979,6 +2355,7 @@ function getHosts() {
     tts_backend: row.querySelector('.host-tts').value,
     voice_kokoro: row.querySelector('.host-voice-kokoro').value,
     voice_minimax: row.querySelector('.host-voice-minimax').value,
+    voice_google: row.querySelector('.host-voice-google').value,
   }));
 }
 
@@ -2031,6 +2408,24 @@ async function saveShow() {
   const musicGenMin = document.getElementById('modal-music-min').value;
   const musicGenTarget = document.getElementById('modal-music-target').value;
   const musicGenCadence = document.getElementById('modal-music-cadence').value;
+  const intOr = (id, fallback) => {
+    const parsed = parseInt(document.getElementById(id).value || '', 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  const playbackSequence = {
+    intro_enabled: document.getElementById('modal-playback-intro-enabled').checked,
+    intro_segment_type: document.getElementById('modal-playback-intro-type').value,
+    outro_enabled: document.getElementById('modal-playback-outro-enabled').checked,
+    outro_segment_type: document.getElementById('modal-playback-outro-type').value,
+    station_id_enabled: document.getElementById('modal-playback-station-enabled').checked,
+    station_id_segment_type: document.getElementById('modal-playback-station-type').value,
+    station_id_every_n_speaking_segments: intOr('modal-playback-station-every', 3),
+    station_id_before_bumper: document.getElementById('modal-playback-station-before').checked,
+    bumper_count_between_talk_segments: intOr('modal-playback-bumper-count', 1),
+    bumper_min_seconds: intOr('modal-playback-bumper-min', 15),
+    bumper_max_seconds: intOr('modal-playback-bumper-max', 30),
+    bumper_fade_seconds: intOr('modal-playback-bumper-fade', 4),
+  };
   const body = {
     name: document.getElementById('modal-name').value.trim(),
     description: document.getElementById('modal-description').value.trim(),
@@ -2053,6 +2448,7 @@ async function saveShow() {
         ...(musicMaxDays  ? {max_days:  parseInt(musicMaxDays)}  : {}),
       },
     },
+    playback_sequence: playbackSequence,
     generation: {
       talk: {
         enabled: talkGenEnabled,
@@ -2156,24 +2552,95 @@ function addOverrideBlock() {
 function removeBlock(i) { currentSchedule.base.splice(i,1); renderScheduleBlocks(); }
 function removeOverride(i) { currentSchedule.overrides.splice(i,1); renderOverrideBlocks(); }
 
+function setScheduleStatus(message, kind='info') {
+  const el = document.getElementById('schedule-status');
+  if (!el) return;
+  el.textContent = message || '';
+  el.className = 'text-xs mb-4';
+  if (!message) {
+    el.classList.add('text-gray-500');
+    return;
+  }
+  if (kind === 'error') {
+    el.classList.add('text-red-400');
+  } else if (kind === 'success') {
+    el.classList.add('text-green-400');
+  } else {
+    el.classList.add('text-gray-500');
+  }
+}
+
+function parseScheduleTime(value) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec((value || '').trim());
+  if (!m) throw new Error(`Invalid time (expected HH:MM): ${JSON.stringify(value || '')}`);
+  const hour = Number(m[1]);
+  const minute = Number(m[2]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    throw new Error(`Invalid time (out of range): ${JSON.stringify(value || '')}`);
+  }
+  return hour * 60 + minute;
+}
+
+function expandScheduleMinutes(startMinute, endMinute) {
+  if (startMinute === endMinute) {
+    throw new Error('Schedule block start and end cannot be the same');
+  }
+  if (endMinute > startMinute) return [[startMinute, endMinute]];
+  return [[startMinute, 1440], [0, endMinute]];
+}
+
+function validateScheduleDraft(base) {
+  if (!base.length) {
+    throw new Error('schedule.base must be a non-empty list');
+  }
+  const coverage = new Array(1440).fill(0);
+  for (const block of base) {
+    const start = parseScheduleTime(block.start);
+    const end = parseScheduleTime(block.end);
+    for (const [a, b] of expandScheduleMinutes(start, end)) {
+      for (let minute = a; minute < b; minute += 1) {
+        coverage[minute] += 1;
+      }
+    }
+  }
+  const firstGap = coverage.findIndex(count => count === 0);
+  if (firstGap !== -1) {
+    const hh = String(Math.floor(firstGap / 60)).padStart(2, '0');
+    const mm = String(firstGap % 60).padStart(2, '0');
+    throw new Error(`schedule.base does not cover the full day (first gap at ${hh}:${mm})`);
+  }
+  const firstOverlap = coverage.findIndex(count => count > 1);
+  if (firstOverlap !== -1) {
+    const hh = String(Math.floor(firstOverlap / 60)).padStart(2, '0');
+    const mm = String(firstOverlap % 60).padStart(2, '0');
+    throw new Error(`schedule.base overlaps itself (first overlap at ${hh}:${mm})`);
+  }
+}
+
 async function saveSchedule() {
-  const settings = await api('/settings').catch(() => stationSettings || {});
-  const base = [...document.querySelectorAll('#schedule-blocks > div')].map(row => ({
-    start: row.querySelector('.block-start').value,
-    end: row.querySelector('.block-end').value,
-    show: row.querySelector('.block-show').value,
-  }));
-  const overrides = [...document.querySelectorAll('#override-blocks > div')].map(row => ({
-    days: [...row.querySelectorAll('.override-day:checked')].map(c=>c.value),
-    start: row.querySelector('.override-start').value,
-    end: row.querySelector('.override-end').value,
-    show: row.querySelector('.block-show').value,
-  }));
-  const timezone = (settings?.timezone || stationSettings.timezone || currentSchedule.timezone || 'local').trim() || 'local';
-  await api('/schedule', {method:'PUT', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({timezone, base, overrides})});
-  currentSchedule.timezone = timezone;
-  alert('Schedule saved. Streamer will use new schedule on next show transition.');
+  setScheduleStatus('');
+  try {
+    const settings = await api('/settings').catch(() => stationSettings || {});
+    const base = [...document.querySelectorAll('#schedule-blocks > div')].map(row => ({
+      start: row.querySelector('.block-start').value,
+      end: row.querySelector('.block-end').value,
+      show: row.querySelector('.block-show').value,
+    }));
+    const overrides = [...document.querySelectorAll('#override-blocks > div')].map(row => ({
+      days: [...row.querySelectorAll('.override-day:checked')].map(c=>c.value),
+      start: row.querySelector('.override-start').value,
+      end: row.querySelector('.override-end').value,
+      show: row.querySelector('.block-show').value,
+    }));
+    validateScheduleDraft(base);
+    const timezone = (settings?.timezone || stationSettings.timezone || currentSchedule.timezone || 'local').trim() || 'local';
+    await api('/schedule', {method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({timezone, base, overrides})});
+    currentSchedule.timezone = timezone;
+    setScheduleStatus('Schedule saved. Streamer will use the new schedule on the next show transition.', 'success');
+  } catch (e) {
+    setScheduleStatus(`Save failed: ${e.message}`, 'error');
+  }
 }
 
 // ============================================================
@@ -2183,12 +2650,12 @@ async function loadGenerateTab() {
   const [options, shows, voiceSamples] = await Promise.all([
     api('/generate/options'),
     api('/shows'),
-    api('/voice-samples').catch(() => ({kokoro: [], minimax: []})),
+    api('/voice-samples').catch(() => ({kokoro: [], minimax: [], google: []})),
   ]);
   genOptions = options;
   allShows = shows;
   allSegmentTypes = genOptions.segment_type_defs || {};
-  voiceSamplesCatalog = voiceSamples || {kokoro: [], minimax: []};
+  voiceSamplesCatalog = voiceSamples || {kokoro: [], minimax: [], google: []};
   // Ensure manual sub-tab is visible by default
   switchGenTab('manual', document.querySelector('#tab-generate .tab-btn'));
 
@@ -2206,10 +2673,14 @@ async function loadGenerateTab() {
   const gvm = document.getElementById('gen-guest-voice-minimax');
   gvm.innerHTML = renderVoiceOptions('minimax', genOptions.minimax_voices, 'Wise_Woman');
 
+  const gvg = document.getElementById('gen-guest-voice-google');
+  gvg.innerHTML = renderVoiceOptions('google', genOptions.google_voices, 'Puck');
+
   updateGenSourceUI();
   updateGenHostVoiceOptions();
   syncVoiceSampleButtonFromSelect('gen-guest-voice-kokoro', 'gen-guest-voice-kokoro-btn', 'kokoro');
   syncVoiceSampleButtonFromSelect('gen-guest-voice-minimax', 'gen-guest-voice-minimax-btn', 'minimax');
+  syncVoiceSampleButtonFromSelect('gen-guest-voice-google', 'gen-guest-voice-google-btn', 'google');
   loadJobs();
 }
 
@@ -2386,16 +2857,22 @@ function toggleGenTopic() {
 function updateGenHostVoiceOptions() {
   const hostVoiceSel = document.getElementById('gen-host-voice');
   const backend = document.getElementById('gen-tts').value || 'kokoro';
-  const voices = backend === 'minimax' ? genOptions.minimax_voices : genOptions.kokoro_voices;
+  const voices = voicesForBackend(backend);
   const prev = hostVoiceSel.value;
-  hostVoiceSel.innerHTML = renderVoiceOptions(backend, voices, prev, true, 'Use show default');
+  const defaultVoice = resolvedShowDefaultVoice(backend);
+  hostVoiceSel.innerHTML = renderVoiceOptions(backend, voices, prev, true, `Use show default (${voiceLabel(backend, defaultVoice)})`);
   updateGenMinimaxLongUI();
   syncGenHostVoiceSampleButton();
 }
 
 function syncGenHostVoiceSampleButton() {
   const backend = document.getElementById('gen-tts').value || 'kokoro';
-  syncVoiceSampleButtonFromSelect('gen-host-voice', 'gen-host-voice-btn', backend);
+  const sel = document.getElementById('gen-host-voice');
+  const button = document.getElementById('gen-host-voice-btn');
+  const voice = sel?.value || resolvedShowDefaultVoice(backend);
+  if (!button) return;
+  button.disabled = !voice || !isVoiceSampleReady(backend, voice);
+  button.dataset.voiceSampleKey = voice ? `${backend}:${voice}` : '';
 }
 
 function updateGenSourceUI() {
@@ -2530,6 +3007,7 @@ async function startGeneration() {
     body.guest_name = document.getElementById('gen-guest-name').value.trim();
     body.guest_voice_kokoro = document.getElementById('gen-guest-voice-kokoro').value;
     body.guest_voice_minimax = document.getElementById('gen-guest-voice-minimax').value;
+    body.guest_voice_google = document.getElementById('gen-guest-voice-google').value;
     body.guest_tts_backend = document.getElementById('gen-guest-tts').value;
   }
 
@@ -3362,12 +3840,12 @@ async function loadHosts() {
   const needsGenOptions = !Object.keys(genOptions).length;
   const [hosts, voiceSamples, options] = await Promise.all([
     api('/hosts'),
-    api('/voice-samples').catch(() => ({kokoro: [], minimax: []})),
+    api('/voice-samples').catch(() => ({kokoro: [], minimax: [], google: []})),
     needsGenOptions ? api('/generate/options').catch(() => ({})) : Promise.resolve(null),
   ]);
   if (options) genOptions = options;
   allHosts = hosts;
-  voiceSamplesCatalog = voiceSamples || {kokoro: [], minimax: []};
+  voiceSamplesCatalog = voiceSamples || {kokoro: [], minimax: [], google: []};
   const list = document.getElementById('hosts-list');
   if (!Object.keys(allHosts).length) {
     list.innerHTML = '<div class="text-gray-600 text-sm">No hosts defined.</div>';
@@ -3385,6 +3863,8 @@ async function loadHosts() {
             <span class="text-gray-700 text-xs">·</span>
             <span class="text-gray-500 text-xs">MiniMax: ${h.voice_minimax}</span>
             <span class="text-gray-700 text-xs">·</span>
+            <span class="text-gray-500 text-xs">Google: ${h.voice_google || 'Kore'}</span>
+            <span class="text-gray-700 text-xs">·</span>
             <span class="text-gray-500 text-xs">${h.speaking_pace_wpm} wpm</span>
           </div>
           ${h.topics?.length ? `<div class="flex flex-wrap gap-1 mt-2">${h.topics.map(t=>`<span class="pill pill-purple">${t}</span>`).join('')}</div>` : ''}
@@ -3393,6 +3873,7 @@ async function loadHosts() {
         <div class="flex gap-2 ml-4 shrink-0">
           <button class="btn btn-ghost text-xs" data-voice-sample-key="kokoro:${h.tts_voice}" ${isVoiceSampleReady('kokoro', h.tts_voice) ? '' : 'disabled'} onclick="playVoiceSample('kokoro','${h.tts_voice}',this)" title="Play Kokoro sample">▶</button>
           <button class="btn btn-ghost text-xs" data-voice-sample-key="minimax:${h.voice_minimax}" ${isVoiceSampleReady('minimax', h.voice_minimax) ? '' : 'disabled'} onclick="playVoiceSample('minimax','${h.voice_minimax}',this)" title="Play MiniMax sample">▶</button>
+          <button class="btn btn-ghost text-xs" data-voice-sample-key="google:${h.voice_google || 'Kore'}" ${isVoiceSampleReady('google', h.voice_google || 'Kore') ? '' : 'disabled'} onclick="playVoiceSample('google','${h.voice_google || 'Kore'}',this)" title="Play Google Gemini sample">▶</button>
           <button class="btn btn-ghost" onclick='openHostModal(${JSON.stringify(id)})'>Edit</button>
         </div>
       </div>`).join('');
@@ -3420,6 +3901,7 @@ function renderVoiceSamples() {
   const groups = [
     ['kokoro', 'Kokoro'],
     ['minimax', 'MiniMax'],
+    ['google', 'Google Gemini'],
   ];
   root.innerHTML = groups.map(([backend, label]) => {
     const voices = voiceSamplesCatalog?.[backend] || [];
@@ -3453,6 +3935,13 @@ function renderVoiceSamples() {
   }
 }
 
+function switchHostModalTab(name, btn) {
+  document.getElementById('host-modal-panel-profile').classList.toggle('hidden', name !== 'profile');
+  document.getElementById('host-modal-panel-voices').classList.toggle('hidden', name !== 'voices');
+  document.querySelectorAll('#host-modal .show-tab-btn').forEach(el => el.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+}
+
 function openHostModal(hostId) {
   const h = hostId ? allHosts[hostId] : null;
   const isNew = !hostId;
@@ -3467,12 +3956,16 @@ function openHostModal(hostId) {
   document.getElementById('host-modal-anti').value = h?.anti_patterns || '';
   document.getElementById('host-modal-tts-backend').value = h?.tts_backend || 'kokoro';
   document.getElementById('host-modal-pace').value = h?.speaking_pace_wpm || 130;
+  document.getElementById('host-modal-pace-kokoro').value = h?.speaking_pace_wpm_kokoro || h?.speaking_pace_wpm || 130;
+  document.getElementById('host-modal-pace-minimax').value = h?.speaking_pace_wpm_minimax || h?.speaking_pace_wpm || 130;
+  document.getElementById('host-modal-pace-google').value = h?.speaking_pace_wpm_google || h?.speaking_pace_wpm || 130;
   document.getElementById('host-modal-topics').value = (h?.topics || []).join(', ');
   document.getElementById('host-modal-delete-btn').classList.toggle('hidden', isNew);
   document.getElementById('host-preview-status').classList.add('hidden');
 
   const kokoroVoices = genOptions.kokoro_voices || ['am_michael','am_onyx','af_bella','af_heart'];
   const minimaxVoices = genOptions.minimax_voices || ['Deep_Voice_Man','Wise_Woman'];
+  const googleVoices = genOptions.google_voices || ['Kore','Puck'];
 
   const kvSel = document.getElementById('host-modal-voice-kokoro');
   kvSel.innerHTML = renderVoiceOptions('kokoro', kokoroVoices, h?.tts_voice || 'am_michael');
@@ -3480,9 +3973,14 @@ function openHostModal(hostId) {
   const mvSel = document.getElementById('host-modal-voice-minimax');
   mvSel.innerHTML = renderVoiceOptions('minimax', minimaxVoices, h?.voice_minimax || 'Deep_Voice_Man');
 
+  const gvSel = document.getElementById('host-modal-voice-google');
+  gvSel.innerHTML = renderVoiceOptions('google', googleVoices, h?.voice_google || 'Kore');
+
   syncVoiceSampleButtonFromSelect('host-modal-voice-kokoro', 'host-modal-voice-kokoro-btn', 'kokoro');
   syncVoiceSampleButtonFromSelect('host-modal-voice-minimax', 'host-modal-voice-minimax-btn', 'minimax');
+  syncVoiceSampleButtonFromSelect('host-modal-voice-google', 'host-modal-voice-google-btn', 'google');
 
+  switchHostModalTab('profile', document.getElementById('host-modal-tab-profile'));
   document.getElementById('host-modal').classList.remove('hidden');
 }
 
@@ -3506,7 +4004,11 @@ async function saveHost() {
     tts_backend: document.getElementById('host-modal-tts-backend').value,
     tts_voice: document.getElementById('host-modal-voice-kokoro').value,
     voice_minimax: document.getElementById('host-modal-voice-minimax').value,
+    voice_google: document.getElementById('host-modal-voice-google').value,
     speaking_pace_wpm: parseInt(document.getElementById('host-modal-pace').value) || 130,
+    speaking_pace_wpm_kokoro: parseInt(document.getElementById('host-modal-pace-kokoro').value) || 130,
+    speaking_pace_wpm_minimax: parseInt(document.getElementById('host-modal-pace-minimax').value) || 130,
+    speaking_pace_wpm_google: parseInt(document.getElementById('host-modal-pace-google').value) || 130,
     topics: document.getElementById('host-modal-topics').value
       .split(',').map(t => t.trim()).filter(Boolean),
   };
@@ -3780,9 +4282,9 @@ async function previewGuestVoice(backend, selectId, buttonId) {
 async function previewVoiceGen() {
   const voiceSel = document.getElementById('gen-host-voice');
   const ttsSel = document.getElementById('gen-tts');
-  const voice = voiceSel?.value;
+  const voice = voiceSel?.value || resolvedShowDefaultVoice(ttsSel?.value || 'kokoro');
   const backend = ttsSel?.value || 'kokoro';
-  if (!voice) { alert('Select a voice override first.'); return; }
+  if (!voice) { alert('No default host voice is available for this backend.'); return; }
   const button = document.getElementById('gen-host-voice-btn');
   playVoiceSample(backend, voice, button);
 }
