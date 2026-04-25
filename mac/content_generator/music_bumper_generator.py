@@ -364,7 +364,7 @@ def _show_bumper_bounds(show_id: str) -> tuple[float, float]:
         schedule = load_schedule(SCHEDULE_PATH)
         show = schedule.shows.get(show_id)
         if show is not None:
-            resolved = merge_playback_sequence(show.show_type, show.playback_sequence)
+            resolved = merge_playback_sequence(show.playback_sequence)
             min_seconds = float(resolved.get("bumper_min_seconds", BUMPER_MIN))
             max_seconds = float(resolved.get("bumper_max_seconds", BUMPER_MAX))
             return min_seconds, max(max_seconds, min_seconds)

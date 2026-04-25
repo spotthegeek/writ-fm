@@ -1328,7 +1328,7 @@ def run():
             ctx = get_program_context(station_schedule)
 
             log(f"Show: {ctx.show_name} ({ctx.show_id})")
-            log(f"  Host: {ctx.host} | Focus: {ctx.topic_focus}")
+            log(f"  Host: {ctx.host}")
 
             # Get talk segments for this show and split out show-level specials.
             sequence = _normalized_sequence(ctx.playback_sequence)

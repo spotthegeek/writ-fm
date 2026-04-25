@@ -27,9 +27,11 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from shared.settings import DEFAULT_VOICE_BY_BACKEND_AND_ROLE, minimax_tts_model
+
 MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
 MINIMAX_BASE_URL = "https://api.minimax.io/v1"
-MINIMAX_TTS_MODEL = "speech-2.8-hd"
+MINIMAX_TTS_MODEL = minimax_tts_model()
 MINIMAX_TTS_ASYNC_POLL_INTERVAL = float(os.environ.get("MINIMAX_TTS_ASYNC_POLL_INTERVAL", "2.5"))
 MINIMAX_TTS_ASYNC_TIMEOUT = float(os.environ.get("MINIMAX_TTS_ASYNC_TIMEOUT", "900"))
 
@@ -46,8 +48,8 @@ HOST_VOICE_MAP = {
 }
 
 # Default fallbacks by gender
-DEFAULT_MALE_VOICE = "Deep_Voice_Man"
-DEFAULT_FEMALE_VOICE = "Wise_Woman"
+DEFAULT_MALE_VOICE = DEFAULT_VOICE_BY_BACKEND_AND_ROLE["minimax"]["host"]
+DEFAULT_FEMALE_VOICE = DEFAULT_VOICE_BY_BACKEND_AND_ROLE["minimax"]["guest"]
 
 
 def generate_speech(

@@ -7,7 +7,7 @@ Loads `config/schedule.yaml` and resolves the currently-active show based on:
 - local time (HH:MM)
 
 The streamer can use this to:
-- pick the host persona and topic focus
+- pick the host persona
 - determine segment types for the show
 - select bumper music style for breaks
 """
@@ -28,8 +28,6 @@ DAY_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 DAY_TO_INDEX = {k: i for i, k in enumerate(DAY_KEYS)}
 INDEX_TO_DAY = {i: k for k, i in DAY_TO_INDEX.items()}
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SHOW_TAXONOMY_PATH = PROJECT_ROOT / "config" / "show_taxonomy.yaml"
-
 DEFAULT_SEGMENT_TYPES = {
     "deep_dive", "news_analysis", "interview", "panel", "story",
     "reddit_storytelling", "reddit_post", "youtube", "listener_mailbag", "listener_response", "music_essay",
@@ -62,46 +60,6 @@ def _valid_segment_types() -> set[str]:
         except Exception:
             pass
     return segment_types
-
-
-def _load_show_taxonomy() -> dict:
-    if not SHOW_TAXONOMY_PATH.exists():
-        return {}
-    try:
-        return yaml.safe_load(SHOW_TAXONOMY_PATH.read_text()) or {}
-    except Exception:
-        return {}
-
-
-def _valid_show_types() -> set[str]:
-    taxonomy = _load_show_taxonomy()
-    return set((taxonomy.get("show_types") or {}).keys()) or {
-        "research", "hybrid", "content_ingest", "music_first",
-        "live_community", "news_current_events", "listener_driven",
-    }
-
-
-def _show_type_config(show_type: str) -> dict[str, Any]:
-    taxonomy = _load_show_taxonomy()
-    show_types = taxonomy.get("show_types") or {}
-    return dict(show_types.get(show_type, {}))
-
-
-def _default_segment_types_for_show_type(show_type: str) -> list[str]:
-    cfg = _show_type_config(show_type)
-    defaults = cfg.get("default_segment_types")
-    if isinstance(defaults, list) and defaults:
-        return [str(s).strip() for s in defaults if str(s).strip()]
-    return ["deep_dive"]
-
-
-def _default_playback_sequence_for_show_type(show_type: str) -> dict[str, Any]:
-    cfg = _show_type_config(show_type)
-    defaults = cfg.get("playback_sequence_defaults")
-    if isinstance(defaults, dict) and defaults:
-        return _normalize_playback_sequence(defaults)
-    return dict(DEFAULT_PLAYBACK_SEQUENCE)
-
 
 def _normalize_playback_sequence(sequence: Any, base: dict[str, Any] | None = None) -> dict[str, Any]:
     raw = sequence if isinstance(sequence, dict) else {}
@@ -138,29 +96,25 @@ def _normalize_playback_sequence(sequence: Any, base: dict[str, Any] | None = No
     merged["bumper_fade_seconds"] = _int("bumper_fade_seconds", minimum=0)
     return merged
 
-
-def _merge_playback_sequence(show_type: str, sequence: Any) -> dict[str, Any]:
-    defaults = _default_playback_sequence_for_show_type(show_type)
-    return _normalize_playback_sequence(sequence, base=defaults)
+def _merge_playback_sequence(sequence: Any) -> dict[str, Any]:
+    return _normalize_playback_sequence(sequence, base=DEFAULT_PLAYBACK_SEQUENCE)
 
 
-def default_playback_sequence_for_show_type(show_type: str) -> dict[str, Any]:
-    return _default_playback_sequence_for_show_type(show_type)
+def default_playback_sequence() -> dict[str, Any]:
+    return dict(DEFAULT_PLAYBACK_SEQUENCE)
 
 
-def normalize_playback_sequence(sequence: Any, show_type: str | None = None) -> dict[str, Any]:
-    if show_type:
-        return _normalize_playback_sequence(sequence, base=_default_playback_sequence_for_show_type(show_type))
+def normalize_playback_sequence(sequence: Any) -> dict[str, Any]:
     return _normalize_playback_sequence(sequence)
 
 
-def merge_playback_sequence(show_type: str, sequence: Any) -> dict[str, Any]:
-    return _merge_playback_sequence(show_type, sequence)
+def merge_playback_sequence(sequence: Any) -> dict[str, Any]:
+    return _merge_playback_sequence(sequence)
 
 
-def playback_sequence_overrides(show_type: str, sequence: Any) -> dict[str, Any]:
-    defaults = _default_playback_sequence_for_show_type(show_type)
-    merged = _merge_playback_sequence(show_type, sequence)
+def playback_sequence_overrides(sequence: Any) -> dict[str, Any]:
+    defaults = dict(DEFAULT_PLAYBACK_SEQUENCE)
+    merged = _merge_playback_sequence(sequence)
     return {key: value for key, value in merged.items() if defaults.get(key) != value}
 
 
@@ -250,7 +204,6 @@ class Show:
     show_id: str
     name: str
     description: str
-    show_type: str = "research"
     host: str = "liminal_operator"
     hosts: list[dict[str, Any]] = field(default_factory=list)
     guests: list[dict[str, Any]] = field(default_factory=list)
@@ -304,7 +257,6 @@ class ResolvedShow:
     show_id: str
     name: str
     description: str
-    show_type: str
     host: str
     hosts: list[dict[str, Any]]
     guests: list[dict[str, Any]]
@@ -392,7 +344,6 @@ class StationSchedule:
                     show_id=show.show_id,
                     name=show.name,
                     description=show.description,
-                    show_type=show.show_type,
                     host=show.host,
                     hosts=list(show.hosts),
                     guests=list(show.guests),
@@ -402,7 +353,7 @@ class StationSchedule:
                     bumper_style=show.bumper_style,
                     voices=dict(show.voices),
                     source_rules=list(show.source_rules),
-                    playback_sequence=_merge_playback_sequence(show.show_type, show.playback_sequence),
+                    playback_sequence=_merge_playback_sequence(show.playback_sequence),
                     content_lifecycle=dict(show.content_lifecycle),
                 )
 
@@ -413,7 +364,6 @@ class StationSchedule:
                     show_id=show.show_id,
                     name=show.name,
                     description=show.description,
-                    show_type=show.show_type,
                     host=show.host,
                     hosts=list(show.hosts),
                     guests=list(show.guests),
@@ -423,7 +373,7 @@ class StationSchedule:
                     bumper_style=show.bumper_style,
                     voices=dict(show.voices),
                     source_rules=list(show.source_rules),
-                    playback_sequence=_merge_playback_sequence(show.show_type, show.playback_sequence),
+                    playback_sequence=_merge_playback_sequence(show.playback_sequence),
                     content_lifecycle=dict(show.content_lifecycle),
                 )
 
@@ -455,10 +405,6 @@ def load_schedule(path: Path) -> StationSchedule:
         description = str(cfg.get("description", "")).strip()
         if not name or not description:
             raise ScheduleError(f"Show {show_id}: missing name/description")
-        show_type = str(cfg.get("show_type", "research")).strip() or "research"
-        if show_type not in _valid_show_types():
-            raise ScheduleError(f"Show {show_id}: unknown show_type {show_type!r}")
-
         # Talk-show fields
         host = str(cfg.get("host", "liminal_operator")).strip()
         hosts = cfg.get("hosts") if isinstance(cfg.get("hosts"), list) else []
@@ -467,7 +413,7 @@ def load_schedule(path: Path) -> StationSchedule:
         topic_focus = str(cfg.get("topic_focus", "")).strip()
         segment_types_raw = cfg.get("segment_types")
         if segment_types_raw is None or segment_types_raw == []:
-            segment_types = _default_segment_types_for_show_type(show_type)
+            segment_types = ["deep_dive"]
         elif not isinstance(segment_types_raw, list):
             raise ScheduleError(f"Show {show_id}: segment_types must be a list")
         else:
@@ -481,23 +427,31 @@ def load_schedule(path: Path) -> StationSchedule:
         content_lifecycle = cfg.get("content_lifecycle") if isinstance(cfg.get("content_lifecycle"), dict) else {}
 
         if not hosts:
+            legacy_host_voice = voices.get("host")
+            legacy_guest_voice = voices.get("guest")
+            primary_voice_kokoro = legacy_host_voice if tts_backend == "kokoro" and legacy_host_voice else "am_michael"
+            primary_voice_minimax = legacy_host_voice if tts_backend == "minimax" and legacy_host_voice else "Deep_Voice_Man"
+            primary_voice_google = legacy_host_voice if tts_backend == "google" and legacy_host_voice else "Kore"
             primary = {
                 "id": host,
                 "role": "primary",
                 "tts_backend": tts_backend,
-                "voice_kokoro": voices.get("host", "am_michael"),
-                "voice_minimax": "Deep_Voice_Man",
-                "voice_google": "Kore",
+                "voice_kokoro": primary_voice_kokoro,
+                "voice_minimax": primary_voice_minimax,
+                "voice_google": primary_voice_google,
             }
             hosts = [primary]
             if "guest" in voices:
+                guest_voice_kokoro = legacy_guest_voice if tts_backend == "kokoro" and legacy_guest_voice else "af_bella"
+                guest_voice_minimax = legacy_guest_voice if tts_backend == "minimax" and legacy_guest_voice else "Wise_Woman"
+                guest_voice_google = legacy_guest_voice if tts_backend == "google" and legacy_guest_voice else "Puck"
                 hosts.append({
                     "id": host,
                     "role": "guest",
-                    "tts_backend": "kokoro",
-                    "voice_kokoro": voices.get("guest", "af_bella"),
-                    "voice_minimax": "Wise_Woman",
-                    "voice_google": "Puck",
+                    "tts_backend": tts_backend,
+                    "voice_kokoro": guest_voice_kokoro,
+                    "voice_minimax": guest_voice_minimax,
+                    "voice_google": guest_voice_google,
                 })
 
         # Legacy fields (optional)
@@ -509,7 +463,6 @@ def load_schedule(path: Path) -> StationSchedule:
             show_id=show_id,
             name=name,
             description=description,
-            show_type=show_type,
             host=host,
             hosts=[dict(item) for item in hosts if isinstance(item, dict)],
             guests=[dict(item) for item in guests if isinstance(item, dict)],
@@ -625,7 +578,6 @@ def _cli() -> int:
     resolved = schedule.resolve(when)
     print(f"{INDEX_TO_DAY[when.weekday()]} {when:%H:%M} -- {resolved.name} ({resolved.show_id})")
     print(f"  Host: {resolved.host}")
-    print(f"  Focus: {resolved.topic_focus}")
     print(f"  Segments: {', '.join(resolved.segment_types)}")
     print(f"  Bumper: {resolved.bumper_style}")
     return 0

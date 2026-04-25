@@ -89,12 +89,6 @@ hosts:
     tts_voice: am_michael
     voice_minimax: Deep_Voice_Man
     tts_backend: kokoro
-    topics:
-    - philosophy
-    - music_history
-    - late_night_thoughts
-    - radio_lore
-    - memory
     speaking_pace_wpm: 130
   dr_resonance:
     name: Dr. Resonance
@@ -163,12 +157,6 @@ hosts:
     tts_voice: bm_daniel
     voice_minimax: Elegant_Man
     tts_backend: kokoro
-    topics:
-    - music_history
-    - genre_archaeology
-    - album_deep_dives
-    - artist_profiles
-    - production_techniques
     speaking_pace_wpm: 140
   nyx:
     name: Nyx
@@ -237,13 +225,6 @@ hosts:
     tts_voice: af_heart
     voice_minimax: Calm_Woman
     tts_backend: kokoro
-    topics:
-    - dreams
-    - night_philosophy
-    - insomnia
-    - memory
-    - darkness_beauty
-    - sleep_science
     speaking_pace_wpm: 120
   signal:
     name: Signal
@@ -312,12 +293,6 @@ hosts:
     tts_voice: am_onyx
     voice_minimax: Deep_Voice_Man
     tts_backend: kokoro
-    topics:
-    - current_events
-    - media_analysis
-    - geopolitics
-    - economics
-    - technology_impact
     speaking_pace_wpm: 145
   ember:
     name: Ember
@@ -385,13 +360,6 @@ hosts:
     tts_voice: af_bella
     voice_minimax: Friendly_Person
     tts_backend: kokoro
-    topics:
-    - soul_music
-    - funk_history
-    - groove
-    - music_as_feeling
-    - food_and_music
-    - dance
     speaking_pace_wpm: 135
   root:
     name: root
@@ -406,10 +374,6 @@ hosts:
     tts_voice: am_liam
     voice_minimax: Deep_Voice_Man
     speaking_pace_wpm: 125
-    topics:
-    - technology
-    - ai
-    - crypto
   sudo:
     name: Sudo
     identity: You are a mid-level it architect who still has hope. You are the one
@@ -424,7 +388,6 @@ hosts:
     voice_minimax: Wise_Woman
     voice_google: Zephyr
     speaking_pace_wpm: 110
-    topics: []
   the_archivist:
     name: The Archivist
     identity: You are the Curator of things better left forgotten. You don't just
@@ -441,7 +404,6 @@ hosts:
     voice_minimax: Patient_Man
     voice_google: Puck
     speaking_pace_wpm: 130
-    topics: []
   the_hitchhiker:
     name: The Hitchhiker
     identity: You are "The Hitchhiker". You’ve seen things on the road that don't
@@ -458,7 +420,6 @@ hosts:
     voice_minimax: Calm_Woman
     voice_google: Sulafat
     speaking_pace_wpm: 130
-    topics: []
   nova:
     name: Nova
     identity: You are "Nova." You believe the truth isn't just out there—it's already
@@ -475,7 +436,6 @@ hosts:
     voice_minimax: Elegant_Man
     voice_google: Charon
     speaking_pace_wpm: 125
-    topics: []
   vector:
     name: Vector
     identity: 'You are Vector, the speed-running architect of the AI frontier. You
@@ -511,4 +471,3 @@ hosts:
     voice_minimax: Friendly_Person
     voice_google: Umbriel
     speaking_pace_wpm: 120
-    topics: []

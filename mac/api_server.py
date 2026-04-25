@@ -21,7 +21,9 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "mac"))
+sys.path.insert(0, str(PROJECT_ROOT))
 from time_utils import station_now, station_iso_now, station_from_timestamp
+from shared.settings import icecast_status_url, message_cooldown_seconds
 
 # Import play history
 try:
@@ -65,14 +67,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MESSAGES_FILE = Path.home() / ".writ" / "messages.json"
 
 # Rate limiting for messages
-MESSAGE_COOLDOWN = 300  # 5 minutes between messages per IP
+MESSAGE_COOLDOWN = message_cooldown_seconds()
 last_message_times: dict[str, float] = {}
 
 PORT = int(os.environ.get("WRIT_NOW_PLAYING_PORT", "8001"))
-ICECAST_STATUS_URL = os.environ.get(
-    "ICECAST_STATUS_URL",
-    "http://localhost:8000/status-json.xsl",
-)
+ICECAST_STATUS_URL = icecast_status_url()
 
 # Shared state — set by start_api_thread()
 _track_info: dict = {}
@@ -410,7 +409,6 @@ def get_schedule_info() -> dict:
                         "show_id": future_show.show_id,
                         "name": future_show.name,
                         "host": future_show.host,
-                        "topic_focus": future_show.topic_focus,
                         "starts_around": future.strftime("%H:%M"),
                     })
             except Exception:
@@ -422,7 +420,6 @@ def get_schedule_info() -> dict:
                 "name": current.name,
                 "description": current.description,
                 "host": current.host,
-                "topic_focus": current.topic_focus,
                 "segment_types": current.segment_types,
                 "bumper_style": current.bumper_style,
             },

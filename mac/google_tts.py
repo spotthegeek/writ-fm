@@ -9,19 +9,23 @@ from __future__ import annotations
 import base64
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import wave
 from pathlib import Path
-
-GOOGLE_TTS_API_KEY = (
-    os.environ.get("GOOGLE_TTS_API_KEY", "")
-    or os.environ.get("GEMINI_API_KEY", "")
-    or os.environ.get("GOOGLE_API_KEY", "")
+from shared.settings import (
+    DEFAULT_VOICE_BY_BACKEND_AND_ROLE,
+    google_tts_api_key,
+    google_tts_max_retries,
+    google_tts_model,
+    google_tts_sample_rate,
+    google_tts_timeout_seconds,
 )
-GOOGLE_TTS_MODEL = os.environ.get("GOOGLE_TTS_MODEL", "gemini-3.1-flash-tts-preview")
-GOOGLE_TTS_SAMPLE_RATE = 24000
+
+GOOGLE_TTS_MODEL = google_tts_model()
+GOOGLE_TTS_SAMPLE_RATE = google_tts_sample_rate()
 
 VOICES = {
     "Zephyr": "Bright",
@@ -56,8 +60,8 @@ VOICES = {
     "Sulafat": "Warm",
 }
 
-DEFAULT_HOST_VOICE = "Kore"
-DEFAULT_GUEST_VOICE = "Puck"
+DEFAULT_HOST_VOICE = DEFAULT_VOICE_BY_BACKEND_AND_ROLE["google"]["host"]
+DEFAULT_GUEST_VOICE = DEFAULT_VOICE_BY_BACKEND_AND_ROLE["google"]["guest"]
 
 
 def _write_wav(output_path: Path, pcm_data: bytes, *, rate: int = GOOGLE_TTS_SAMPLE_RATE) -> Path:
@@ -81,13 +85,15 @@ def generate_speech(
     *,
     wpm: int | None = None,
     model: str = GOOGLE_TTS_MODEL,
-    timeout: float = 120.0,
+    timeout: float | None = None,
 ) -> bool:
     """Generate speech via Gemini TTS and save to output_path (WAV)."""
-    api_key = GOOGLE_TTS_API_KEY
+    api_key = google_tts_api_key()
     if not api_key:
         print("[google_tts] GOOGLE_TTS_API_KEY or GEMINI_API_KEY not set")
         return False
+    timeout = float(timeout or google_tts_timeout_seconds())
+    max_retries = google_tts_max_retries()
 
     prompt_text = text
     if wpm:
@@ -133,16 +139,24 @@ def generate_speech(
         method="POST",
     )
 
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read())
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode(errors="replace")[:500]
-        print(f"[google_tts] HTTP {exc.code}: {body}")
-        return False
-    except Exception as exc:
-        print(f"[google_tts] Request failed: {exc}")
-        return False
+    data = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read())
+            break
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode(errors="replace")[:500]
+            if attempt >= max_retries or exc.code < 500:
+                print(f"[google_tts] HTTP {exc.code}: {body}")
+                return False
+            print(f"[google_tts] HTTP {exc.code} on attempt {attempt}/{max_retries}; retrying...")
+        except Exception as exc:
+            if attempt >= max_retries:
+                print(f"[google_tts] Request failed after {attempt} attempts: {exc}")
+                return False
+            print(f"[google_tts] Request failed on attempt {attempt}/{max_retries}: {exc}; retrying...")
+        time.sleep(min(2.0 * attempt, 6.0))
 
     try:
         audio_b64 = data["candidates"][0]["content"]["parts"][0]["inlineData"]["data"]

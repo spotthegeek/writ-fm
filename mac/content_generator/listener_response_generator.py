@@ -34,6 +34,8 @@ os.environ.pop("CLAUDECODE", None)
 
 from helpers import log, preprocess_for_tts, run_claude
 from persona import build_host_prompt, get_host, STATION_NAME
+from shared.hosts import assignment_voice, primary_host_assignment
+from shared.settings import default_voice_for_backend
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCHEDULE_PATH = PROJECT_ROOT / "config" / "schedule.yaml"
@@ -133,14 +135,12 @@ def build_response_prompt(
     host_id: str,
     show_name: str,
     show_description: str,
-    topic_focus: str,
     messages: list[dict],
 ) -> str:
     """Build the prompt for generating a listener response segment."""
     show_context = {
         "show_name": show_name,
         "show_description": show_description,
-        "topic_focus": topic_focus,
         "segment_type": "listener_response",
     }
     base = build_host_prompt(host_id, show_context)
@@ -208,17 +208,17 @@ def process_messages(max_batch: int = MAX_BATCH) -> int:
         show_id = resolved.show_id
         show_name = resolved.name
         show_description = resolved.description
-        host_id = resolved.host
-        topic_focus = resolved.topic_focus
-        voice = dict(resolved.voices).get("host", get_host(host_id)["tts_voice"])
+        primary = primary_host_assignment(resolved, roster_lookup=get_host)
+        host_id = primary.get("id", resolved.host)
+        backend = primary.get("tts_backend", getattr(resolved, "tts_backend", "kokoro"))
+        voice = assignment_voice(primary, backend, role="host", roster_lookup=get_host)
     except Exception as e:
         log(f"Schedule error, using defaults: {e}")
         show_id = "midnight_signal"
         show_name = "Midnight Signal"
         show_description = "Philosophy and late-night transmissions."
         host_id = "liminal_operator"
-        topic_focus = "philosophy"
-        voice = "am_michael"
+        voice = default_voice_for_backend("kokoro", "host")
 
     log(f"Current show: {show_name} (host: {host_id}, voice: {voice})")
 
@@ -236,7 +236,6 @@ def process_messages(max_batch: int = MAX_BATCH) -> int:
             host_id=host_id,
             show_name=show_name,
             show_description=show_description,
-            topic_focus=topic_focus,
             messages=batch,
         )
 

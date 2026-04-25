@@ -275,23 +275,13 @@
     <h2 class="text-sm font-bold text-gray-300">Show Taxonomy</h2>
     <button class="btn btn-primary" onclick="saveTaxonomy()">Save Taxonomy</button>
   </div>
-  <div class="grid grid-cols-2 gap-4">
-    <div class="card p-4">
-      <div class="section-title">Topic Focuses</div>
-      <div class="text-xs text-gray-500 mb-3">Used by research and hybrid shows as topic pools.</div>
-      <div id="taxonomy-topic-list" class="space-y-2"></div>
-      <button class="btn btn-ghost text-xs mt-3" onclick="addTaxonomyItem('taxonomy-topic-list')">+ Add Topic Focus</button>
-    </div>
+  <div class="grid grid-cols-1 gap-4">
     <div class="card p-4">
       <div class="section-title">Bumper Styles</div>
       <div class="text-xs text-gray-500 mb-3">Used when selecting bumper moods/styles for a show.</div>
       <div id="taxonomy-bumper-list" class="space-y-2"></div>
       <button class="btn btn-ghost text-xs mt-3" onclick="addTaxonomyItem('taxonomy-bumper-list')">+ Add Bumper Style</button>
     </div>
-  </div>
-  <div class="card p-4 mt-4">
-    <div class="section-title">Show Types</div>
-    <div id="taxonomy-show-types" class="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs"></div>
   </div>
 </div>
 
@@ -426,20 +416,6 @@
                 <select id="gen-type" class="input" onchange="onGenTypeChange()">
                   <option value="random">Random (from show's types)</option>
                 </select>
-              </div>
-              <div class="flex items-center justify-between mb-1" id="gen-topic-toggle">
-                <label class="text-xs text-gray-400 block">Topic <span class="text-gray-600">(leave blank for auto)</span></label>
-                <label class="text-xs text-gray-500 flex items-center gap-1 cursor-pointer">
-                  <input id="gen-include-topic" type="checkbox" class="accent-indigo-500" checked onchange="toggleGenTopic()" />
-                  Include topic
-                </label>
-              </div>
-              <div id="gen-topic-row">
-                <div class="flex gap-2">
-                  <input id="gen-topic" class="input" placeholder="e.g. pirate radio history..." oninput="onTopicInput()" />
-                  <button id="gen-expand-btn" class="btn btn-ghost text-xs shrink-0 px-2" onclick="expandTopic()" disabled title="Type 2+ words to enable">✦ Expand</button>
-                </div>
-                <div id="gen-expand-status" class="text-xs text-gray-600 mt-1 hidden"></div>
               </div>
               <div>
                 <label class="text-xs text-gray-400 block mb-1">Source</label>
@@ -765,22 +741,10 @@
         </div>
       </details>
 
-      <div>
-        <label class="text-xs text-gray-400 block mb-1">Topics <span class="text-gray-600">(comma-separated)</span></label>
-        <input id="host-modal-topics" class="input" placeholder="philosophy, music_history" />
-      </div>
     </div>
 
     <div id="host-modal-panel-voices" class="space-y-4 hidden">
       <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <div>
-          <label class="text-xs text-gray-400 block mb-1">Default TTS Backend</label>
-          <select id="host-modal-tts-backend" class="input">
-            <option value="kokoro">Kokoro (local)</option>
-            <option value="minimax">MiniMax (cloud)</option>
-            <option value="google">Google Gemini (cloud)</option>
-          </select>
-        </div>
         <div>
           <label class="text-xs text-gray-400 block mb-1">General WPM</label>
           <input id="host-modal-pace" type="number" min="80" max="220" value="130" class="input" />
@@ -874,25 +838,21 @@
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label class="field-label">Show Type</label>
-            <select id="modal-show-type" class="input" onchange="onShowTypeChange(this.value)"></select>
+            <label class="field-label">Default TTS Backend</label>
+            <select id="modal-tts-backend" class="input">
+              <option value="kokoro">Kokoro (local)</option>
+              <option value="minimax">MiniMax (cloud)</option>
+              <option value="google">Google Gemini (cloud)</option>
+            </select>
           </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div id="modal-bumper-wrap">
             <label class="field-label">Bumper Style</label>
             <select id="modal-bumper-style" class="input"></select>
           </div>
         </div>
 
-        <div id="modal-topic-wrap">
-          <label class="field-label">Topic Focus</label>
-          <select id="modal-topic-focus" class="input"></select>
-        </div>
-
-        <div id="modal-research-topic-wrap">
-          <label class="field-label">Research Topic</label>
-          <input id="modal-research-topic" class="input" placeholder="e.g. AI consciousness and the philosophy of mind" />
-          <div class="field-help">Used as the script focus for research-led shows.</div>
-        </div>
       </div>
 
       <div id="show-modal-pane-sources" class="modal-pane show-modal-pane hidden space-y-4">
@@ -1065,7 +1025,7 @@ let allHosts = {};
 let allSegmentTypes = {};
 let stationSettings = {};
 let genOptions = {};
-let showTaxonomy = {show_types:{}, topic_focuses:[], bumper_styles:[], source_types:[]};
+let showTaxonomy = {bumper_styles:[], source_types:[]};
 let voiceSamplesCatalog = {kokoro: [], minimax: [], google: []};
 let currentSchedule = {base: [], overrides: []};
 let activeShowsTab = 'active';
@@ -1167,34 +1127,6 @@ async function api(path, opts={}) {
   return r.json();
 }
 
-function showTypeDefs() {
-  return showTaxonomy?.show_types || {};
-}
-
-function showTypeDef(id) {
-  return showTypeDefs()[id] || showTypeDefs().research || {
-    name: id,
-    description: '',
-    uses_topic_focus: true,
-    uses_source_rules: true,
-    uses_bumper_style: true,
-    playback_sequence_defaults: {
-      intro_enabled: true,
-      intro_segment_type: 'show_intro',
-      outro_enabled: true,
-      outro_segment_type: 'show_outro',
-      station_id_enabled: true,
-      station_id_segment_type: 'station_id',
-      station_id_every_n_speaking_segments: 3,
-      station_id_before_bumper: true,
-      bumper_count_between_talk_segments: 1,
-      bumper_min_seconds: 15,
-      bumper_max_seconds: 30,
-      bumper_fade_seconds: 4,
-    },
-  };
-}
-
 function defaultPlaybackSequence() {
   return {
     intro_enabled: true,
@@ -1212,36 +1144,8 @@ function defaultPlaybackSequence() {
   };
 }
 
-function showTypePlaybackDefaults(showType) {
-  const defs = showTypeDef(showType);
-  return { ...defaultPlaybackSequence(), ...(defs.playback_sequence_defaults || {}) };
-}
-
 function playbackSequenceFromShow(show) {
-  return { ...showTypePlaybackDefaults(show?.show_type || 'research'), ...(show?.playback_sequence || {}) };
-}
-
-function renderShowTypeOptions(selected='research') {
-  return Object.entries(showTypeDefs()).map(([id, st]) =>
-    `<option value="${id}" ${id===selected?'selected':''}>${st.name}</option>`
-  ).join('');
-}
-
-function applyShowTypeDefaults(showType, force=false) {
-  const defs = showTypeDef(showType);
-  const boxes = [...document.querySelectorAll('.seg-type-cb')];
-  if (!boxes.length) return;
-  const checked = boxes.filter(cb => cb.checked);
-  if (!force && checked.length) return;
-  const defaults = new Set(defs.default_segment_types || []);
-  if (!defaults.size) return;
-  boxes.forEach(cb => { cb.checked = defaults.has(cb.value); });
-}
-
-function renderTopicFocusOptions(selected='') {
-  return (showTaxonomy.topic_focuses || []).map(f =>
-    `<option value="${f}" ${f===selected?'selected':''}>${f}</option>`
-  ).join('');
+  return { ...defaultPlaybackSequence(), ...(show?.playback_sequence || {}) };
 }
 
 function renderBumperStyleOptions(selected='ambient') {
@@ -1267,62 +1171,6 @@ function renderSegmentTypeOptions(selected='', includeBlank=false, blankLabel='U
     opts.push(`<option value="${id}" ${id===selected?'selected':''}>${st.name || id}</option>`);
   });
   return opts.join('');
-}
-
-function renderShowTypePlaybackEditor(showType, sequence) {
-  const seq = { ...showTypePlaybackDefaults(showType), ...(sequence || {}) };
-  return `
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-      <label class="flex items-center gap-2 text-xs text-gray-300">
-        <input type="checkbox" id="taxonomy-${showType}-intro-enabled" class="accent-indigo-500" ${seq.intro_enabled ? 'checked' : ''}>
-        Intro enabled
-      </label>
-      <div>
-        <label class="field-label">Intro segment type</label>
-        <select id="taxonomy-${showType}-intro-type" class="input">${renderSegmentTypeOptions(seq.intro_segment_type)}</select>
-      </div>
-      <label class="flex items-center gap-2 text-xs text-gray-300">
-        <input type="checkbox" id="taxonomy-${showType}-outro-enabled" class="accent-indigo-500" ${seq.outro_enabled ? 'checked' : ''}>
-        Outro enabled
-      </label>
-      <div>
-        <label class="field-label">Outro segment type</label>
-        <select id="taxonomy-${showType}-outro-type" class="input">${renderSegmentTypeOptions(seq.outro_segment_type)}</select>
-      </div>
-      <label class="flex items-center gap-2 text-xs text-gray-300">
-        <input type="checkbox" id="taxonomy-${showType}-station-enabled" class="accent-indigo-500" ${seq.station_id_enabled ? 'checked' : ''}>
-        Station ID enabled
-      </label>
-      <div>
-        <label class="field-label">Station ID type</label>
-        <select id="taxonomy-${showType}-station-type" class="input">${renderSegmentTypeOptions(seq.station_id_segment_type)}</select>
-      </div>
-      <div>
-        <label class="field-label">Station ID every N speaking segments</label>
-        <input id="taxonomy-${showType}-station-every" class="input" type="number" min="1" value="${seq.station_id_every_n_speaking_segments}">
-      </div>
-      <label class="flex items-center gap-2 text-xs text-gray-300 mt-6">
-        <input type="checkbox" id="taxonomy-${showType}-station-before" class="accent-indigo-500" ${seq.station_id_before_bumper ? 'checked' : ''}>
-        Station ID before bumper
-      </label>
-      <div>
-        <label class="field-label">Bumpers between talk segments</label>
-        <input id="taxonomy-${showType}-bumper-count" class="input" type="number" min="1" value="${seq.bumper_count_between_talk_segments}">
-      </div>
-      <div>
-        <label class="field-label">Bumper min seconds</label>
-        <input id="taxonomy-${showType}-bumper-min" class="input" type="number" min="1" value="${seq.bumper_min_seconds}">
-      </div>
-      <div>
-        <label class="field-label">Bumper max seconds</label>
-        <input id="taxonomy-${showType}-bumper-max" class="input" type="number" min="1" value="${seq.bumper_max_seconds}">
-      </div>
-      <div>
-        <label class="field-label">Bumper fade seconds</label>
-        <input id="taxonomy-${showType}-bumper-fade" class="input" type="number" min="0" value="${seq.bumper_fade_seconds}">
-      </div>
-    </div>
-  `;
 }
 
 function escapeHtml(value) {
@@ -1368,65 +1216,16 @@ function voiceLabel(backend, voice) {
 }
 
 async function loadTaxonomyTab() {
-  showTaxonomy = await api('/show-taxonomy').catch(() => ({show_types:{}, topic_focuses:[], bumper_styles:[], source_types:[]}));
+  showTaxonomy = await api('/show-taxonomy').catch(() => ({bumper_styles:[], source_types:[]}));
   renderTaxonomyTab();
 }
 
 function renderTaxonomyTab() {
-  const topicRoot = document.getElementById('taxonomy-topic-list');
   const bumperRoot = document.getElementById('taxonomy-bumper-list');
-  const showTypesRoot = document.getElementById('taxonomy-show-types');
-  if (topicRoot) {
-    const items = showTaxonomy.topic_focuses || [];
-    topicRoot.innerHTML = items.map(v => taxonomyRowHtml(v, 'taxonomy-topic-list')).join('') || '<div class="text-xs text-gray-600">No topic focuses defined.</div>';
-  }
   if (bumperRoot) {
     const items = showTaxonomy.bumper_styles || [];
     bumperRoot.innerHTML = items.map(v => taxonomyRowHtml(v, 'taxonomy-bumper-list')).join('') || '<div class="text-xs text-gray-600">No bumper styles defined.</div>';
   }
-  if (showTypesRoot) {
-    showTypesRoot.innerHTML = Object.entries(showTypeDefs()).map(([id, st]) => showTypeCardHtml(id, st)).join('');
-  }
-}
-
-function showTypeCardHtml(id, st) {
-  const seq = st.playback_sequence_defaults || showTypePlaybackDefaults(id);
-  const defaults = (st.default_segment_types || []).join(', ');
-  return `
-    <div class="border border-gray-800 rounded p-3 space-y-3" data-show-type-card="${escapeHtml(id)}">
-      <div class="flex items-center justify-between gap-2">
-        <div>
-          <div class="flex items-center gap-2">
-            <span class="font-bold">${escapeHtml(st.name || id)}</span>
-            <span class="text-gray-500">${escapeHtml(id)}</span>
-          </div>
-          <div class="text-gray-500 text-xs mt-1">${escapeHtml(st.description || '')}</div>
-        </div>
-      </div>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div>
-          <label class="field-label">Display name</label>
-          <input class="input" id="taxonomy-${id}-name" value="${escapeHtml(st.name || id)}">
-        </div>
-        <div>
-          <label class="field-label">Default segment types</label>
-          <input class="input" id="taxonomy-${id}-segments" value="${escapeHtml(defaults)}" placeholder="deep_dive, interview, story">
-        </div>
-      </div>
-      <div>
-        <label class="field-label">Description</label>
-        <textarea class="input h-20 resize-none" id="taxonomy-${id}-description">${escapeHtml(st.description || '')}</textarea>
-      </div>
-      <div class="grid grid-cols-3 gap-2 text-xs text-gray-300">
-        <label class="flex items-center gap-2"><input type="checkbox" id="taxonomy-${id}-topic" class="accent-indigo-500" ${st.uses_topic_focus ? 'checked' : ''}>Topic focus</label>
-        <label class="flex items-center gap-2"><input type="checkbox" id="taxonomy-${id}-source" class="accent-indigo-500" ${st.uses_source_rules ? 'checked' : ''}>Source rules</label>
-        <label class="flex items-center gap-2"><input type="checkbox" id="taxonomy-${id}-bumper" class="accent-indigo-500" ${st.uses_bumper_style ? 'checked' : ''}>Bumper style</label>
-      </div>
-      <div class="pt-2 border-t border-gray-800">
-        <div class="section-title mb-2">Playback Defaults</div>
-        ${renderShowTypePlaybackEditor(id, seq)}
-      </div>
-    </div>`;
 }
 
 function taxonomyRowHtml(value, containerId) {
@@ -1454,53 +1253,9 @@ function getTaxonomyItems(containerId) {
   return [...document.querySelectorAll(`#${containerId} .taxonomy-value`)].map(i => i.value.trim()).filter(Boolean);
 }
 
-function getShowTypePlaybackSequence(showType) {
-  const readBool = id => !!document.getElementById(id)?.checked;
-  const readValue = id => document.getElementById(id)?.value ?? '';
-  const readInt = (id, fallback) => {
-    const value = parseInt(readValue(id), 10);
-    return Number.isFinite(value) ? value : fallback;
-  };
-  return {
-    intro_enabled: readBool(`taxonomy-${showType}-intro-enabled`),
-    intro_segment_type: readValue(`taxonomy-${showType}-intro-type`),
-    outro_enabled: readBool(`taxonomy-${showType}-outro-enabled`),
-    outro_segment_type: readValue(`taxonomy-${showType}-outro-type`),
-    station_id_enabled: readBool(`taxonomy-${showType}-station-enabled`),
-    station_id_segment_type: readValue(`taxonomy-${showType}-station-type`),
-    station_id_every_n_speaking_segments: readInt(`taxonomy-${showType}-station-every`, 3),
-    station_id_before_bumper: readBool(`taxonomy-${showType}-station-before`),
-    bumper_count_between_talk_segments: readInt(`taxonomy-${showType}-bumper-count`, 1),
-    bumper_min_seconds: readInt(`taxonomy-${showType}-bumper-min`, 15),
-    bumper_max_seconds: readInt(`taxonomy-${showType}-bumper-max`, 30),
-    bumper_fade_seconds: readInt(`taxonomy-${showType}-bumper-fade`, 4),
-  };
-}
-
 async function saveTaxonomy() {
-  const showTypes = {};
-  Object.entries(showTypeDefs()).forEach(([id, st]) => {
-    const defaults = st.playback_sequence_defaults || showTypePlaybackDefaults(id);
-    showTypes[id] = {
-      name: document.getElementById(`taxonomy-${id}-name`)?.value.trim() || st.name || id,
-      description: document.getElementById(`taxonomy-${id}-description`)?.value.trim() || '',
-      uses_topic_focus: !!document.getElementById(`taxonomy-${id}-topic`)?.checked,
-      uses_source_rules: !!document.getElementById(`taxonomy-${id}-source`)?.checked,
-      uses_bumper_style: !!document.getElementById(`taxonomy-${id}-bumper`)?.checked,
-      default_segment_types: (document.getElementById(`taxonomy-${id}-segments`)?.value || '')
-        .split(',')
-        .map(v => v.trim())
-        .filter(Boolean),
-      playback_sequence_defaults: {
-        ...defaults,
-        ...getShowTypePlaybackSequence(id),
-      },
-    };
-  });
   const body = {
-    topic_focuses: getTaxonomyItems('taxonomy-topic-list'),
     bumper_styles: getTaxonomyItems('taxonomy-bumper-list'),
-    show_types: showTypes,
   };
   const updated = await api('/show-taxonomy', {
     method: 'PUT',
@@ -1897,7 +1652,7 @@ async function loadShows() {
     ] = await Promise.all([
       api('/shows'),
       api('/hosts'),
-      api('/show-taxonomy').catch(() => ({show_types:{}, topic_focuses:[], bumper_styles:[], source_types:[]})),
+      api('/show-taxonomy').catch(() => ({bumper_styles:[], source_types:[]})),
       api('/segment-types').catch(() => ({})),
       api('/schedule').catch(() => ({base: [], overrides: []})),
       needsGenOptions ? api('/generate/options').catch(() => ({})) : Promise.resolve(null),
@@ -1944,15 +1699,12 @@ async function loadShows() {
           <div class="w-3 h-3 rounded-full" style="background:${showColorMap[id]}"></div>
           <span class="font-bold text-sm">${show.name}</span>
           <span class="text-gray-600 text-xs">${id}</span>
-          <span class="pill pill-yellow">${showTypeDef(show.show_type || 'research').name}</span>
-          ${show.topic_focus ? `<span class="pill pill-blue">${show.topic_focus}</span>` : ''}
         </div>
         <div class="text-gray-500 text-xs mb-2">${show.description}</div>
         <div class="flex flex-wrap gap-1">
           ${(show.hosts||[]).map(h=>`<span class="pill" style="background:#1e2d4a;color:#93c5fd">${h.id} (${h.role})</span>`).join('')}
           ${(show.segment_types||[]).map(t=>`<span class="pill pill-purple">${allSegmentTypes[t]?.name || t}</span>`).join('')}
         </div>
-        ${show.research_topic ? `<div class="text-xs text-indigo-400 mt-1">📌 ${show.research_topic}</div>` : ''}
       </div>
       <button class="btn btn-ghost shrink-0" onclick='openShowModal(${JSON.stringify(id)})'>Edit</button>
     </div>`;
@@ -1972,7 +1724,7 @@ function openShowModal(showId) {
   document.getElementById('modal-id-input').disabled = !isNew;
   document.getElementById('modal-name').value = show?.name || '';
   document.getElementById('modal-description').value = show?.description || '';
-  document.getElementById('modal-research-topic').value = show?.research_topic || '';
+  document.getElementById('modal-tts-backend').value = show?.tts_backend || (show?.hosts || []).find(h=>h.role==='primary')?.tts_backend || 'kokoro';
   document.getElementById('modal-delete-btn').classList.toggle('hidden', isNew);
 
   renderShowModalFields(show || {});
@@ -1988,11 +1740,10 @@ function openShowModal(showId) {
       <span class="text-xs text-gray-300">${st.name}</span>
       ${st.multi_voice ? '<span class="text-[10px] text-purple-300">(multi)</span>' : ''}
     </label>`).join('');
-  applyShowTypeDefaults(show?.show_type || 'research', isNew);
 
   // Hosts
   const defaultHostId = Object.keys(allHosts)[0] || 'liminal_operator';
-  renderHosts(show?.hosts || [{id:defaultHostId,role:'primary',voice_kokoro:allHosts[defaultHostId]?.tts_voice||'am_michael',voice_minimax:allHosts[defaultHostId]?.voice_minimax||'Deep_Voice_Man',voice_google:allHosts[defaultHostId]?.voice_google||'Kore',tts_backend:allHosts[defaultHostId]?.tts_backend||'kokoro'}]);
+  renderHosts(show?.hosts || [{id:defaultHostId,role:'primary',voice_kokoro:allHosts[defaultHostId]?.tts_voice||'am_michael',voice_minimax:allHosts[defaultHostId]?.voice_minimax||'Deep_Voice_Man',voice_google:allHosts[defaultHostId]?.voice_google||'Kore'}]);
 
   // Guests
   renderGuests(show?.guests || []);
@@ -2011,21 +1762,16 @@ function openShowModal(showId) {
   switchShowModalTab('basics');
 }
 
-function defaultGenerationConfig(showType) {
-  const defaults = {
-    talk: {enabled: showType !== 'music_first', min_inventory: 5, target_inventory: 15, cadence: 'continuous'},
-    music: {enabled: showType === 'music_first', min_inventory: 3, target_inventory: 8, cadence: 'weekly'},
+function defaultGenerationConfig() {
+  return {
+    talk: {enabled: true, min_inventory: 5, target_inventory: 15, cadence: 'continuous'},
+    music: {enabled: false, min_inventory: 3, target_inventory: 8, cadence: 'weekly'},
   };
-  if (['content_ingest', 'hybrid', 'news_current_events', 'live_community', 'listener_driven'].includes(showType)) {
-    defaults.talk.enabled = true;
-  }
-  return defaults;
 }
 
 function renderGenerationFields(show) {
-  const showType = show?.show_type || 'research';
   const existing = show?.generation || {};
-  const defaults = defaultGenerationConfig(showType);
+  const defaults = defaultGenerationConfig();
   const talk = { ...defaults.talk, ...(existing.talk || {}) };
   const music = { ...defaults.music, ...(existing.music || {}) };
   const set = (id, value) => {
@@ -2047,43 +1793,27 @@ function renderGenerationFields(show) {
 }
 
 function renderShowModalFields(show) {
-  const showType = show?.show_type || document.getElementById('modal-show-type')?.value || 'research';
-  const defs = showTypeDef(showType);
-  const showTypeSel = document.getElementById('modal-show-type');
-  const topicWrap = document.getElementById('modal-topic-wrap');
-  const researchTopicWrap = document.getElementById('modal-research-topic-wrap');
   const bumperWrap = document.getElementById('modal-bumper-wrap');
   const sourceHint = document.getElementById('modal-source-hint');
   const sourceEnabled = document.getElementById('modal-source-enabled');
   const sourceDisabled = document.getElementById('modal-source-disabled');
-  const topicSel = document.getElementById('modal-topic-focus');
 
-  if (showTypeSel) {
-    showTypeSel.innerHTML = renderShowTypeOptions(showType);
-    showTypeSel.value = showType;
-  }
-  topicWrap.classList.toggle('hidden', !defs.uses_topic_focus);
-  researchTopicWrap.classList.toggle('hidden', !defs.uses_topic_focus);
-  bumperWrap.classList.toggle('hidden', !defs.uses_bumper_style);
+  bumperWrap.classList.remove('hidden');
   if (sourceEnabled && sourceDisabled) {
-    sourceEnabled.classList.toggle('hidden', !defs.uses_source_rules);
-    sourceDisabled.classList.toggle('hidden', defs.uses_source_rules);
+    sourceEnabled.classList.remove('hidden');
+    sourceDisabled.classList.add('hidden');
   }
   if (sourceHint) {
-    sourceHint.textContent = defs.uses_source_rules
-      ? 'Add source rules for Reddit, YouTube, web URLs, RSS feeds, and more. For content-led shows, these are what the scheduler will draw from.'
-      : 'This show type does not use source rules by default.';
+    sourceHint.textContent = 'Add source rules for Reddit, YouTube, web URLs, RSS feeds, and more. The scheduler will draw from these when a segment needs source material.';
   }
 
-  topicSel.innerHTML = renderTopicFocusOptions(show?.topic_focus || '');
   document.getElementById('modal-bumper-style').innerHTML = renderBumperStyleOptions(show?.bumper_style || 'ambient');
   const playbackRoot = document.getElementById('modal-playback-sequence');
   if (playbackRoot) playbackRoot.innerHTML = renderShowModalPlaybackEditor(show);
 }
 
 function renderShowModalPlaybackEditor(show) {
-  const showType = show?.show_type || document.getElementById('modal-show-type')?.value || 'research';
-  const seq = playbackSequenceFromShow(show || {show_type: showType});
+  const seq = playbackSequenceFromShow(show);
   return `
     <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
       <label class="flex items-center gap-2 text-xs text-gray-300">
@@ -2136,12 +1866,6 @@ function renderShowModalPlaybackEditor(show) {
       </div>
     </div>
   `;
-}
-
-function onShowTypeChange(showType) {
-  renderShowModalFields({show_type: showType});
-  applyShowTypeDefaults(showType, true);
-  renderGenerationFields({show_type: showType});
 }
 
 function closeModal() { document.getElementById('show-modal').classList.add('hidden'); }
@@ -2244,11 +1968,7 @@ function syncSourceRowHint(row) {
 
 function addSource() {
   const sources = getSources();
-  const showType = document.getElementById('modal-show-type')?.value || 'research';
-  const defaultType = ['content_ingest', 'hybrid', 'news_current_events', 'live_community', 'listener_driven'].includes(showType)
-    ? 'reddit_subreddit'
-    : 'url';
-  sources.push({type:defaultType, value:'', lookback_days:7, selection_strategy:'latest', segment_type:''});
+  sources.push({type:'url', value:'', lookback_days:7, selection_strategy:'latest', segment_type:''});
   renderSources(sources);
 }
 
@@ -2291,11 +2011,6 @@ function renderHosts(hosts) {
         <select class="input host-role" style="width:100px">
           ${HOST_ROLES.map(r=>`<option value="${r}" ${r===h.role?'selected':''}>${r}</option>`).join('')}
         </select>
-        <select class="input host-tts" style="width:100px">
-          <option value="kokoro" ${h.tts_backend==='kokoro'?'selected':''}>Kokoro</option>
-          <option value="minimax" ${h.tts_backend==='minimax'?'selected':''}>MiniMax</option>
-          <option value="google" ${h.tts_backend==='google'?'selected':''}>Google</option>
-        </select>
         <button class="btn btn-ghost text-xs px-2" onclick="removeHost(${i})">✕</button>
       </div>
       <div class="grid grid-cols-3 gap-2">
@@ -2329,8 +2044,7 @@ function addHost() {
     role:'co-host',
     voice_kokoro:allHosts[firstHostId]?.tts_voice || 'am_michael',
     voice_minimax:allHosts[firstHostId]?.voice_minimax || 'Deep_Voice_Man',
-    voice_google:allHosts[firstHostId]?.voice_google || 'Kore',
-    tts_backend:allHosts[firstHostId]?.tts_backend || 'kokoro'
+    voice_google:allHosts[firstHostId]?.voice_google || 'Kore'
   });
   renderHosts(hosts);
 }
@@ -2342,7 +2056,6 @@ function syncHostRowDefaults(row) {
   const hostId = row.querySelector('.host-id').value;
   const host = allHosts[hostId];
   if (!host) return;
-  row.querySelector('.host-tts').value = host.tts_backend || 'kokoro';
   row.querySelector('.host-voice-kokoro').value = host.tts_voice || 'am_michael';
   row.querySelector('.host-voice-minimax').value = host.voice_minimax || 'Deep_Voice_Man';
   row.querySelector('.host-voice-google').value = host.voice_google || 'Kore';
@@ -2352,7 +2065,6 @@ function getHosts() {
   return [...document.querySelectorAll('#modal-hosts > div')].map(row => ({
     id: row.querySelector('.host-id').value,
     role: row.querySelector('.host-role').value,
-    tts_backend: row.querySelector('.host-tts').value,
     voice_kokoro: row.querySelector('.host-voice-kokoro').value,
     voice_minimax: row.querySelector('.host-voice-minimax').value,
     voice_google: row.querySelector('.host-voice-google').value,
@@ -2389,10 +2101,8 @@ async function saveShow() {
   if (!newId) return alert('Show ID required');
   const savedId = showId || newId;
 
-  const showType = document.getElementById('modal-show-type').value || 'research';
-  const defs = showTypeDef(showType);
   const segTypes = [...document.querySelectorAll('.seg-type-cb:checked')].map(c=>c.value);
-  const sourceRules = defs.uses_source_rules ? getSources() : [];
+  const sourceRules = getSources();
   const hosts = getHosts();
   if (!hosts.length) return alert('Assign at least one host.');
   if (!segTypes.length) return alert('Select at least one segment type.');
@@ -2429,13 +2139,11 @@ async function saveShow() {
   const body = {
     name: document.getElementById('modal-name').value.trim(),
     description: document.getElementById('modal-description').value.trim(),
-    show_type: showType,
-    topic_focus: defs.uses_topic_focus ? document.getElementById('modal-topic-focus').value : '',
-    research_topic: defs.uses_topic_focus ? document.getElementById('modal-research-topic').value.trim() : '',
+    tts_backend: document.getElementById('modal-tts-backend').value,
     research_sources: sourceRules,
     source_rules: sourceRules,
     segment_types: segTypes,
-    bumper_style: defs.uses_bumper_style ? document.getElementById('modal-bumper-style').value : '',
+    bumper_style: document.getElementById('modal-bumper-style').value,
     hosts,
     guests: getGuests(),
     content_lifecycle: {
@@ -2724,40 +2432,6 @@ function toggleGuestCard(show) {
   document.getElementById('gen-guest-card').classList.toggle('hidden', !show);
 }
 
-function onTopicInput() {
-  const words = document.getElementById('gen-topic').value.trim().split(/\s+/).filter(Boolean);
-  document.getElementById('gen-expand-btn').disabled = words.length < 2;
-}
-
-async function expandTopic() {
-  const showId = document.getElementById('gen-show').value;
-  const hint = document.getElementById('gen-topic').value.trim();
-  if (hint.split(/\s+/).filter(Boolean).length < 2) return;
-
-  const btn = document.getElementById('gen-expand-btn');
-  const status = document.getElementById('gen-expand-status');
-  btn.disabled = true;
-  btn.textContent = '…';
-  status.textContent = 'Expanding via LLM…';
-  status.classList.remove('hidden');
-
-  try {
-    const r = await api('/generate/expand-topic', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({hint, show_id: showId}),
-    });
-    document.getElementById('gen-topic').value = r.expanded;
-    status.textContent = 'Prompt expanded ✓';
-    setTimeout(() => status.classList.add('hidden'), 3000);
-  } catch(e) {
-    status.textContent = 'Expansion failed: ' + e.message;
-  } finally {
-    btn.textContent = '✦ Expand';
-    onTopicInput();
-  }
-}
-
 function toggleMeta(id) {
   const el = document.getElementById(id);
   if (el) el.classList.toggle('hidden');
@@ -2784,16 +2458,8 @@ function onGenShowChange() {
   const showId = document.getElementById('gen-show').value;
   const show = allShows[showId];
   if (!show) return;
-  const includeTopic = document.getElementById('gen-include-topic')?.checked !== false;
-  // Pre-fill topic from show config
-  if (includeTopic && show.research_topic && !document.getElementById('gen-topic').value) {
-    document.getElementById('gen-topic').value = show.research_topic;
-  }
   // Set TTS default
-  const primary = (show.hosts||[]).find(h=>h.role==='primary');
-  if (primary) {
-    document.getElementById('gen-tts').value = primary.tts_backend || '';
-  }
+  document.getElementById('gen-tts').value = show.tts_backend || '';
   updateGenMinimaxLongUI();
   const sourceTypeEl = document.getElementById('gen-source-type');
   const sourceValueEl = document.getElementById('gen-source-value');
@@ -2827,33 +2493,6 @@ function onGenTypeChange() {
   updateGenSourceUI();
 }
 
-function toggleGenTopic() {
-  const include = document.getElementById('gen-include-topic').checked;
-  const row = document.getElementById('gen-topic-row');
-  const topicEl = document.getElementById('gen-topic');
-  const expandBtn = document.getElementById('gen-expand-btn');
-  const expandStatus = document.getElementById('gen-expand-status');
-  if (include) {
-    row.classList.remove('hidden');
-    topicEl.disabled = false;
-    if (!topicEl.value.trim()) {
-      const showId = document.getElementById('gen-show').value;
-      const show = allShows[showId];
-      if (show?.research_topic) {
-        topicEl.value = show.research_topic;
-      }
-    }
-    expandBtn.disabled = topicEl.value.trim().split(/\s+/).length < 2;
-    expandStatus.classList.add('hidden');
-  } else {
-    topicEl.value = '';
-    row.classList.add('hidden');
-    topicEl.disabled = true;
-    expandBtn.disabled = true;
-    expandStatus.classList.add('hidden');
-  }
-}
-
 function updateGenHostVoiceOptions() {
   const hostVoiceSel = document.getElementById('gen-host-voice');
   const backend = document.getElementById('gen-tts').value || 'kokoro';
@@ -2877,35 +2516,26 @@ function syncGenHostVoiceSampleButton() {
 
 function updateGenSourceUI() {
   const segmentType = document.getElementById('gen-type').value || 'random';
+  const selectedSourceType = document.getElementById('gen-source-type').value;
+  if (segmentType === 'youtube' && selectedSourceType !== 'youtube') {
+    document.getElementById('gen-source-type').value = 'youtube';
+  }
   const explicitType = isExplicitManualSegmentType(segmentType);
   const sourceTypeSel = document.getElementById('gen-source-type');
   const sourceValueEl = document.getElementById('gen-source-value');
   const type = document.getElementById('gen-source-type').value;
   const valueEl = document.getElementById('gen-source-value');
   const helpEl = document.getElementById('gen-source-help');
-  const topicEl = document.getElementById('gen-topic');
-  const expandBtn = document.getElementById('gen-expand-btn');
-  const topicRow = document.getElementById('gen-topic-row');
   const ttsCard = document.getElementById('gen-tts-card');
   const guestToggleRow = document.getElementById('gen-guest-toggle-row');
   const guestCard = document.getElementById('gen-guest-card');
   const guestEnabled = document.getElementById('gen-guest-enabled');
-  const includeTopic = document.getElementById('gen-include-topic')?.checked !== false;
   if (explicitType) {
     sourceTypeSel.value = '';
     sourceValueEl.value = '';
     sourceTypeSel.disabled = true;
     sourceValueEl.disabled = true;
     helpEl.textContent = 'Source is ignored for Station ID, Show Intro, and Show Outro.';
-    if (includeTopic) {
-      topicEl.disabled = false;
-      expandBtn.disabled = topicEl.value.trim().split(/\s+/).length < 2;
-      topicRow.classList.remove('hidden');
-    } else {
-      topicRow.classList.add('hidden');
-      topicEl.disabled = true;
-      expandBtn.disabled = true;
-    }
     ttsCard.classList.remove('hidden');
     guestToggleRow.classList.remove('hidden');
     guestCard.classList.toggle('hidden', !guestEnabled.checked);
@@ -2915,20 +2545,17 @@ function updateGenSourceUI() {
   sourceValueEl.disabled = false;
   if (type === 'reddit') {
     valueEl.placeholder = 'https://www.reddit.com/r/nosleep/comments/... or /r/nosleep';
-    helpEl.textContent = 'Reddit mode ignores Topic. Use Reddit Storytelling to read the post directly, or Reddit Post for summary/discussion.';
-    topicEl.disabled = true;
-    expandBtn.disabled = true;
-    topicRow.classList.remove('hidden');
+    helpEl.textContent = 'Reddit Storytelling reads the post directly. Reddit Post summarizes and discusses the thread.';
     ttsCard.classList.remove('hidden');
     guestToggleRow.classList.remove('hidden');
     return;
   }
   if (type === 'youtube') {
     valueEl.placeholder = 'https://www.youtube.com/watch?v=... or https://youtu.be/...';
-    helpEl.textContent = 'YouTube mode ingests the video audio directly into the library and stores metadata/captions alongside it. Topic is ignored.';
-    topicEl.disabled = true;
-    expandBtn.disabled = true;
-    topicRow.classList.add('hidden');
+    if (segmentType === 'youtube') {
+      sourceTypeSel.disabled = true;
+    }
+    helpEl.textContent = 'YouTube mode ingests the video audio directly into the library and bypasses script generation and TTS.';
     ttsCard.classList.add('hidden');
     guestToggleRow.classList.add('hidden');
     guestEnabled.checked = false;
@@ -2937,22 +2564,11 @@ function updateGenSourceUI() {
   }
   if (type === 'url') {
     valueEl.placeholder = 'https://example.com/article';
-    helpEl.textContent = 'Web URL mode extracts article text and folds it into the prompt as source material.';
-    topicEl.disabled = false;
-    expandBtn.disabled = false;
+    helpEl.textContent = 'Web URL mode extracts article text and uses it as the source material for the segment.';
     return;
   }
   valueEl.placeholder = 'Paste a URL, Reddit thread, subreddit, or YouTube link';
-  helpEl.textContent = 'Optional. Add a source for the model to build from instead of generating from topic alone.';
-  if (includeTopic) {
-    topicEl.disabled = false;
-    expandBtn.disabled = topicEl.value.trim().split(/\s+/).length < 2;
-    topicRow.classList.remove('hidden');
-  } else {
-    topicRow.classList.add('hidden');
-    topicEl.disabled = true;
-    expandBtn.disabled = true;
-  }
+  helpEl.textContent = 'Optional. Add a source for the model to build from.';
   ttsCard.classList.remove('hidden');
   guestToggleRow.classList.remove('hidden');
 }
@@ -2984,16 +2600,11 @@ async function startGeneration() {
   }
   const selectedSegmentType = document.getElementById('gen-type').value || 'random';
   const explicitType = isExplicitManualSegmentType(selectedSegmentType);
-  const includeTopic = document.getElementById('gen-include-topic')?.checked !== false;
   const body = {
     show_id: showId,
     content_type: _genContentType,
     segment_type: selectedSegmentType,
-    // For music: reuse topic as caption prompt, tts_backend as vocal flag
-    topic: isMusicMode
-      ? document.getElementById('gen-music-caption').value.trim()
-      : (includeTopic ? document.getElementById('gen-topic').value.trim() : ''),
-    include_topic: includeTopic,
+    topic: isMusicMode ? document.getElementById('gen-music-caption').value.trim() : '',
     source_type: isMusicMode || explicitType ? '' : document.getElementById('gen-source-type').value,
     source_value: isMusicMode || explicitType ? '' : document.getElementById('gen-source-value').value.trim(),
     count: parseInt(document.getElementById('gen-count').value) || 1,
@@ -3954,12 +3565,10 @@ function openHostModal(hostId) {
   document.getElementById('host-modal-voice-style').value = h?.voice_style || '';
   document.getElementById('host-modal-philosophy').value = h?.philosophy || '';
   document.getElementById('host-modal-anti').value = h?.anti_patterns || '';
-  document.getElementById('host-modal-tts-backend').value = h?.tts_backend || 'kokoro';
   document.getElementById('host-modal-pace').value = h?.speaking_pace_wpm || 130;
   document.getElementById('host-modal-pace-kokoro').value = h?.speaking_pace_wpm_kokoro || h?.speaking_pace_wpm || 130;
   document.getElementById('host-modal-pace-minimax').value = h?.speaking_pace_wpm_minimax || h?.speaking_pace_wpm || 130;
   document.getElementById('host-modal-pace-google').value = h?.speaking_pace_wpm_google || h?.speaking_pace_wpm || 130;
-  document.getElementById('host-modal-topics').value = (h?.topics || []).join(', ');
   document.getElementById('host-modal-delete-btn').classList.toggle('hidden', isNew);
   document.getElementById('host-preview-status').classList.add('hidden');
 
@@ -4001,7 +3610,6 @@ async function saveHost() {
     voice_style: document.getElementById('host-modal-voice-style').value.trim(),
     philosophy: document.getElementById('host-modal-philosophy').value.trim(),
     anti_patterns: document.getElementById('host-modal-anti').value.trim(),
-    tts_backend: document.getElementById('host-modal-tts-backend').value,
     tts_voice: document.getElementById('host-modal-voice-kokoro').value,
     voice_minimax: document.getElementById('host-modal-voice-minimax').value,
     voice_google: document.getElementById('host-modal-voice-google').value,
@@ -4009,8 +3617,6 @@ async function saveHost() {
     speaking_pace_wpm_kokoro: parseInt(document.getElementById('host-modal-pace-kokoro').value) || 130,
     speaking_pace_wpm_minimax: parseInt(document.getElementById('host-modal-pace-minimax').value) || 130,
     speaking_pace_wpm_google: parseInt(document.getElementById('host-modal-pace-google').value) || 130,
-    topics: document.getElementById('host-modal-topics').value
-      .split(',').map(t => t.trim()).filter(Boolean),
   };
 
   try {

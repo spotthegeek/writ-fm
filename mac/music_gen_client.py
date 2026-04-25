@@ -13,8 +13,10 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from shared.settings import minimax_music_model
+
 MINIMAX_BASE_URL = "https://api.minimax.io/v1"
-MINIMAX_MODEL = os.environ.get("MINIMAX_MUSIC_MODEL", "music-2.6")
+MINIMAX_MODEL = minimax_music_model()
 
 # Legacy env var kept for health-check callers that test server availability.
 MUSIC_GEN_BASE_URL = os.environ.get("MUSIC_GEN_URL", "http://localhost:4009")

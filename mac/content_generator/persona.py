@@ -353,7 +353,6 @@ Your beliefs:
         prompt += f"""
 CURRENT SHOW: {show_context.get('show_name', 'WRIT-FM')}
 Show Description: {show_context.get('show_description', '')}
-Topic Focus: {show_context.get('topic_focus', '')}
 """
         if show_context.get('segment_type'):
             prompt += f"Segment Type: {show_context['segment_type']}\n"

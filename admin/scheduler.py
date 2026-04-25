@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Callable
 
 import yaml
+from shared.settings import minimax_music_model, ollama_model, ollama_url
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCHEDULE_PATH = PROJECT_ROOT / "config" / "schedule.yaml"
@@ -81,36 +82,16 @@ def _summarize_process_failure(stderr: str, stdout: str, limit: int = 400) -> st
     return summary
 
 
-def _default_generation_enabled(show_type: str, content_type: str) -> bool:
-    """Infer whether a generator should be enabled when a show has no explicit config.
-
-    We keep this intentionally conservative:
-    - music_first defaults to music generation
-    - everything else defaults to talk generation
-    """
-    show_type = (show_type or "research").strip() or "research"
-    if content_type == "music":
-        return show_type == "music_first"
-    if content_type == "talk":
-        return show_type != "music_first"
-    return False
-
-
 def _effective_generation_configs(show: dict) -> tuple[dict, dict]:
-    """Merge explicit generation config with show-type defaults."""
-    show_type = str(show.get("show_type") or "research").strip() or "research"
+    """Merge explicit generation config with conservative defaults."""
     gen_cfg = show.get("generation") or {}
 
     raw_talk = gen_cfg.get("talk") or {}
     raw_music = gen_cfg.get("music") or {}
 
     talk_cfg = {**DEFAULT_TALK_CONFIG, **raw_talk}
-    if "enabled" not in raw_talk:
-        talk_cfg["enabled"] = _default_generation_enabled(show_type, "talk")
 
     music_cfg = {**DEFAULT_MUSIC_CONFIG, **raw_music}
-    if "enabled" not in raw_music:
-        music_cfg["enabled"] = _default_generation_enabled(show_type, "music")
 
     return talk_cfg, music_cfg
 
@@ -224,11 +205,11 @@ def _resolve_show_key(shows: dict, show_id: str) -> tuple[str | None, dict | Non
 
 def _build_generation_env() -> dict:
     return {
-        "OLLAMA_URL": os.environ.get("OLLAMA_URL", "http://ollama.area4.net:11434"),
-        "OLLAMA_MODEL": os.environ.get("OLLAMA_MODEL", "qwen3.5:4b"),
+        "OLLAMA_URL": ollama_url(),
+        "OLLAMA_MODEL": ollama_model(),
         "MINIMAX_API_KEY": os.environ.get("MINIMAX_API_KEY", ""),
         "MINIMAX_TOKEN_PLAN_API_KEY": os.environ.get("MINIMAX_TOKEN_PLAN_API_KEY", ""),
-        "MINIMAX_MUSIC_MODEL": os.environ.get("MINIMAX_MUSIC_MODEL", "music-2.6"),
+        "MINIMAX_MUSIC_MODEL": minimax_music_model(),
         "WRIT_CONSUME_SEGMENTS": os.environ.get("WRIT_CONSUME_SEGMENTS", "1"),
     }
 
@@ -340,11 +321,11 @@ def _check_and_generate(job_registry: dict):
 
     shows = data.get("shows", {})
     env = {
-        "OLLAMA_URL": os.environ.get("OLLAMA_URL", "http://ollama.area4.net:11434"),
-        "OLLAMA_MODEL": os.environ.get("OLLAMA_MODEL", "qwen3.5:4b"),
+        "OLLAMA_URL": ollama_url(),
+        "OLLAMA_MODEL": ollama_model(),
         "MINIMAX_API_KEY": os.environ.get("MINIMAX_API_KEY", ""),
         "MINIMAX_TOKEN_PLAN_API_KEY": os.environ.get("MINIMAX_TOKEN_PLAN_API_KEY", ""),
-        "MINIMAX_MUSIC_MODEL": os.environ.get("MINIMAX_MUSIC_MODEL", "music-2.6"),
+        "MINIMAX_MUSIC_MODEL": minimax_music_model(),
         "WRIT_CONSUME_SEGMENTS": os.environ.get("WRIT_CONSUME_SEGMENTS", "1"),
     }
 

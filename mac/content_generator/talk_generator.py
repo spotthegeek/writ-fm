@@ -79,6 +79,14 @@ from time_utils import station_now, station_iso_now
 
 sys.path.insert(0, str(Path(__file__).parent))
 from persona import HOSTS, get_host, build_host_prompt, STATION_NAME
+from shared.hosts import (
+    assignment_voice as shared_assignment_voice,
+    assignment_wpm as shared_assignment_wpm,
+    host_label as shared_host_label,
+    primary_host_assignment as shared_primary_host_assignment,
+    secondary_host_assignment as shared_secondary_host_assignment,
+)
+from shared.settings import default_voice_for_backend
 
 # =============================================================================
 # SEGMENT TYPE DEFINITIONS
@@ -1268,15 +1276,6 @@ def _normalize_reddit_story_text(text: str) -> str:
     return _normalize_reddit_user_mentions(text.strip())
 
 
-AUTO_SOURCE_SHOW_TYPES = {
-    "hybrid",
-    "content_ingest",
-    "live_community",
-    "news_current_events",
-    "listener_driven",
-}
-
-
 def _normalize_source_rule(rule: dict | None) -> dict[str, str | int]:
     rule = rule or {}
     rule_type = str(rule.get("type") or rule.get("source_type") or "url").strip().lower() or "url"
@@ -1301,22 +1300,7 @@ def _normalize_source_rule(rule: dict | None) -> dict[str, str | int]:
         "segment_type": segment_type,
     }
 
-
-def _auto_source_rule_for_show(show, preferred_segment_type: str | None = None) -> dict | None:
-    show_type = getattr(show, "show_type", "research")
-    if show_type not in AUTO_SOURCE_SHOW_TYPES:
-        return None
-    rules = [_normalize_source_rule(rule) for rule in getattr(show, "source_rules", []) if isinstance(rule, dict)]
-    rules = [rule for rule in rules if rule["value"]]
-    if not rules:
-        return None
-
-    if preferred_segment_type and preferred_segment_type != "random":
-        matching = [rule for rule in rules if rule["segment_type"] == preferred_segment_type]
-        if matching:
-            rules = matching
-
-    return rules[0]
+SOURCE_REQUIRED_SEGMENT_TYPES = {"reddit_post", "reddit_storytelling", "youtube"}
 
 
 def load_source_context(
@@ -1376,37 +1360,15 @@ def load_source_context(
 
 
 def _host_label(host_id: str) -> str:
-    try:
-        return get_host(host_id).get("name", host_id)
-    except Exception:
-        return host_id.replace("_", " ").title()
+    return shared_host_label(host_id, roster_lookup=get_host)
 
 
 def _primary_host_assignment(show) -> dict:
-    for host in show.hosts:
-        if host.get("role") == "primary":
-            return host
-    return show.hosts[0] if show.hosts else {
-        "id": show.host,
-        "role": "primary",
-        "tts_backend": getattr(show, "tts_backend", "kokoro"),
-        "voice_kokoro": show.voices.get("host", "am_michael"),
-        "voice_minimax": "Deep_Voice_Man",
-        "voice_google": "Kore",
-    }
+    return shared_primary_host_assignment(show, roster_lookup=get_host)
 
 
 def _secondary_host_assignment(show, primary: dict | None = None) -> dict | None:
-    primary = primary or _primary_host_assignment(show)
-    for host in show.hosts:
-        if host is primary:
-            continue
-        if host.get("role") in {"co-host", "secondary", "guest", "call-in"}:
-            return host
-    for host in show.hosts:
-        if host is not primary:
-            return host
-    return None
+    return shared_secondary_host_assignment(show, primary)
 
 
 def _uses_secondary_host_dialogue(show, segment_type: str) -> bool:
@@ -1438,49 +1400,12 @@ def _selected_guest(show) -> dict:
 
 
 def _voice_for_assignment(assignment: dict | None, backend: str, fallback: str) -> str:
-    if not assignment:
-        return fallback
-    host_id = assignment.get("id", "")
-    roster_host = None
-    if host_id:
-        try:
-            roster_host = get_host(host_id)
-        except Exception:
-            roster_host = None
-    if backend == "minimax":
-        return assignment.get("voice_minimax") or (roster_host or {}).get("voice_minimax") or fallback
-    if backend == "google":
-        return assignment.get("voice_google") or (roster_host or {}).get("voice_google") or fallback
-    return assignment.get("voice_kokoro") or (roster_host or {}).get("tts_voice") or fallback
+    role = "guest" if fallback == default_voice_for_backend(backend, "guest") else "host"
+    return shared_assignment_voice(assignment, backend, role=role, roster_lookup=get_host) or fallback
 
 
 def _pace_wpm_for_assignment(assignment: dict | None, backend: str = "kokoro", fallback_wpm: int = 130) -> int:
-    if not assignment:
-        return fallback_wpm
-    backend_key = f"speaking_pace_wpm_{backend}"
-    if assignment.get(backend_key):
-        try:
-            return int(assignment[backend_key])
-        except (TypeError, ValueError):
-            pass
-    if assignment.get("speaking_pace_wpm"):
-        try:
-            return int(assignment["speaking_pace_wpm"])
-        except (TypeError, ValueError):
-            pass
-    host_id = assignment.get("id", "")
-    if host_id:
-        try:
-            host = get_host(host_id)
-            pace = host.get(backend_key)
-            if pace:
-                return int(pace)
-            pace = host.get("speaking_pace_wpm")
-            if pace:
-                return int(pace)
-        except Exception:
-            pass
-    return fallback_wpm
+    return shared_assignment_wpm(assignment, backend, fallback_wpm=fallback_wpm, roster_lookup=get_host)
 
 
 def _voice_plan(show, segment_type: str, backend: str) -> tuple[dict[str, str], dict[str, str]]:
@@ -1489,7 +1414,7 @@ def _voice_plan(show, segment_type: str, backend: str) -> tuple[dict[str, str], 
     primary_voice = _voice_for_assignment(
         primary,
         backend,
-        "Deep_Voice_Man" if backend == "minimax" else "Kore" if backend == "google" else "am_michael",
+        default_voice_for_backend(backend, "host"),
     )
 
     override = os.environ.get("WRIT_HOST_VOICE", "").strip()
@@ -1507,7 +1432,7 @@ def _voice_plan(show, segment_type: str, backend: str) -> tuple[dict[str, str], 
         secondary_voice = _voice_for_assignment(
             secondary,
             backend,
-            "Wise_Woman" if backend == "minimax" else "Puck" if backend == "google" else "af_bella",
+            default_voice_for_backend(backend, "guest"),
         )
         secondary_name = None
         if secondary:
@@ -1529,7 +1454,7 @@ def _voice_plan(show, segment_type: str, backend: str) -> tuple[dict[str, str], 
         voices["guest"] = _voice_for_assignment(
             guest,
             backend,
-            "Wise_Woman" if backend == "minimax" else "Puck" if backend == "google" else "af_bella",
+            default_voice_for_backend(backend, "guest"),
         )
         voices["guest_speed"] = _kokoro_speed_from_wpm(_pace_wpm_for_assignment(guest, backend))
         voices["guest_wpm"] = _pace_wpm_for_assignment(guest, backend)
@@ -1616,7 +1541,6 @@ def build_generation_prompt(
     show_context = {
         "show_name": show.name,
         "show_description": show.description,
-        "topic_focus": show.topic_focus,
         "segment_type": segment_type,
         "station_name": station_name,
     }
@@ -1630,7 +1554,6 @@ def build_generation_prompt(
     special_context = {
         "show_name": show.name,
         "show_description": show.description,
-        "topic_focus": show.topic_focus,
         "station_name": station_name,
         "primary_host_name": speaker_labels.get("primary_host_name", _host_label(show.host)),
         "secondary_host_name": speaker_labels.get("secondary_host_name", "a second voice"),
@@ -1938,6 +1861,16 @@ def render_single_voice(
     wpm: int | None = None,
 ) -> bool:
     """Render a single-voice script to audio."""
+    if len(script) > 1400 or "\n\n" in script:
+        return render_single_voice_chunked(
+            script,
+            output_path,
+            voice,
+            backend=backend,
+            speed=speed,
+            wpm=wpm,
+        )
+
     if backend == "minimax":
         try:
             from minimax_tts import generate_speech
@@ -1978,9 +1911,6 @@ def render_single_voice(
     if not pipe:
         return False
 
-    if len(script) > 1400 or "\n\n" in script:
-        return render_single_voice_chunked(script, output_path, voice, backend=backend, speed=speed)
-
     log(f"  Rendering single voice '{voice}' to {output_path.name}...")
     try:
         generator = pipe(script, voice=voice, speed=speed)
@@ -2012,10 +1942,163 @@ def render_single_voice_chunked(
     voice: str,
     backend: str = "kokoro",
     speed: float = 1.0,
+    wpm: int | None = None,
 ) -> bool:
     """Render a long single-voice script in smaller pieces."""
-    if backend != "kokoro":
-        return render_single_voice(script, output_path, voice, backend=backend, speed=speed)
+    if backend == "minimax":
+        try:
+            from minimax_tts import generate_speech
+        except Exception as e:
+            log(f"  MiniMax import error: {e}")
+            return False
+
+        parts = _split_tts_text(script)
+        if not parts:
+            return False
+
+        log(f"  Rendering {len(parts)} MiniMax text chunks to {output_path.name}...")
+        try:
+            with tempfile.TemporaryDirectory(prefix="writ_minimax_single_") as tmpdir:
+                tmp = Path(tmpdir)
+                concat_entries: list[Path] = []
+                silence_path = tmp / "gap.mp3"
+                silence_cmd = [
+                    "ffmpeg", "-y",
+                    "-f", "lavfi",
+                    "-i", "anullsrc=r=32000:cl=mono",
+                    "-t", "0.25",
+                    "-q:a", "9",
+                    str(silence_path),
+                ]
+                silence_proc = subprocess.run(silence_cmd, capture_output=True, text=True)
+                if silence_proc.returncode != 0:
+                    log(f"  Failed to create MiniMax silence gap: {(silence_proc.stderr or '').strip()[:200]}")
+                    return False
+
+                rendered_parts = 0
+                for i, part in enumerate(parts):
+                    text = preprocess_for_tts(part, backend=backend)
+                    if not text.strip():
+                        continue
+                    if rendered_parts > 0:
+                        concat_entries.append(silence_path)
+                    segment_path = tmp / f"segment_{i:03d}.mp3"
+                    success = generate_speech(
+                        text,
+                        segment_path,
+                        voice_id=voice,
+                        speed=speed,
+                    )
+                    if not success or not segment_path.exists():
+                        log(f"  MiniMax rendering failed for chunk {i + 1}")
+                        return False
+                    concat_entries.append(segment_path)
+                    rendered_parts += 1
+
+                if not concat_entries:
+                    log("  No MiniMax chunks rendered")
+                    return False
+
+                concat_list = tmp / "concat.txt"
+                concat_list.write_text(
+                    "".join(f"file '{path.as_posix()}'\n" for path in concat_entries),
+                    encoding="utf-8",
+                )
+                concat_cmd = [
+                    "ffmpeg", "-y",
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-i", str(concat_list),
+                    "-c", "copy",
+                    str(output_path),
+                ]
+                concat_proc = subprocess.run(concat_cmd, capture_output=True, text=True)
+                if concat_proc.returncode != 0:
+                    log(f"  MiniMax concat failed: {(concat_proc.stderr or '').strip()[:200]}")
+                    return False
+                log(f"  Finished rendering {rendered_parts} MiniMax chunks.")
+                return True
+        except Exception as e:
+            log(f"  MiniMax chunked rendering error: {e}")
+            return False
+
+    if backend == "google":
+        try:
+            from google_tts import generate_speech
+        except Exception as e:
+            log(f"  Google TTS import error: {e}")
+            return False
+
+        parts = _split_tts_text(script)
+        if not parts:
+            return False
+
+        log(f"  Rendering {len(parts)} Google text chunks to {output_path.name}...")
+        try:
+            with tempfile.TemporaryDirectory(prefix="writ_google_single_") as tmpdir:
+                tmp = Path(tmpdir)
+                concat_entries: list[Path] = []
+                silence_path = tmp / "gap.wav"
+                silence_cmd = [
+                    "ffmpeg", "-y",
+                    "-f", "lavfi",
+                    "-i", "anullsrc=r=24000:cl=mono",
+                    "-t", "0.25",
+                    "-c:a", "pcm_s16le",
+                    str(silence_path),
+                ]
+                silence_proc = subprocess.run(silence_cmd, capture_output=True, text=True)
+                if silence_proc.returncode != 0:
+                    log(f"  Failed to create Google silence gap: {(silence_proc.stderr or '').strip()[:200]}")
+                    return False
+
+                rendered_parts = 0
+                chunk_wpm = wpm or int(round(130 * speed))
+                for i, part in enumerate(parts):
+                    text = preprocess_for_tts(part, backend=backend)
+                    if not text.strip():
+                        continue
+                    if rendered_parts > 0:
+                        concat_entries.append(silence_path)
+                    segment_path = tmp / f"segment_{i:03d}.wav"
+                    success = generate_speech(
+                        text,
+                        segment_path,
+                        voice_id=voice,
+                        wpm=chunk_wpm,
+                    )
+                    if not success or not segment_path.exists():
+                        log(f"  Google rendering failed for chunk {i + 1}")
+                        return False
+                    concat_entries.append(segment_path)
+                    rendered_parts += 1
+
+                if not concat_entries:
+                    log("  No Google chunks rendered")
+                    return False
+
+                concat_list = tmp / "concat.txt"
+                concat_list.write_text(
+                    "".join(f"file '{path.as_posix()}'\n" for path in concat_entries),
+                    encoding="utf-8",
+                )
+                concat_cmd = [
+                    "ffmpeg", "-y",
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-i", str(concat_list),
+                    "-c", "copy",
+                    str(output_path),
+                ]
+                concat_proc = subprocess.run(concat_cmd, capture_output=True, text=True)
+                if concat_proc.returncode != 0:
+                    log(f"  Google concat failed: {(concat_proc.stderr or '').strip()[:200]}")
+                    return False
+                log(f"  Finished rendering {rendered_parts} Google chunks.")
+                return True
+        except Exception as e:
+            log(f"  Google chunked rendering error: {e}")
+            return False
 
     pipe = get_kokoro_pipeline()
     if not pipe:
@@ -2379,6 +2462,14 @@ def generate_segment(
         if selected_key and selected_key in used_source_keys:
             log(f"  Source '{source_context.source_type}' at '{source_context.source_value}' was already used.")
             return None
+    if segment_type == "reddit_storytelling":
+        if not source_context or source_context.source_type != "reddit":
+            log("  Reddit Storytelling requires a Reddit thread or subreddit source.")
+            return None
+    if segment_type == "youtube":
+        if not source_context or source_context.source_type != "youtube":
+            log("  YouTube segments require a YouTube source and use direct audio ingest only.")
+            return None
     if source_context and source_context.source_type in {"reddit", "youtube"}:
         topic = source_context.title or topic
     elif source_context and not topic:
@@ -2388,7 +2479,7 @@ def generate_segment(
     if not include_topic and not topic:
         topic = ""
     if topic is None:
-        topic = select_topic(show.topic_focus, segment_type)
+        topic = ""
 
     if source_context and source_context.source_type == "reddit" and source_context.story_mode:
         segment_type = "reddit_storytelling"
@@ -2402,17 +2493,12 @@ def generate_segment(
     backend = os.environ.get("WRIT_TTS_BACKEND", "").strip() or primary.get("tts_backend", getattr(show, "tts_backend", "kokoro"))
     long_async_enabled = os.environ.get("WRIT_MINIMAX_LONG_ASYNC", "").strip() == "1"
     backend_used = backend
-    speaker_labels, voices = _voice_plan(show, segment_type, backend)
+    speaker_labels: dict[str, str] = {}
+    voices: dict[str, str] = {}
 
     log(f"=== Generating {segment_type} for {show.name} ===")
     log(f"  Topic: {topic[:80]}...")
     log(f"  Target: {min_words}-{max_words} words")
-    log(f"  Host: {primary.get('id', show.host)} (voice: {voices.get('host', 'am_michael')})")
-    if _uses_secondary_host_dialogue(show, segment_type):
-        secondary = _secondary_host_assignment(show, primary)
-        if secondary:
-            log(f"  Co-host: {secondary.get('id', 'guest')} (voice: {voices.get('guest', 'af_bella')})")
-    log(f"  TTS backend: {backend}")
     if source_context:
         log(f"  Source: {source_context.source_type} ({source_context.title or source_context.source_value})")
         if source_context.subreddit:
@@ -2420,6 +2506,7 @@ def generate_segment(
         if source_context.story_mode:
             log("  Source mode: direct read-through")
         elif source_context.source_type == "youtube":
+            log("  Source mode: direct audio ingest")
             log(f"  Channel: {source_context.channel or 'unknown'}")
             if source_context.duration_seconds:
                 log(f"  Duration: {int(source_context.duration_seconds)}s")
@@ -2435,12 +2522,7 @@ def generate_segment(
     ):
         script = _build_reddit_story_script(source_context)
         log("  Using direct Reddit story read-through; skipping LLM generation.")
-    elif (
-        source_context
-        and source_context.source_type == "youtube"
-        and segment_type == "youtube"
-        and not _uses_secondary_host_dialogue(show, segment_type)
-    ):
+    elif source_context and source_context.source_type == "youtube" and segment_type == "youtube":
         if not source_context.audio_path:
             log("  YouTube source has no cached audio file; cannot ingest.")
             return None
@@ -2463,6 +2545,8 @@ def generate_segment(
         script = source_context.transcript or source_context.source_material or source_context.title or ""
         word_count = len(script.split()) if script else 0
         backend_used = "youtube_ingest"
+        speaker_labels = {"primary_host_name": _host_label(primary.get("id", show.host))}
+        voices = {}
         duration = get_duration(output_path)
         duration_str = f"{int(duration // 60)}:{int(duration % 60):02d}" if duration else "?"
 
@@ -2524,6 +2608,13 @@ def generate_segment(
         log(f"  Ingested audio: {output_path.name} ({duration_str})")
         return output_path
     else:
+        speaker_labels, voices = _voice_plan(show, segment_type, backend)
+        log(f"  Host: {primary.get('id', show.host)} (voice: {voices.get('host', 'am_michael')})")
+        if _uses_secondary_host_dialogue(show, segment_type):
+            secondary = _secondary_host_assignment(show, primary)
+            if secondary:
+                log(f"  Co-host: {secondary.get('id', 'guest')} (voice: {voices.get('guest', 'af_bella')})")
+        log(f"  TTS backend: {backend}")
         # Build prompt and generate script
         prompt = build_generation_prompt(
             show=show,
@@ -2774,11 +2865,14 @@ def generate_for_show(
     station_name = schedule.station_name
     base_source_type = source_type
     base_source_value = source_value
+    if base_source_type and not base_source_value:
+        base_source_type = ""
     base_source_lookback_days = source_lookback_days
     base_source_selection_strategy = source_selection_strategy
-    requires_source = show.show_type in {"content_ingest", "news_current_events"}
-    if requires_source and not (base_source_type and base_source_value) and not getattr(show, "source_rules", []):
-        log(f"  No source rules configured for source-led show type '{show.show_type}'")
+    requested_segment_type = segment_type or "random"
+    explicit_source_required = requested_segment_type in SOURCE_REQUIRED_SEGMENT_TYPES
+    if explicit_source_required and not (base_source_type and base_source_value) and not getattr(show, "source_rules", []):
+        log(f"  Segment type '{requested_segment_type}' requires a configured source rule or an explicit source.")
         return 0
     used_source_keys = _used_source_keys_for_show(show_id)
     if not include_topic:
@@ -2796,7 +2890,6 @@ def generate_for_show(
         iter_source_selection_strategy = base_source_selection_strategy
         selected_source_rule = None
         selected_source_context: SourceContext | None = None
-        requested_segment_type = segment_type or "random"
         auto_source = (
             not iter_source_type
             and not iter_source_value
@@ -2817,8 +2910,8 @@ def generate_for_show(
                     iter_source_value = str(selected_source_rule["value"])
                     iter_source_lookback_days = int(selected_source_rule["lookback_days"])
                     iter_source_selection_strategy = str(selected_source_rule["selection_strategy"])
-            if not selected_source_context and requires_source:
-                log(f"  No unused source items available for show '{show.name}'.")
+            if not selected_source_context and explicit_source_required:
+                log(f"  No unused source items available for source-driven segment type '{requested_segment_type}'.")
                 break
 
         # Pick segment type
@@ -2831,7 +2924,12 @@ def generate_for_show(
         elif iter_source_type in {"youtube", "youtube_channel", "youtube_playlist", "youtube_video"}:
             st = "youtube"
         else:
-            st = random.choice(show.segment_types)
+            eligible_segment_types = list(show.segment_types)
+            if not selected_source_context and not iter_source_type and not iter_source_value:
+                non_source_segment_types = [s for s in eligible_segment_types if s not in SOURCE_REQUIRED_SEGMENT_TYPES]
+                if non_source_segment_types:
+                    eligible_segment_types = non_source_segment_types
+            st = random.choice(eligible_segment_types)
 
         log(f"\n[{i+1}/{count}]")
 

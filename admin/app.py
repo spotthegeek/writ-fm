@@ -34,11 +34,19 @@ from pydantic import BaseModel
 import scheduler as _sched
 from mac.schedule import (
     ScheduleError as StationScheduleError,
-    default_playback_sequence_for_show_type,
     load_schedule as validate_station_schedule,
     merge_playback_sequence,
-    normalize_playback_sequence,
     playback_sequence_overrides,
+)
+from shared.hosts import primary_host_assignment
+from shared.settings import (
+    default_voice_for_backend,
+    google_tts_model,
+    icecast_status_url,
+    inventory_cache_ttl,
+    minimax_music_model,
+    ollama_model,
+    ollama_url,
 )
 
 # ---------------------------------------------------------------------------
@@ -62,7 +70,7 @@ LEGACY_STREAMER_SERVICE = os.environ.get("WRIT_LEGACY_STREAMER_SERVICE", "writ-f
 
 AUDIO_EXTS = {".wav", ".mp3", ".flac"}
 JOBS_DIR = PROJECT_ROOT / "output" / "jobs"
-INVENTORY_CACHE_TTL = float(os.environ.get("WRIT_INVENTORY_CACHE_TTL", "300"))
+INVENTORY_CACHE_TTL = inventory_cache_ttl()
 _inventory_cache_lock = threading.Lock()
 _inventory_cache: dict[str, dict[str, Any]] = {
     "segments": {"ts": 0.0, "value": {}},
@@ -211,15 +219,11 @@ def save_segment_types_config(data: dict):
 def load_show_taxonomy() -> dict:
     if not SHOW_TAXONOMY_PATH.exists():
         return {
-            "show_types": {},
-            "topic_focuses": [],
             "bumper_styles": [],
             "source_types": [],
         }
     with open(SHOW_TAXONOMY_PATH) as f:
         return yaml.safe_load(f) or {
-            "show_types": {},
-            "topic_focuses": [],
             "bumper_styles": [],
             "source_types": [],
         }
@@ -250,11 +254,9 @@ def _hosts_yaml_to_api(hid: str, h: dict) -> dict:
         "voice_style": h.get("voice_style", ""),
         "philosophy": h.get("philosophy", ""),
         "anti_patterns": h.get("anti_patterns", ""),
-        "tts_voice": h.get("tts_voice", "am_michael"),
-        "voice_minimax": h.get("voice_minimax", "Deep_Voice_Man"),
-        "voice_google": h.get("voice_google", "Kore"),
-        "tts_backend": h.get("tts_backend", "kokoro"),
-        "topics": h.get("topics", []),
+        "tts_voice": h.get("tts_voice", default_voice_for_backend("kokoro", "host")),
+        "voice_minimax": h.get("voice_minimax", default_voice_for_backend("minimax", "host")),
+        "voice_google": h.get("voice_google", default_voice_for_backend("google", "host")),
         "speaking_pace_wpm": h.get("speaking_pace_wpm", 130),
         "speaking_pace_wpm_kokoro": h.get("speaking_pace_wpm_kokoro", h.get("speaking_pace_wpm", 130)),
         "speaking_pace_wpm_minimax": h.get("speaking_pace_wpm_minimax", h.get("speaking_pace_wpm", 130)),
@@ -273,9 +275,8 @@ def get_hosts_from_persona() -> dict[str, dict]:
             hid: {
                 "id": hid,
                 "name": h.get("name", hid),
-                "tts_voice": h.get("tts_voice", "am_michael"),
-                "voice_google": h.get("voice_google", "Kore"),
-                "topics": h.get("topics", []),
+                "tts_voice": h.get("tts_voice", default_voice_for_backend("kokoro", "host")),
+                "voice_google": h.get("voice_google", default_voice_for_backend("google", "host")),
                 "speaking_pace_wpm": h.get("speaking_pace_wpm", 130),
                 "speaking_pace_wpm_kokoro": h.get("speaking_pace_wpm_kokoro", h.get("speaking_pace_wpm", 130)),
                 "speaking_pace_wpm_minimax": h.get("speaking_pace_wpm_minimax", h.get("speaking_pace_wpm", 130)),
@@ -302,11 +303,14 @@ def _default_host_assignment(host_id: str, role: str = "primary") -> dict:
     return {
         "id": host_id,
         "role": role,
-        "tts_backend": host.get("tts_backend", "kokoro"),
-        "voice_kokoro": host.get("tts_voice", "am_michael"),
-        "voice_minimax": host.get("voice_minimax", "Deep_Voice_Man"),
-        "voice_google": host.get("voice_google", "Kore"),
+        "voice_kokoro": host.get("tts_voice", default_voice_for_backend("kokoro", "host")),
+        "voice_minimax": host.get("voice_minimax", default_voice_for_backend("minimax", "host")),
+        "voice_google": host.get("voice_google", default_voice_for_backend("google", "host")),
     }
+
+
+def _primary_host_assignment_from_show(show_id: str, show: dict) -> dict:
+    return primary_host_assignment(show, roster_lookup=lambda host_id: get_all_hosts().get(host_id))
 
 
 DEFAULT_SEGMENT_TYPES = {
@@ -527,104 +531,6 @@ def _segment_type_to_api(segment_type_id: str, config: dict) -> dict:
     }
 
 
-def _show_type_to_api(show_type_id: str, config: dict) -> dict:
-    sequence_defaults = config.get("playback_sequence_defaults")
-    if not isinstance(sequence_defaults, dict):
-        sequence_defaults = default_playback_sequence_for_show_type(show_type_id)
-    return {
-        "id": show_type_id,
-        "name": config.get("name", show_type_id.replace("_", " ").title()),
-        "description": config.get("description", ""),
-        "uses_topic_focus": bool(config.get("uses_topic_focus", False)),
-        "uses_source_rules": bool(config.get("uses_source_rules", False)),
-        "uses_bumper_style": bool(config.get("uses_bumper_style", True)),
-        "default_segment_types": list(config.get("default_segment_types", [])),
-        "playback_sequence_defaults": normalize_playback_sequence(sequence_defaults, show_type_id),
-    }
-
-
-def get_show_type_definitions() -> dict[str, dict]:
-    taxonomy = load_show_taxonomy().get("show_types", {})
-    sequence_defaults = default_playback_sequence_for_show_type("research")
-    defaults = {
-        "research": {
-            "name": "Research Based",
-            "description": "Curated editorial shows driven by topic focus and prompt research.",
-            "uses_topic_focus": True,
-            "uses_source_rules": True,
-            "uses_bumper_style": True,
-            "default_segment_types": ["deep_dive", "interview", "story"],
-            "playback_sequence_defaults": dict(sequence_defaults),
-        },
-        "hybrid": {
-            "name": "Hybrid",
-            "description": "Research-led shows that can also ingest external source rules.",
-            "uses_topic_focus": True,
-            "uses_source_rules": True,
-            "uses_bumper_style": True,
-            "default_segment_types": ["deep_dive", "interview", "panel", "reddit_post", "youtube"],
-            "playback_sequence_defaults": dict(sequence_defaults),
-        },
-        "content_ingest": {
-            "name": "Content Ingest",
-            "description": "Feed-driven shows built from Reddit, YouTube, and web sources.",
-            "uses_topic_focus": False,
-            "uses_source_rules": True,
-            "uses_bumper_style": True,
-            "default_segment_types": ["reddit_post", "reddit_storytelling", "youtube"],
-            "playback_sequence_defaults": dict(sequence_defaults),
-        },
-        "music_first": {
-            "name": "Music First",
-            "description": "Mostly music bumpers and IDs, with short editorial inserts.",
-            "uses_topic_focus": False,
-            "uses_source_rules": False,
-            "uses_bumper_style": True,
-            "default_segment_types": ["station_id", "show_intro", "show_outro"],
-            "playback_sequence_defaults": dict(sequence_defaults),
-        },
-        "live_community": {
-            "name": "Live / Community",
-            "description": "Listener-facing and conversational shows with lighter automation.",
-            "uses_topic_focus": False,
-            "uses_source_rules": True,
-            "uses_bumper_style": True,
-            "default_segment_types": ["listener_mailbag", "panel", "interview"],
-            "playback_sequence_defaults": dict(sequence_defaults),
-        },
-        "news_current_events": {
-            "name": "News / Current Events",
-            "description": "Source-driven current events shows built from the latest feeds and posts.",
-            "uses_topic_focus": False,
-            "uses_source_rules": True,
-            "uses_bumper_style": True,
-            "default_segment_types": ["news_analysis", "deep_dive", "panel"],
-            "playback_sequence_defaults": dict(sequence_defaults),
-        },
-        "listener_driven": {
-            "name": "Listener Driven",
-            "description": "Shows built from listener prompts, calls, mailbag letters, and feedback.",
-            "uses_topic_focus": False,
-            "uses_source_rules": True,
-            "uses_bumper_style": True,
-            "default_segment_types": ["listener_mailbag", "listener_response", "interview"],
-            "playback_sequence_defaults": dict(sequence_defaults),
-        },
-    }
-    merged = dict(defaults)
-    for sid, cfg in taxonomy.items():
-        merged[sid] = {**merged.get(sid, {}), **(cfg or {})}
-    return merged
-
-
-def _default_segment_types_for_show_type(show_type: str) -> list[str]:
-    cfg = get_show_type_definitions().get(show_type, {})
-    defaults = cfg.get("default_segment_types")
-    if isinstance(defaults, list) and defaults:
-        return [str(s).strip() for s in defaults if str(s).strip()]
-    return ["deep_dive"]
-
-
 def _normalize_source_rule(rule: dict | None) -> dict:
     rule = rule or {}
     rule_type = str(rule.get("type") or rule.get("source_type") or "url").strip().lower() or "url"
@@ -663,64 +569,22 @@ def _normalize_source_rules(rules: list[dict] | None) -> list[dict]:
 
 def get_taxonomy_api() -> dict[str, Any]:
     taxonomy = load_show_taxonomy()
-    show_types = get_show_type_definitions()
     return {
-        "show_types": {
-            sid: _show_type_to_api(sid, cfg)
-            for sid, cfg in show_types.items()
-        },
-        "topic_focuses": list(taxonomy.get("topic_focuses", [])),
         "bumper_styles": list(taxonomy.get("bumper_styles", [])),
         "source_types": list(taxonomy.get("source_types", [])),
     }
 
 
 class ShowTaxonomyUpdate(BaseModel):
-    topic_focuses: list[str] = []
     bumper_styles: list[str] = []
-    show_types: dict[str, Any] | None = None
-
-
-def _normalize_show_type_taxonomy(show_type_id: str, config: dict[str, Any] | None, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
-    raw = config or {}
-    base = dict(fallback or {})
-    if "name" in raw:
-        base["name"] = str(raw.get("name", base.get("name", show_type_id))).strip() or base.get("name", show_type_id)
-    if "description" in raw:
-        base["description"] = str(raw.get("description", base.get("description", ""))).strip()
-    if "uses_topic_focus" in raw:
-        base["uses_topic_focus"] = bool(raw.get("uses_topic_focus"))
-    if "uses_source_rules" in raw:
-        base["uses_source_rules"] = bool(raw.get("uses_source_rules"))
-    if "uses_bumper_style" in raw:
-        base["uses_bumper_style"] = bool(raw.get("uses_bumper_style"))
-    if "default_segment_types" in raw:
-        base["default_segment_types"] = [str(s).strip() for s in raw.get("default_segment_types", []) if str(s).strip()]
-    seq = raw.get("playback_sequence_defaults")
-    if isinstance(seq, dict):
-        base["playback_sequence_defaults"] = normalize_playback_sequence(seq, show_type_id)
-    elif "playback_sequence_defaults" in base:
-        base["playback_sequence_defaults"] = normalize_playback_sequence(base["playback_sequence_defaults"], show_type_id)
-    else:
-        base["playback_sequence_defaults"] = default_playback_sequence_for_show_type(show_type_id)
-    return base
 
 
 @app.put("/api/show-taxonomy")
 def update_show_taxonomy(update: ShowTaxonomyUpdate):
     data = load_show_taxonomy()
-    data["topic_focuses"] = _normalise_taxonomy_items(update.topic_focuses)
+    data.pop("topic_focuses", None)
+    data.pop("show_types", None)
     data["bumper_styles"] = _normalise_taxonomy_items(update.bumper_styles)
-    existing_show_types = data.get("show_types", {}) if isinstance(data.get("show_types", {}), dict) else {}
-    if update.show_types is not None:
-        normalized_show_types = {}
-        for sid, cfg in existing_show_types.items():
-            if isinstance(sid, str) and sid.strip():
-                normalized_show_types[sid] = _normalize_show_type_taxonomy(sid, cfg, existing_show_types.get(sid))
-        for sid, cfg in update.show_types.items():
-            if isinstance(sid, str) and sid.strip():
-                normalized_show_types[sid] = _normalize_show_type_taxonomy(sid, cfg, existing_show_types.get(sid))
-        data["show_types"] = normalized_show_types
     save_show_taxonomy(data)
     return get_taxonomy_api()
 
@@ -1013,27 +877,18 @@ def _show_primary_host_meta(show_id: str, schedule_data: dict[str, Any] | None =
     except Exception:
         data = {}
     show = (data.get("shows") or {}).get(show_id, {}) if isinstance(data, dict) else {}
-    hosts = show.get("hosts") or []
-    primary = next((h for h in hosts if h.get("role") == "primary"), None)
-    if not primary:
-        primary = {
-            "id": show.get("host", show_id),
-            "tts_backend": show.get("tts_backend", "kokoro"),
-            "voice_kokoro": (show.get("voices") or {}).get("host", "am_michael"),
-            "voice_minimax": "Deep_Voice_Man",
-            "voice_google": "Kore",
-        }
+    primary = _primary_host_assignment_from_show(show_id, show)
     roster = get_all_hosts()
-    host_id = str(primary.get("id") or show.get("host") or show_id).strip() or show_id
+    host_id = str(primary.get("id") or show_id).strip() or show_id
     host_entry = roster.get(host_id, {})
     host_name = host_entry.get("name") or host_id
-    backend = str(primary.get("tts_backend") or show.get("tts_backend") or host_entry.get("tts_backend") or "kokoro")
+    backend = str(show.get("tts_backend") or primary.get("tts_backend") or "kokoro")
     if backend == "minimax":
-        voice = primary.get("voice_minimax") or host_entry.get("voice_minimax") or "Deep_Voice_Man"
+        voice = primary.get("voice_minimax") or host_entry.get("voice_minimax") or default_voice_for_backend("minimax", "host")
     elif backend == "google":
-        voice = primary.get("voice_google") or host_entry.get("voice_google") or "Kore"
+        voice = primary.get("voice_google") or host_entry.get("voice_google") or default_voice_for_backend("google", "host")
     else:
-        voice = primary.get("voice_kokoro") or (show.get("voices") or {}).get("host") or host_entry.get("tts_voice") or "am_michael"
+        voice = primary.get("voice_kokoro") or host_entry.get("tts_voice") or default_voice_for_backend("kokoro", "host")
     return {
         "host_id": host_id,
         "host_name": host_name,
@@ -1162,7 +1017,7 @@ def get_status():
 
     icecast_ok = False
     try:
-        with urllib.request.urlopen("http://localhost:8000/status-json.xsl", timeout=2) as r:
+        with urllib.request.urlopen(icecast_status_url(), timeout=2) as r:
             icecast_ok = r.status == 200
     except Exception:
         pass
@@ -1229,21 +1084,23 @@ def _normalize_show(show_id: str, show: dict) -> dict:
     """Fill in defaults for optional/new fields."""
     s = dict(show)
     s["id"] = show_id
-    show_types = get_show_type_definitions()
-    s["show_type"] = s.get("show_type") or "research"
-    if s["show_type"] not in show_types:
-        s["show_type"] = "research"
     all_hosts = get_all_hosts()
+    show_backend = str(s.get("tts_backend", "kokoro")).strip() or "kokoro"
     # Normalize hosts to list format
     if "hosts" not in s:
-        primary_id = s.get("host", "liminal_operator")
-        primary = _default_host_assignment(primary_id, "primary")
-        primary["tts_backend"] = s.get("tts_backend", primary["tts_backend"])
-        primary["voice_kokoro"] = s.get("voices", {}).get("host", primary["voice_kokoro"])
+        primary = _primary_host_assignment_from_show(show_id, s)
+        primary["tts_backend"] = show_backend
         s["hosts"] = [primary]
-        if "voices" in s and "guest" in s["voices"]:
-            guest = _default_host_assignment(primary_id, "guest")
-            guest["voice_kokoro"] = s["voices"]["guest"]
+        legacy_voices = s.get("voices") if isinstance(s.get("voices"), dict) else {}
+        if "guest" in legacy_voices:
+            guest = _default_host_assignment(primary.get("id", "liminal_operator"), "guest")
+            guest["tts_backend"] = show_backend
+            if show_backend == "minimax":
+                guest["voice_minimax"] = legacy_voices["guest"]
+            elif show_backend == "google":
+                guest["voice_google"] = legacy_voices["guest"]
+            else:
+                guest["voice_kokoro"] = legacy_voices["guest"]
             s["hosts"].append(guest)
     else:
         normalized_hosts = []
@@ -1254,10 +1111,9 @@ def _normalize_show(show_id: str, show: dict) -> dict:
             normalized_hosts.append({
                 **defaults,
                 **host,
+                "tts_backend": show_backend,
             })
         s["hosts"] = normalized_hosts
-    if "research_topic" not in s:
-        s["research_topic"] = ""
     if "research_sources" not in s:
         s["research_sources"] = []
     if "source_rules" not in s:
@@ -1265,13 +1121,12 @@ def _normalize_show(show_id: str, show: dict) -> dict:
     s["source_rules"] = _normalize_source_rules(s.get("source_rules", []))
     s["research_sources"] = _normalize_source_rules(s.get("research_sources", [])) or list(s.get("research_sources", []))
     if not s.get("segment_types"):
-        s["segment_types"] = _default_segment_types_for_show_type(s["show_type"])
+        s["segment_types"] = ["deep_dive"]
     if "guests" not in s:
         s["guests"] = []
     if "content_lifecycle" not in s:
         s["content_lifecycle"] = {}
     s["playback_sequence"] = merge_playback_sequence(
-        s["show_type"],
         s.get("playback_sequence") if isinstance(s.get("playback_sequence"), dict) else s.get("sequence") if isinstance(s.get("sequence"), dict) else {},
     )
     for idx, host in enumerate(s["hosts"]):
@@ -1279,16 +1134,20 @@ def _normalize_show(show_id: str, show: dict) -> dict:
         roster = all_hosts.get(host_id, {})
         if not host.get("display_name"):
             host["display_name"] = roster.get("name", host_id)
+    s.pop("host", None)
+    s.pop("show_type", None)
+    s.pop("topic_focus", None)
+    s.pop("research_topic", None)
+    s.pop("voices", None)
+    s["tts_backend"] = show_backend
     return s
 
 
 class ShowUpdate(BaseModel):
     name: str
     description: str
-    show_type: str = "research"
+    tts_backend: str = "kokoro"
     hosts: list[dict]
-    topic_focus: str
-    research_topic: str = ""
     research_sources: list[dict] = []
     source_rules: list[dict] = []
     guests: list[dict] = []
@@ -1307,15 +1166,12 @@ def update_show(show_id: str, update: ShowUpdate):
         raise HTTPException(404, f"Show '{show_id}' not found")
     if not update.hosts:
         raise HTTPException(400, "Shows must have at least one host")
-    show_types = set(get_show_type_definitions().keys())
-    if update.show_type not in show_types:
-        raise HTTPException(400, f"Unknown show type '{update.show_type}'")
     roster_ids = set(get_all_hosts().keys())
     segment_type_ids = set(get_segment_types_api().keys())
     for host in update.hosts:
         if host.get("id") not in roster_ids:
             raise HTTPException(400, f"Unknown host '{host.get('id')}'")
-    segment_types = update.segment_types or _default_segment_types_for_show_type(update.show_type)
+    segment_types = update.segment_types or ["deep_dive"]
     for segment_type_id in segment_types:
         if segment_type_id not in segment_type_ids:
             raise HTTPException(400, f"Unknown segment type '{segment_type_id}'")
@@ -1324,42 +1180,21 @@ def update_show(show_id: str, update: ShowUpdate):
     show = dict(shows[show_id])
     show["name"] = update.name
     show["description"] = update.description
-    show["show_type"] = update.show_type
-    show["topic_focus"] = update.topic_focus
-    show["research_topic"] = update.research_topic
+    show["tts_backend"] = update.tts_backend
     show["research_sources"] = source_rules
     show["source_rules"] = source_rules
     show["guests"] = update.guests
     show["segment_types"] = segment_types
     show["bumper_style"] = update.bumper_style
     show["hosts"] = update.hosts
-    show["playback_sequence"] = playback_sequence_overrides(update.show_type, update.playback_sequence)
+    show["playback_sequence"] = playback_sequence_overrides(update.playback_sequence)
     show["content_lifecycle"] = update.content_lifecycle
     show["generation"] = update.generation
-
-    # Keep legacy fields for backward compat with streamer
-    primary = next((h for h in update.hosts if h.get("role") == "primary"), update.hosts[0] if update.hosts else {})
-    show["host"] = primary.get("id", "liminal_operator")
-    show["tts_backend"] = primary.get("tts_backend", "kokoro")
-    if show["tts_backend"] == "minimax":
-        legacy_host_voice = primary.get("voice_minimax", "Deep_Voice_Man")
-        legacy_guest_voice = "Wise_Woman"
-    elif show["tts_backend"] == "google":
-        legacy_host_voice = primary.get("voice_google", "Kore")
-        legacy_guest_voice = "Puck"
-    else:
-        legacy_host_voice = primary.get("voice_kokoro", "am_michael")
-        legacy_guest_voice = "af_bella"
-    voices = {"host": legacy_host_voice}
-    for h in update.hosts:
-        if h.get("role") in ("guest", "co-host", "secondary"):
-            if show["tts_backend"] == "minimax":
-                voices["guest"] = h.get("voice_minimax", legacy_guest_voice)
-            elif show["tts_backend"] == "google":
-                voices["guest"] = h.get("voice_google", legacy_guest_voice)
-            else:
-                voices["guest"] = h.get("voice_kokoro", legacy_guest_voice)
-    show["voices"] = voices
+    show.pop("host", None)
+    show.pop("show_type", None)
+    show.pop("topic_focus", None)
+    show.pop("research_topic", None)
+    show.pop("voices", None)
 
     shows[show_id] = show
     data["shows"] = shows
@@ -1375,15 +1210,12 @@ def create_show(show_id: str, update: ShowUpdate):
         raise HTTPException(400, f"Show '{show_id}' already exists")
     if not update.hosts:
         raise HTTPException(400, "Shows must have at least one host")
-    show_types = set(get_show_type_definitions().keys())
-    if update.show_type not in show_types:
-        raise HTTPException(400, f"Unknown show type '{update.show_type}'")
     roster_ids = set(get_all_hosts().keys())
     segment_type_ids = set(get_segment_types_api().keys())
     for host in update.hosts:
         if host.get("id") not in roster_ids:
             raise HTTPException(400, f"Unknown host '{host.get('id')}'")
-    segment_types = update.segment_types or _default_segment_types_for_show_type(update.show_type)
+    segment_types = update.segment_types or ["deep_dive"]
     for segment_type_id in segment_types:
         if segment_type_id not in segment_type_ids:
             raise HTTPException(400, f"Unknown segment type '{segment_type_id}'")
@@ -1392,28 +1224,17 @@ def create_show(show_id: str, update: ShowUpdate):
     show = {
         "name": update.name,
         "description": update.description,
-        "show_type": update.show_type,
-        "topic_focus": update.topic_focus,
-        "research_topic": update.research_topic,
+        "tts_backend": update.tts_backend,
         "research_sources": source_rules,
         "source_rules": source_rules,
         "guests": update.guests,
         "segment_types": segment_types,
         "bumper_style": update.bumper_style,
         "hosts": update.hosts,
-        "playback_sequence": playback_sequence_overrides(update.show_type, update.playback_sequence),
+        "playback_sequence": playback_sequence_overrides(update.playback_sequence),
         "content_lifecycle": update.content_lifecycle,
         "generation": update.generation,
     }
-    primary = next((h for h in update.hosts if h.get("role") == "primary"), update.hosts[0] if update.hosts else {})
-    show["host"] = primary.get("id", "liminal_operator")
-    show["tts_backend"] = primary.get("tts_backend", "kokoro")
-    if show["tts_backend"] == "minimax":
-        show["voices"] = {"host": primary.get("voice_minimax", "Deep_Voice_Man")}
-    elif show["tts_backend"] == "google":
-        show["voices"] = {"host": primary.get("voice_google", "Kore")}
-    else:
-        show["voices"] = {"host": primary.get("voice_kokoro", "am_michael")}
 
     shows[show_id] = show
     data["shows"] = shows
@@ -1533,15 +1354,13 @@ class HostUpdate(BaseModel):
     voice_style: str = ""
     philosophy: str = ""
     anti_patterns: str = ""
-    tts_backend: str = "kokoro"
-    tts_voice: str = "am_michael"
-    voice_minimax: str = "Deep_Voice_Man"
-    voice_google: str = "Kore"
+    tts_voice: str = default_voice_for_backend("kokoro", "host")
+    voice_minimax: str = default_voice_for_backend("minimax", "host")
+    voice_google: str = default_voice_for_backend("google", "host")
     speaking_pace_wpm: int = 130
     speaking_pace_wpm_kokoro: int = 130
     speaking_pace_wpm_minimax: int = 130
     speaking_pace_wpm_google: int = 130
-    topics: list[str] = []
 
 
 def _host_update_to_yaml(update: HostUpdate) -> dict:
@@ -1551,7 +1370,6 @@ def _host_update_to_yaml(update: HostUpdate) -> dict:
         "voice_style": update.voice_style,
         "philosophy": update.philosophy,
         "anti_patterns": update.anti_patterns,
-        "tts_backend": update.tts_backend,
         "tts_voice": update.tts_voice,
         "voice_minimax": update.voice_minimax,
         "voice_google": update.voice_google,
@@ -1559,7 +1377,6 @@ def _host_update_to_yaml(update: HostUpdate) -> dict:
         "speaking_pace_wpm_kokoro": update.speaking_pace_wpm_kokoro,
         "speaking_pace_wpm_minimax": update.speaking_pace_wpm_minimax,
         "speaking_pace_wpm_google": update.speaking_pace_wpm_google,
-        "topics": update.topics,
     }
 
 
@@ -1594,8 +1411,6 @@ def delete_host(host_id: str):
         for host in show.get("hosts", []):
             if host.get("id") == host_id:
                 raise HTTPException(409, f"Host '{host_id}' is still assigned to show '{show_id}'")
-        if show.get("host") == host_id:
-            raise HTTPException(409, f"Host '{host_id}' is still assigned to show '{show_id}'")
     data = load_hosts_config()
     hosts = data.get("hosts", {})
     if host_id not in hosts:
@@ -1629,7 +1444,7 @@ def tts_preview(body: dict, background_tasks: BackgroundTasks):
     import tempfile
 
     backend = body.get("backend", "kokoro")
-    voice = body.get("voice", "am_michael")
+    voice = body.get("voice", default_voice_for_backend(body.get("backend", "kokoro"), "host"))
     text = body.get("text", _preview_text())
 
     # Serve from cache if available
@@ -2001,9 +1816,7 @@ def get_generate_options():
     return {
         "segment_types": list(segment_types.keys()),
         "segment_type_defs": segment_types,
-        "topic_focuses": taxonomy["topic_focuses"],
         "bumper_styles": taxonomy["bumper_styles"],
-        "show_types": taxonomy["show_types"],
         "kokoro_voices": [v["voice"] for v in voices["kokoro"]],
         "minimax_voices": [v["voice"] for v in voices["minimax"]],
         "google_voices": [v["voice"] for v in voices["google"]],
@@ -2019,8 +1832,6 @@ class GenerateRequest(BaseModel):
     show_id: str
     content_type: str = "talk"  # "talk" or "music"
     segment_type: str = "random"
-    topic: str = ""
-    include_topic: bool = True
     source_type: str = ""      # "", "url", "reddit", "youtube"
     source_value: str = ""
     count: int = 1
@@ -2031,8 +1842,8 @@ class GenerateRequest(BaseModel):
     # Guest for this run
     guest_name: str = ""
     guest_voice_kokoro: str = "af_bella"
-    guest_voice_minimax: str = "Wise_Woman"
-    guest_voice_google: str = "Puck"
+    guest_voice_minimax: str = default_voice_for_backend("minimax", "guest")
+    guest_voice_google: str = default_voice_for_backend("google", "guest")
     guest_tts_backend: str = "kokoro"
 
 
@@ -2045,8 +1856,6 @@ def start_generation(req: GenerateRequest, background_tasks: BackgroundTasks):
         "show_id": req.show_id,
         "content_type": req.content_type,
         "segment_type": req.segment_type,
-        "topic": req.topic,
-        "include_topic": req.include_topic,
         "source_type": req.source_type,
         "source_value": req.source_value,
         "log": [],
@@ -2091,17 +1900,17 @@ def _run_generation_job(job_id: str, req: GenerateRequest):
 
         # Build env for the generation subprocess
         env = dict(os.environ)
-        env["OLLAMA_URL"] = env.get("OLLAMA_URL", "http://ollama.area4.net:11434")
-        env["OLLAMA_MODEL"] = env.get("OLLAMA_MODEL", "llama3.2:3b")
+        env["OLLAMA_URL"] = env.get("OLLAMA_URL", ollama_url())
+        env["OLLAMA_MODEL"] = env.get("OLLAMA_MODEL", ollama_model())
         env["MINIMAX_API_KEY"] = env.get("MINIMAX_API_KEY", "")
         env["MINIMAX_TOKEN_PLAN_API_KEY"] = env.get("MINIMAX_TOKEN_PLAN_API_KEY", "")
-        env["MINIMAX_MUSIC_MODEL"] = env.get("MINIMAX_MUSIC_MODEL", "music-2.6")
+        env["MINIMAX_MUSIC_MODEL"] = env.get("MINIMAX_MUSIC_MODEL", minimax_music_model())
         env["GOOGLE_TTS_API_KEY"] = env.get("GOOGLE_TTS_API_KEY", "") or env.get("GEMINI_API_KEY", "") or env.get("GOOGLE_API_KEY", "")
-        env["GOOGLE_TTS_MODEL"] = env.get("GOOGLE_TTS_MODEL", "gemini-3.1-flash-tts-preview")
+        env["GOOGLE_TTS_MODEL"] = env.get("GOOGLE_TTS_MODEL", google_tts_model())
 
         # Determine TTS backend
-        tts_backend = req.tts_backend or show.get("tts_backend", "kokoro")
-        is_youtube_ingest = req.source_type == "youtube" and req.content_type != "music"
+        primary_host = _primary_host_assignment_from_show(req.show_id, show)
+        tts_backend = req.tts_backend or str(show.get("tts_backend") or primary_host.get("tts_backend") or "kokoro")
 
         # Build command
         if req.content_type == "music":
@@ -2126,23 +1935,26 @@ def _run_generation_job(job_id: str, req: GenerateRequest):
                    "--count", str(req.count)]
 
             resolved_segment_type = req.segment_type
-            if req.source_type == "reddit" and resolved_segment_type == "random":
+            normalized_source_type = (req.source_type or "").strip()
+            normalized_source_value = (req.source_value or "").strip()
+            if not normalized_source_value:
+                normalized_source_type = ""
+
+            if normalized_source_type == "reddit" and resolved_segment_type == "random":
                 resolved_segment_type = "reddit_post"
                 _log_job(job_id, "Source type 'reddit' selected with random segment type; using 'reddit_post'.")
-            elif req.source_type == "youtube" and resolved_segment_type == "random":
+            elif normalized_source_type == "youtube" and resolved_segment_type == "random":
                 resolved_segment_type = "youtube"
                 _log_job(job_id, "Source type 'youtube' selected with random segment type; using 'youtube'.")
 
+            is_youtube_ingest = resolved_segment_type == "youtube" and req.content_type != "music"
+
             if resolved_segment_type and resolved_segment_type != "random":
                 cmd += ["--type", resolved_segment_type]
-            if req.include_topic and req.topic and not is_youtube_ingest:
-                cmd += ["--topic", req.topic]
-            if not req.include_topic and not is_youtube_ingest:
-                cmd += ["--no-topic"]
-            if req.source_type:
-                cmd += ["--source-type", req.source_type]
-            if req.source_value:
-                cmd += ["--source-value", req.source_value]
+            if normalized_source_type:
+                cmd += ["--source-type", normalized_source_type]
+            if normalized_source_value:
+                cmd += ["--source-value", normalized_source_value]
 
             # Pass TTS backend via env
             if not is_youtube_ingest:
@@ -2159,13 +1971,16 @@ def _run_generation_job(job_id: str, req: GenerateRequest):
                     env["WRIT_GUEST_TTS_BACKEND"] = req.guest_tts_backend
 
             if is_youtube_ingest:
-                _log_job(job_id, "YouTube ingest selected; skipping Topic, Hosts & TTS controls.")
+                if normalized_source_type and normalized_source_value:
+                    _log_job(job_id, "YouTube ingest selected; skipping Topic, Hosts & TTS controls.")
+                else:
+                    _log_job(job_id, "YouTube ingest selected; using show source rules and skipping Topic, Hosts & TTS controls.")
             else:
                 _log_job(job_id, f"TTS backend: {tts_backend}")
             if req.minimax_long_async and not is_youtube_ingest:
                 _log_job(job_id, "MiniMax long-form async: enabled (Kokoro validation first)")
-            if req.source_type and req.source_value:
-                _log_job(job_id, f"Source: {req.source_type} — {req.source_value[:120]}")
+            if normalized_source_type and normalized_source_value:
+                _log_job(job_id, f"Source: {normalized_source_type} — {normalized_source_value[:120]}")
 
         _log_job(job_id, f"Running: {' '.join(cmd[-6:])}")
 
@@ -2304,45 +2119,6 @@ def get_activity_log(limit: int = 100):
     # Sort newest first
     entries.sort(key=lambda e: e.get("ts", ""), reverse=True)
     return entries[:limit]
-
-
-@app.post("/api/generate/expand-topic")
-def expand_topic(body: dict):
-    """Use the LLM to expand a short topic hint into a rich generation prompt."""
-    hint = body.get("hint", "").strip()
-    show_id = body.get("show_id", "")
-    if not hint:
-        raise HTTPException(400, "hint required")
-
-    show = load_schedule().get("shows", {}).get(show_id, {})
-    show_name = show.get("name", "a radio show")
-    topic_focus = show.get("topic_focus", "")
-
-    prompt = (
-        f"You are a radio producer for '{show_name}', a show focused on {topic_focus}. "
-        f"A presenter gave you this rough topic note: \"{hint}\"\n\n"
-        f"Rewrite it as a single rich, specific, evocative topic prompt (2-4 sentences) "
-        f"that a writer could use to immediately start scripting a compelling radio segment. "
-        f"Include angles, tensions, specific examples or names if helpful. "
-        f"Output ONLY the expanded topic prompt — no preamble, no quotes, no commentary."
-    )
-
-    try:
-        ollama_url = os.environ.get("OLLAMA_URL", "http://ollama.area4.net:11434")
-        ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
-        import urllib.request as _ur
-        payload = json.dumps({"model": ollama_model, "prompt": prompt, "stream": False}).encode()
-        req = _ur.Request(f"{ollama_url}/api/generate", data=payload,
-                          headers={"Content-Type": "application/json"}, method="POST")
-        with _ur.urlopen(req, timeout=60) as r:
-            data = json.loads(r.read())
-        expanded = data.get("response", "").strip()
-        if not expanded:
-            raise ValueError("empty response")
-        return {"expanded": expanded}
-    except Exception as e:
-        raise HTTPException(500, f"LLM expansion failed: {e}")
-
 
 @app.post("/api/scheduler/trigger/{show_id}/{content_type}")
 def trigger_generation(show_id: str, content_type: str):

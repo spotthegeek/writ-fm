@@ -5,9 +5,7 @@ shows:
     name: Signal Report
     description: Current events decoded. The news behind the news, through a late-night
       lens.
-    show_type: news_current_events
     host: signal
-    topic_focus: current_events
     segment_types:
     - news_analysis
     - deep_dive
@@ -18,9 +16,7 @@ shows:
   crosswire:
     name: Crosswire
     description: Two voices, one topic. Where ideas collide and sparks fly.
-    show_type: hybrid
     host: dr_resonance
-    topic_focus: culture
     segment_types:
     - panel
     - deep_dive
@@ -32,9 +28,7 @@ shows:
   listener_hours:
     name: Listener Hours
     description: Your messages, your questions, your frequency. The mailbag opens.
-    show_type: listener_driven
     host: liminal_operator
-    topic_focus: listeners
     segment_types:
     - listener_mailbag
     - deep_dive
@@ -60,8 +54,6 @@ shows:
   nosleep:
     name: /r/nosleep
     description: Retelling the no sleep stories from Reddit
-    show_type: content_ingest
-    research_topic: ''
     source_rules: &id001
     - type: reddit_subreddit
       value: /r/nosleep
@@ -78,14 +70,9 @@ shows:
     hosts:
     - id: the_archivist
       role: primary
-      tts_backend: minimax
       voice_kokoro: am_michael
       voice_minimax: Patient_Man
-    host: the_archivist
-    tts_backend: minimax
-    voices:
-      host: am_michael
-    topic_focus: ''
+      voice_google: Puck
     research_sources: *id001
     content_lifecycle:
       talk:
@@ -108,8 +95,6 @@ shows:
     name: /r/alien_theory
     description: Reddit discussions and theories about extraterrestrials or ancient
       terrestrials, and the existence of life - of any kind - outside planet Earth.
-    show_type: content_ingest
-    research_topic: ''
     source_rules: &id002
     - type: reddit_subreddit
       value: /r/Alien_Theory/
@@ -144,7 +129,6 @@ shows:
     tts_backend: kokoro
     voices:
       host: am_puck
-    topic_focus: ''
     research_sources: *id002
     content_lifecycle:
       talk:
@@ -167,9 +151,6 @@ shows:
     name: /r/sysadmin
     description: Analysis and discussion of the top posts on /r/sysadmin and adjacent
       infrastructure communities
-    show_type: content_ingest
-    topic_focus: ''
-    research_topic: ''
     research_sources: &id003
     - type: reddit_subreddit
       value: /r/sysadmin/
@@ -220,9 +201,6 @@ shows:
   youtube-ai:
     name: YouTube AI
     description: Audio from top subscribed AI related videos from YouTube.
-    show_type: content_ingest
-    topic_focus: ''
-    research_topic: ''
     research_sources: &id004
     - type: youtube_channel
       value: https://www.youtube.com/@buildnpublic
