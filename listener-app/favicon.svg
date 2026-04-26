@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <style>
+    .icon { fill: #333333; stroke: #333333; }
+    @media (prefers-color-scheme: dark) {
+      .icon { fill: #e0e0e0; stroke: #e0e0e0; }
+    }
+  </style>
+  <circle class="icon" cx="6" cy="26" r="2.5" stroke="none"/>
+  <path class="icon" d="M 6 26 A 7 7 0 0 1 13 19" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <path class="icon" d="M 6 26 A 14 14 0 0 1 20 12" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <path class="icon" d="M 6 26 A 21 21 0 0 1 27 5" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+</svg>

@@ -15,9 +15,23 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 import sys
 from pathlib import Path
+
+# On-demand module (lazy import to avoid circular issues at startup)
+_ondemand = None
+_ondemand_lock = threading.Lock()
+
+
+def _od():
+    global _ondemand
+    if _ondemand is None:
+        with _ondemand_lock:
+            if _ondemand is None:
+                import ondemand as _mod
+                _ondemand = _mod
+    return _ondemand
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "mac"))
@@ -63,6 +77,10 @@ _live_queue_state: dict = {
 }
 _live_command_queue: list[dict] = []
 
+# Live show override state — set via POST /override, consulted by stream_gapless
+_live_override_lock = threading.Lock()
+_live_override: dict | None = None  # {"show_id": str, "end_at": ISO-datetime str}
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MESSAGES_FILE = Path.home() / ".writ" / "messages.json"
 
@@ -107,11 +125,23 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(data, "no-cache, no-store, must-revalidate")
         elif path in ("/", "/index.html"):
             try:
-                with open(PROJECT_ROOT / "index.html", "rb") as f:
+                with open(PROJECT_ROOT / "listener-app" / "index.html", "rb") as f:
                     content = f.read()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html")
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
                 self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(content)
+            except Exception as e:
+                self._send_error(500, str(e))
+        elif path in ("/favicon.svg", "/favicon.ico"):
+            try:
+                with open(PROJECT_ROOT / "listener-app" / "favicon.svg", "rb") as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/svg+xml")
+                self.send_header("Cache-Control", "public, max-age=86400")
                 self.end_headers()
                 self.wfile.write(content)
             except Exception as e:
@@ -122,6 +152,13 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(get_stats())
         elif path == "/schedule":
             self._send_json(get_schedule_info())
+        elif path == "/override":
+            self._send_json({"override": get_live_override()})
+        elif path == "/upcoming":
+            parsed = urllib.parse.urlparse(self.path)
+            qs = urllib.parse.parse_qs(parsed.query)
+            hours = int(qs.get("hours", ["12"])[0])
+            self._send_json({"upcoming": get_upcoming_shows(hours=hours), "override": get_live_override()})
         elif path == "/queue":
             self._send_json(get_live_queue())
         elif path.startswith("/history"):
@@ -151,6 +188,20 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
                     self.wfile.write(json.dumps({"error": "No Discogs info available"}).encode())
                 except BrokenPipeError:
                     pass
+        elif path == "/api/ondemand/sources":
+            self._send_json(get_ondemand_sources())
+        elif path.startswith("/api/ondemand/items"):
+            parsed = urllib.parse.urlparse(self.path)
+            qs = urllib.parse.parse_qs(parsed.query)
+            source = qs.get("source", [None])[0]
+            self._send_json(get_ondemand_items(source))
+        elif path == "/api/ondemand/state":
+            self._send_json(get_ondemand_state())
+        elif path.startswith("/api/ondemand/audio/"):
+            item_id = path[len("/api/ondemand/audio/"):]
+            item_id = urllib.parse.unquote(item_id)
+            range_header = self.headers.get("Range")
+            self._serve_ondemand_audio(item_id, range_header)
         else:
             self.send_response(404)
             self.end_headers()
@@ -162,13 +213,123 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps({"error": msg}).encode())
 
+    def _serve_ondemand_audio(self, item_id: str, range_header: str | None):
+        """Stream on-demand audio with byte-range support."""
+        od = _od()
+        if item_id.startswith("abs:"):
+            abs_item_id = item_id[4:]
+            client = od._make_abs_client()
+            if client is None:
+                return self._send_error(503, "ABS not configured")
+            try:
+                status, headers, body = client.proxy_audio(abs_item_id, range_header)
+            except Exception as e:
+                return self._send_error(502, str(e))
+            self.send_response(status)
+            for k, v in headers.items():
+                if v:
+                    self.send_header(k, v)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except BrokenPipeError:
+                pass
+            return
+
+        if item_id.startswith("upload:"):
+            audio_path = od.get_upload_path(item_id)
+            if audio_path is None:
+                return self._send_error(404, "Item not found")
+            mime = od._mime_for(audio_path)
+            file_size = audio_path.stat().st_size
+            start, end = 0, file_size - 1
+            if range_header:
+                try:
+                    rng = range_header.replace("bytes=", "")
+                    parts = rng.split("-")
+                    start = int(parts[0]) if parts[0] else 0
+                    end = int(parts[1]) if parts[1] else file_size - 1
+                except Exception:
+                    pass
+            length = end - start + 1
+            with open(audio_path, "rb") as f:
+                f.seek(start)
+                data = f.read(length)
+            if range_header:
+                self.send_response(206)
+                self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+            else:
+                self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            try:
+                self.wfile.write(data)
+            except BrokenPipeError:
+                pass
+            return
+
+        self._send_error(400, "Unknown item type")
+
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path.rstrip("/")
-        if path != "/message":
-            if path != "/control":
-                self.send_response(404)
-                self.end_headers()
-                return
+        if path == "/api/ondemand/state":
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                data = json.loads(self.rfile.read(content_length).decode("utf-8") or "{}")
+                item_id = data.get("item_id")
+                if not item_id:
+                    return self._send_error(400, "item_id required")
+                store = _od().get_store()
+                if data.get("listened"):
+                    store.mark_listened(item_id)
+                elif "position_s" in data:
+                    store.set_position(item_id, float(data["position_s"]), data.get("duration_s"))
+                self._send_json({"ok": True})
+            except Exception as e:
+                self._send_error(500, str(e))
+            return
+
+        if path not in ("/message", "/control", "/override"):
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        if path == "/override":
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                data = json.loads(self.rfile.read(content_length).decode("utf-8") or "{}")
+                show_id = data.get("show_id")  # None → skip to next scheduled show
+                from schedule import load_schedule as _load_sched
+                sched = _load_sched(PROJECT_ROOT / "config" / "schedule.yaml")
+                now = station_now()
+                current_show_id = sched.resolve(now).show_id
+                if show_id is None:
+                    # Skip: find next show and run it for its full normal slot
+                    next_start = _find_next_show_start(sched, now, current_show_id)
+                    if next_start is None:
+                        return self._send_error(400, "Could not determine next show start")
+                    next_show = sched.resolve(next_start)
+                    next_end = _find_show_end(sched, next_start, next_show.show_id)
+                    if next_end is None:
+                        return self._send_error(400, "Could not determine next show end time")
+                    target_id, end_at = next_show.show_id, next_end
+                else:
+                    # Replace: chosen show runs until current slot ends
+                    if show_id not in sched.shows:
+                        return self._send_error(400, f"Unknown show: {show_id!r}")
+                    current_end = _find_show_end(sched, now, current_show_id)
+                    if current_end is None:
+                        return self._send_error(400, "Could not determine current show end time")
+                    target_id, end_at = show_id, current_end
+                set_live_override(target_id, end_at.isoformat())
+                self._send_json({"ok": True, "show_id": target_id, "end_at": end_at.isoformat()})
+            except Exception as e:
+                self._send_error(500, str(e))
+            return
 
         if path == "/control":
             try:
@@ -204,7 +365,7 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
@@ -388,6 +549,126 @@ def pop_live_command(actions: set[str] | list[str] | tuple[str, ...] | None = No
         return None
 
 
+# ---------------------------------------------------------------------------
+# Live show override helpers
+# ---------------------------------------------------------------------------
+
+def get_live_override() -> dict | None:
+    with _live_override_lock:
+        return dict(_live_override) if _live_override else None
+
+
+def set_live_override(show_id: str, end_at: str) -> None:
+    global _live_override
+    with _live_override_lock:
+        _live_override = {"show_id": show_id, "end_at": end_at}
+
+
+def clear_live_override() -> None:
+    global _live_override
+    with _live_override_lock:
+        _live_override = None
+
+
+def _find_next_show_start(sched, now, current_show_id: str, max_hours: int = 6) -> "datetime | None":
+    """Walk forward minute-by-minute until the schedule changes show."""
+    probe = now + timedelta(minutes=1)
+    horizon = now + timedelta(hours=max_hours)
+    while probe < horizon:
+        try:
+            if sched.resolve(probe).show_id != current_show_id:
+                return probe.replace(second=0, microsecond=0)
+        except Exception:
+            break
+        probe += timedelta(minutes=1)
+    return None
+
+
+def _find_show_end(sched, start, show_id: str, max_hours: int = 6) -> "datetime | None":
+    """Walk forward minute-by-minute from start until show_id changes."""
+    probe = start + timedelta(minutes=1)
+    horizon = start + timedelta(hours=max_hours)
+    while probe < horizon:
+        try:
+            if sched.resolve(probe).show_id != show_id:
+                return probe.replace(second=0, microsecond=0)
+        except Exception:
+            break
+        probe += timedelta(minutes=1)
+    return None
+
+
+def get_upcoming_shows(hours: int = 12) -> list[dict]:
+    """Return upcoming show blocks for the next N hours, respecting any active override."""
+    try:
+        from schedule import load_schedule as _load_sched
+        sched = _load_sched(PROJECT_ROOT / "config" / "schedule.yaml")
+        now = station_now()
+        tz = now.tzinfo
+        horizon = now + timedelta(hours=hours)
+
+        override = get_live_override()
+        override_end: "datetime | None" = None
+        override_show_id: str | None = None
+        if override:
+            try:
+                oe = datetime.fromisoformat(override["end_at"])
+                if tz and oe.tzinfo is None:
+                    oe = oe.replace(tzinfo=tz)
+                elif tz and oe.tzinfo is not None:
+                    oe = oe.astimezone(tz)
+                if oe > now:
+                    override_end = oe
+                    override_show_id = override["show_id"]
+            except (ValueError, TypeError, KeyError):
+                pass
+
+        blocks: list[dict] = []
+
+        if override_end and override_show_id:
+            show = sched.shows.get(override_show_id)
+            end = min(override_end, horizon)
+            blocks.append({
+                "show_id": override_show_id,
+                "name": show.name if show else override_show_id,
+                "start": now.isoformat(),
+                "end": end.isoformat(),
+                "is_override": True,
+            })
+            probe = min(override_end, horizon)
+        else:
+            probe = now
+
+        while probe < horizon:
+            try:
+                resolved = sched.resolve(probe)
+            except Exception:
+                probe += timedelta(minutes=1)
+                continue
+            # Find end of this slot
+            block_end = probe + timedelta(minutes=1)
+            while block_end < horizon:
+                try:
+                    if sched.resolve(block_end).show_id != resolved.show_id:
+                        break
+                except Exception:
+                    break
+                block_end += timedelta(minutes=1)
+            block_end = min(block_end, horizon)
+            blocks.append({
+                "show_id": resolved.show_id,
+                "name": resolved.name,
+                "start": probe.isoformat(),
+                "end": block_end.isoformat(),
+                "is_override": False,
+            })
+            probe = block_end
+
+        return blocks
+    except Exception:
+        return []
+
+
 def get_schedule_info() -> dict:
     """Get current and upcoming show schedule."""
     try:
@@ -539,6 +820,51 @@ def get_qr_code() -> bytes | None:
     if not discogs_data or not discogs_data.get("url"):
         return None
     return generate_qr_png(discogs_data["url"])
+
+
+def get_ondemand_sources() -> dict:
+    """Return list of configured on-demand sources (ABS libraries + upload buckets)."""
+    try:
+        od = _od()
+        cfg = od.load_config()
+        sources = []
+        for lib in cfg.get("abs", {}).get("libraries", []):
+            sources.append({"id": f"abs:{lib['id']}", "name": lib["name"], "type": "abs"})
+        for src in cfg.get("upload_sources", []):
+            sources.append({"id": f"upload:{src['id']}", "name": src["name"], "type": "upload"})
+        return {"sources": sources}
+    except Exception as e:
+        return {"sources": [], "error": str(e)}
+
+
+def get_ondemand_items(source: str | None = None) -> dict:
+    """Return inventory items, optionally filtered by source, merged with playback state."""
+    try:
+        od = _od()
+        items = od.get_inventory()
+        if source:
+            items = [i for i in items if i.source == source]
+        store = od.get_store()
+        states = store.get_all_states()
+        result = []
+        for item in items:
+            d = item.to_dict()
+            state = states.get(item.id, {})
+            d["position_s"] = state.get("position_s", 0.0)
+            d["listened"] = bool(state.get("listened", 0))
+            result.append(d)
+        return {"items": result}
+    except Exception as e:
+        return {"items": [], "error": str(e)}
+
+
+def get_ondemand_state() -> dict:
+    """Return all playback state rows."""
+    try:
+        od = _od()
+        return {"state": od.get_store().get_all_states()}
+    except Exception as e:
+        return {"state": {}, "error": str(e)}
 
 
 class ReusableTCPServer(socketserver.TCPServer):

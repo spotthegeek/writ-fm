@@ -20,14 +20,14 @@ import tempfile
 import time
 import threading
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form, Header
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -1046,9 +1046,29 @@ def get_live_status():
         queue = _streamer_request("/queue")
     except HTTPException as e:
         queue = {"error": e.detail}
+
+    # Enrich current_item and display_queue speech items with sidecar topic
+    if isinstance(queue, dict):
+        ci = queue.get("current_item")
+        if ci and ci.get("path"):
+            meta = _read_gen_meta(Path(ci["path"]))
+            ci["topic"] = meta.get("topic") or meta.get("title") or ""
+        for item in queue.get("display_queue") or []:
+            if item.get("path") and item.get("kind") == "speech":
+                meta = _read_gen_meta(Path(item["path"]))
+                item["topic"] = meta.get("topic") or meta.get("title") or ""
+
+    # Attach override + upcoming from streamer (non-fatal if unavailable)
+    try:
+        upcoming_data = _streamer_request("/upcoming?hours=12")
+    except Exception:
+        upcoming_data = {"upcoming": [], "override": None}
+
     return {
         **status,
         "queue": queue,
+        "override": upcoming_data.get("override"),
+        "upcoming": upcoming_data.get("upcoming", []),
     }
 
 
@@ -1063,6 +1083,37 @@ def live_control(payload: dict):
     if not action:
         raise HTTPException(400, "action required")
     return _streamer_request("/control", method="POST", payload=payload)
+
+
+@app.post("/api/live/override")
+def set_live_override(payload: dict):
+    """Skip or replace the current show. show_id=null → skip to next scheduled show."""
+    return _streamer_request("/override", method="POST", payload=payload)
+
+
+@app.get("/api/live/upcoming")
+def get_live_upcoming(hours: int = 12):
+    """Return upcoming show blocks for the next N hours, respecting any active override."""
+    return _streamer_request(f"/upcoming?hours={hours}")
+
+
+@app.get("/api/live/shows-with-content")
+def get_shows_with_content():
+    """Return shows that have at least one playable talk segment, for the override dropdown."""
+    data = load_schedule()
+    shows = data.get("shows", {})
+    segments = _cached_inventory("segments")
+    result = []
+    for show_id, show in shows.items():
+        count = len(segments.get(show_id, []))
+        if count > 0:
+            result.append({
+                "show_id": show_id,
+                "name": show.get("name", show_id),
+                "segment_count": count,
+            })
+    result.sort(key=lambda s: s["name"])
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -2044,19 +2095,23 @@ def get_scheduler_status():
         gen = show.get("generation", {})
         talk_cfg = {**_sched.DEFAULT_TALK_CONFIG, **(gen.get("talk") or {})}
         music_cfg = {**_sched.DEFAULT_MUSIC_CONFIG, **(gen.get("music") or {})}
-        last = _sched.state.last_run_per_show.get(show_id, {})
+        last_fail = _sched.state.last_failure_per_show.get(show_id, {})
         show_status[show_id] = {
             "talk": {
                 **talk_cfg,
                 "inventory": inv_talk.get(show_id, 0),
-                "last_run": last.get("talk", _sched.state.last_run(show_id, "talk")) and
+                "last_run": _sched.state.last_run(show_id, "talk") and
                             _sched.state.last_run(show_id, "talk").isoformat(),
+                "last_failure": last_fail.get("talk") and last_fail["talk"].isoformat(),
+                "in_backoff": _sched.state.in_failure_backoff(show_id, "talk"),
             },
             "music": {
                 **music_cfg,
                 "inventory": inv_music.get(show_id, 0),
                 "last_run": _sched.state.last_run(show_id, "music") and
                             _sched.state.last_run(show_id, "music").isoformat(),
+                "last_failure": last_fail.get("music") and last_fail["music"].isoformat(),
+                "in_backoff": _sched.state.in_failure_backoff(show_id, "music"),
             },
         }
 
@@ -2082,13 +2137,18 @@ def get_activity_log(limit: int = 100):
         ts = job.get("completed_at") or job.get("created_at", "")
         ct = job.get("content_type", "talk")
         seg_type = job.get("segment_type", "") or ""
+        status = job.get("status", "")
+        label = "Music bumper" if ct == "music" else seg_type or "talk"
+        count = job.get("count", 1)
         entries.append({
             "ts": ts[:19].replace("T", " "),
             "show_id": job.get("show_id", ""),
             "type": ct,
-            "msg": f"{'Music bumper' if ct=='music' else seg_type or 'talk'} — {job.get('status','')}",
-            "level": "error" if job.get("status") == "failed" else "info",
+            "msg": f"{label} ×{count} — {status}",
+            "level": "error" if status == "failed" else "info",
             "source": "manual",
+            "job_id": job.get("id", ""),
+            "status": status,
         })
 
     # 2. Scheduler activity (in-memory, current session only)
@@ -2124,14 +2184,14 @@ def get_activity_log(limit: int = 100):
 def trigger_generation(show_id: str, content_type: str):
     if content_type not in ("talk", "music"):
         raise HTTPException(400, "content_type must be 'talk' or 'music'")
-    msg = _sched.trigger_now(show_id, content_type, _jobs)
-    return {"ok": True, "message": msg}
+    result = _sched.trigger_now(show_id, content_type, _jobs)
+    return {"ok": True, "message": result.get("message", ""), "job_id": result.get("job_id")}
 
 
 @app.post("/api/scheduler/trigger/{show_id}")
 def trigger_generation_show(show_id: str):
-    msg = _sched.trigger_now(show_id, "show", _jobs)
-    return {"ok": True, "message": msg}
+    result = _sched.trigger_now(show_id, "show", _jobs)
+    return {"ok": True, "message": result.get("message", ""), "job_id": result.get("job_id"), "job_ids": result.get("job_ids")}
 
 
 class GenerationConfig(BaseModel):
@@ -2152,6 +2212,189 @@ def update_generation_config(show_id: str, config: GenerationConfig):
     data["shows"] = shows
     save_schedule(data)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# API: On-Demand Content
+# ---------------------------------------------------------------------------
+
+sys.path.insert(0, str(PROJECT_ROOT / "mac"))
+from ondemand import (
+    load_config as _od_load_config,
+    save_config as _od_save_config,
+    get_inventory as _od_get_inventory,
+    invalidate_inventory as _od_invalidate_inventory,
+    get_store as _od_get_store,
+    _make_abs_client,
+    UPLOADS_DIR as _OD_UPLOADS_DIR,
+    INBOX_DIR as _OD_INBOX_DIR,
+    AUDIO_EXTS as _OD_AUDIO_EXTS,
+    _mime_for as _od_mime_for,
+)
+
+INGEST_API_KEY = os.environ.get("WRIT_INGEST_API_KEY", "")
+
+
+def _check_ingest_auth(authorization: str | None) -> bool:
+    """Return True if the request carries the ingest API key."""
+    if not INGEST_API_KEY:
+        return True  # no key configured → open
+    if not authorization:
+        return False
+    scheme, _, token = authorization.partition(" ")
+    return scheme.lower() == "bearer" and token == INGEST_API_KEY
+
+
+@app.get("/api/ondemand/config")
+def od_get_config():
+    return _od_load_config()
+
+
+class OnDemandConfigRequest(BaseModel):
+    abs: dict = {}
+    upload_sources: list = []
+
+
+@app.post("/api/ondemand/config")
+def od_save_config(body: OnDemandConfigRequest):
+    cfg = _od_load_config()
+    if body.abs:
+        cfg["abs"] = body.abs
+    if body.upload_sources:
+        cfg["upload_sources"] = body.upload_sources
+    _od_save_config(cfg)
+    _od_invalidate_inventory()
+    return {"ok": True}
+
+
+@app.get("/api/ondemand/abs/libraries")
+def od_abs_libraries():
+    """Fetch the live library list from ABS so admin can select which to expose."""
+    client = _make_abs_client()
+    if client is None:
+        raise HTTPException(400, "ABS not configured — set WRIT_ABS_URL and WRIT_ABS_API_KEY")
+    try:
+        return {"libraries": client.list_libraries()}
+    except Exception as e:
+        raise HTTPException(502, str(e))
+
+
+@app.get("/api/ondemand/abs/ping")
+def od_abs_ping():
+    client = _make_abs_client()
+    if client is None:
+        return {"ok": False, "reason": "ABS not configured"}
+    ok = client.ping()
+    return {"ok": ok}
+
+
+@app.post("/api/ondemand/upload")
+async def od_upload(
+    audio: UploadFile = File(...),
+    source: str = Form("misc"),
+    title: str = Form(""),
+    subtitle: str = Form(""),
+    authorization: str | None = Header(default=None),
+):
+    if not _check_ingest_auth(authorization):
+        raise HTTPException(401, "Invalid or missing ingest API key")
+    suffix = Path(audio.filename or "upload.mp3").suffix.lower()
+    if suffix not in _OD_AUDIO_EXTS:
+        raise HTTPException(400, f"Unsupported audio type: {suffix}")
+    stem = uuid.uuid4().hex[:16]
+    dest_dir = _OD_UPLOADS_DIR / source
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    audio_path = dest_dir / f"{stem}{suffix}"
+    json_path = dest_dir / f"{stem}.json"
+    content = await audio.read()
+    audio_path.write_bytes(content)
+    item_id = f"upload:{stem}"
+    meta = {
+        "id": item_id,
+        "source": f"upload:{source}",
+        "title": title or audio.filename or stem,
+        "subtitle": subtitle,
+        "mime_type": _od_mime_for(audio_path),
+        "created_at": datetime.now(timezone.utc).isoformat() if hasattr(datetime.now(timezone.utc), 'isoformat') else datetime.utcnow().isoformat(),
+        "extra": {},
+    }
+    json_path.write_text(json.dumps(meta, indent=2))
+    _od_invalidate_inventory()
+    return {"ok": True, "id": item_id, "filename": audio_path.name}
+
+
+@app.get("/api/ondemand/uploads")
+def od_list_uploads():
+    cfg = _od_load_config()
+    source_names = {s["id"]: s["name"] for s in cfg.get("upload_sources", [])}
+    items = []
+    if not _OD_UPLOADS_DIR.exists():
+        return {"items": items}
+    for source_dir in sorted(_OD_UPLOADS_DIR.iterdir()):
+        if not source_dir.is_dir():
+            continue
+        source_id = source_dir.name
+        for jf in sorted(source_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                meta = json.loads(jf.read_text())
+            except Exception:
+                continue
+            audio = None
+            for ext in _OD_AUDIO_EXTS:
+                c = jf.with_suffix(ext)
+                if c.exists():
+                    audio = c
+                    break
+            if audio is None:
+                continue
+            items.append({
+                **meta,
+                "source_name": source_names.get(source_id, source_id),
+                "file_size": audio.stat().st_size,
+            })
+    return {"items": items}
+
+
+@app.delete("/api/ondemand/uploads/{item_id}")
+def od_delete_upload(item_id: str):
+    if not item_id.startswith("upload:"):
+        raise HTTPException(400, "Only upload items can be deleted here")
+    stem = item_id[len("upload:"):]
+    deleted = False
+    if _OD_UPLOADS_DIR.exists():
+        for source_dir in _OD_UPLOADS_DIR.iterdir():
+            if not source_dir.is_dir():
+                continue
+            jf = source_dir / f"{stem}.json"
+            if jf.exists():
+                jf.unlink()
+                deleted = True
+            for ext in _OD_AUDIO_EXTS:
+                af = source_dir / f"{stem}{ext}"
+                if af.exists():
+                    af.unlink()
+                    deleted = True
+    if not deleted:
+        raise HTTPException(404, "Item not found")
+    _od_invalidate_inventory()
+    return {"ok": True}
+
+
+@app.get("/api/ondemand/audio/{item_id:path}")
+def od_stream_audio_admin(item_id: str):
+    """Serve upload audio directly from admin (for admin UI preview)."""
+    if not item_id.startswith("upload:"):
+        raise HTTPException(400, "Use the streamer endpoint for ABS audio")
+    stem = item_id[len("upload:"):]
+    if _OD_UPLOADS_DIR.exists():
+        for source_dir in _OD_UPLOADS_DIR.iterdir():
+            if not source_dir.is_dir():
+                continue
+            for ext in _OD_AUDIO_EXTS:
+                af = source_dir / f"{stem}{ext}"
+                if af.exists():
+                    return FileResponse(str(af), media_type=_od_mime_for(af))
+    raise HTTPException(404, "Audio file not found")
 
 
 # ---------------------------------------------------------------------------

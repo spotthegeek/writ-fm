@@ -1,0 +1,1127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WRIT-FM</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #333333;
+            --text-muted: #888888;
+            --box-bg: #f9f9f9;
+            --border-color: #eeeeee;
+            --font-mono: 'Courier New', Courier, monospace;
+            --font-serif: Georgia, 'Times New Roman', Times, serif;
+        }
+
+        [data-theme="dark"] {
+            --bg-color: #121212;
+            --text-color: #e0e0e0;
+            --text-muted: #888888;
+            --box-bg: #1e1e1e;
+            --border-color: #333333;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: var(--font-mono);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 600px;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 20px;
+        }
+
+        .header-left .title {
+            font-size: 1.2rem;
+            letter-spacing: 2px;
+            margin: 0 0 5px 0;
+            font-weight: normal;
+        }
+
+        .header-left .subtitle {
+            font-family: var(--font-serif);
+            font-style: italic;
+            color: var(--text-muted);
+            margin: 0;
+            font-size: 0.9rem;
+        }
+
+        .header-right {
+            text-align: right;
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 5px;
+        }
+
+        .theme-toggle {
+            background: none;
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            cursor: pointer;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+
+        .main-box {
+            background-color: var(--box-bg);
+            border: 1px solid var(--border-color);
+            padding: 30px;
+            position: relative;
+            min-height: 250px;
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 20px;
+            transition: background-color 0.3s, border-color 0.3s;
+        }
+
+        .box-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-bottom: 30px;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #ccc;
+        }
+
+        .status-dot.online {
+            background-color: #4CAF50;
+            box-shadow: 0 0 5px #4CAF50;
+        }
+
+        .host-info {
+            font-family: var(--font-serif);
+            font-style: italic;
+        }
+
+        .show-info {
+            margin-bottom: 40px;
+        }
+
+        .transmission-label {
+            font-size: 0.7rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+        }
+
+        .show-title {
+            font-family: var(--font-serif);
+            font-size: 2rem;
+            margin: 0;
+            font-weight: normal;
+        }
+        
+        .track-title {
+            font-family: var(--font-mono);
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin-top: 10px;
+        }
+
+        .live-progress {
+            margin-top: 14px;
+            display: none;
+        }
+
+        .live-progress-bar {
+            width: 100%;
+            height: 2px;
+            background-color: var(--border-color);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .live-progress-fill {
+            height: 100%;
+            background-color: var(--text-muted);
+            width: 0%;
+            transition: width 0.8s linear;
+        }
+
+        .live-progress-time {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            margin-top: 5px;
+            letter-spacing: 1px;
+        }
+
+        .controls-area {
+            margin-top: auto;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+
+        .play-btn {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            border: 2px solid var(--text-color);
+            background: transparent;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: var(--text-color);
+            transition: all 0.2s;
+        }
+
+        .play-btn:hover {
+            background-color: var(--text-color);
+            color: var(--bg-color);
+        }
+
+        .play-icon {
+            margin-left: 4px;
+            border-top: 10px solid transparent;
+            border-bottom: 10px solid transparent;
+            border-left: 15px solid currentColor;
+        }
+
+        .pause-icon {
+            display: flex;
+            gap: 4px;
+        }
+
+        .pause-icon div {
+            width: 4px;
+            height: 18px;
+            background-color: currentColor;
+        }
+
+        .volume-container {
+            position: absolute;
+            right: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .volume-icon {
+            font-size: 1.2rem;
+            color: var(--text-muted);
+        }
+
+        .volume-slider {
+            width: 80px;
+            accent-color: var(--text-muted);
+        }
+
+        .accordion {
+            border-top: 1px solid var(--border-color);
+        }
+
+        .accordion-item {
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .accordion-header {
+            width: 100%;
+            padding: 15px 0;
+            background: none;
+            border: none;
+            text-align: left;
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .accordion-header:hover {
+            color: var(--text-color);
+        }
+
+        .accordion-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+            font-family: var(--font-serif);
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+        
+        .accordion-content.open {
+            max-height: 400px;
+            padding-bottom: 15px;
+            overflow-y: auto;
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 40px;
+            font-size: 0.8rem;
+            letter-spacing: 2px;
+            color: var(--text-muted);
+        }
+
+        /* Message Form */
+        #message-form {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        #message-form textarea {
+            width: 100%;
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--border-color);
+            padding: 10px;
+            font-family: var(--font-mono);
+            box-sizing: border-box;
+            resize: vertical;
+        }
+        #message-form button {
+            align-self: flex-start;
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            padding: 5px 15px;
+            cursor: pointer;
+            font-family: var(--font-mono);
+        }
+        #message-form button:hover {
+            background: var(--text-color);
+            color: var(--bg-color);
+        }
+        
+        #schedule-content {
+            white-space: pre-wrap;
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+        }
+        
+        @media (max-width: 500px) {
+            .volume-container {
+                position: static;
+                margin-top: 20px;
+            }
+            .controls-area {
+                flex-direction: column;
+            }
+        }
+
+        /* ── Mode tabs ─────────────────────────────────── */
+        .mode-tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 16px;
+            border: 1px solid var(--border-color);
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        .mode-tab {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            letter-spacing: 1px;
+            padding: 7px 0;
+            cursor: pointer;
+            transition: background 0.15s, color 0.15s;
+        }
+        .mode-tab:first-child { border-right: 1px solid var(--border-color); }
+        .mode-tab.active {
+            background: var(--text-color);
+            color: var(--bg-color);
+        }
+
+        /* ── On-demand source pills ─────────────────────── */
+        .od-sources {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 14px;
+        }
+        .od-source-pill {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            letter-spacing: 1px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: background 0.12s, color 0.12s;
+        }
+        .od-source-pill.active {
+            background: var(--text-color);
+            color: var(--bg-color);
+            border-color: var(--text-color);
+        }
+
+        /* ── On-demand item list ─────────────────────────── */
+        .od-list {
+            list-style: none;
+            margin: 0 0 14px 0;
+            padding: 0;
+            max-height: 260px;
+            overflow-y: auto;
+        }
+        .od-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 0;
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            transition: opacity 0.1s;
+        }
+        .od-item:hover { opacity: 0.75; }
+        .od-item.playing { opacity: 1; }
+        .od-item-info { flex: 1; min-width: 0; }
+        .od-item-title {
+            font-size: 0.82rem;
+            color: var(--text-color);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .od-item-meta {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+        .od-item-badges { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
+        .od-badge-listened { font-size: 0.7rem; color: var(--text-muted); }
+        .od-badge-resume { font-size: 0.7rem; color: var(--text-muted); font-style: italic; }
+        .od-hide-listened-row {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .od-empty { font-size: 0.8rem; color: var(--text-muted); padding: 16px 0; text-align: center; }
+
+        /* ── On-demand player ────────────────────────────── */
+        .od-player {
+            background: var(--box-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 5px;
+            padding: 12px 14px;
+            margin-top: 4px;
+        }
+        .od-player-title {
+            font-size: 0.8rem;
+            color: var(--text-color);
+            margin-bottom: 8px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .od-player-time {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+            display: flex;
+            justify-content: space-between;
+        }
+        .od-scrub {
+            width: 100%;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 3px;
+            border-radius: 2px;
+            background: var(--border-color);
+            outline: none;
+            cursor: pointer;
+            margin-bottom: 10px;
+        }
+        .od-scrub::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 12px; height: 12px;
+            border-radius: 50%;
+            background: var(--text-color);
+            cursor: pointer;
+        }
+        .od-controls {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+        }
+        .od-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            padding: 4px 8px;
+            letter-spacing: 1px;
+            transition: color 0.12s;
+        }
+        .od-btn:hover { color: var(--text-color); }
+        .od-btn-play {
+            border: 1px solid var(--border-color);
+            border-radius: 50%;
+            width: 34px; height: 34px;
+            display: flex; align-items: center; justify-content: center;
+            color: var(--text-color);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-left">
+                <h1 class="title">WRIT - FM</h1>
+                <p class="subtitle">the frequency between frequencies</p>
+            </div>
+            <div class="header-right">
+                <div class="clock-listeners">
+                    <span id="clock">00:00</span> • <span id="listener-count">0</span>
+                </div>
+                <button class="theme-toggle" id="theme-btn">DARK MODE</button>
+            </div>
+        </header>
+
+        <nav class="mode-tabs">
+            <button class="mode-tab active" id="tab-live">LIVE</button>
+            <button class="mode-tab" id="tab-ondemand">ON-DEMAND</button>
+        </nav>
+
+        <section id="live-view">
+        <div class="main-box">
+            <div class="box-header">
+                <div class="status">
+                    <div class="status-dot" id="status-dot"></div>
+                    <span id="status-text">OFFLINE</span>
+                </div>
+                <div class="host-info">
+                    Listener Hours · <span id="host-name">unknown</span>
+                </div>
+            </div>
+
+            <div class="show-info">
+                <div class="transmission-label">TRANSMISSION</div>
+                <h2 class="show-title" id="show-title">Searching...</h2>
+                <div class="track-title" id="track-title"></div>
+                <div class="live-progress" id="live-progress">
+                    <div class="live-progress-bar">
+                        <div class="live-progress-fill" id="live-progress-fill"></div>
+                    </div>
+                    <div class="live-progress-time">
+                        <span id="live-elapsed">0:00</span>
+                        <span id="live-total">0:00</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="controls-area">
+                <button class="play-btn" id="play-btn" aria-label="Play">
+                    <div class="play-icon" id="play-icon"></div>
+                </button>
+
+                <div class="volume-container">
+                    <span class="volume-icon">🔊</span>
+                    <input type="range" class="volume-slider" id="volume-slider" min="0" max="1" step="0.01" value="0.8">
+                </div>
+            </div>
+        </div>
+
+        <div class="accordion">
+            <div class="accordion-item">
+                <button class="accordion-header">SEND A MESSAGE <span>+</span></button>
+                <div class="accordion-content">
+                    <form id="message-form">
+                        <textarea rows="3" placeholder="Leave a message in the dark..." id="msg-text" required maxlength="280"></textarea>
+                        <button type="submit">SEND</button>
+                        <div id="msg-status" style="font-size: 0.8rem; margin-top: 5px;"></div>
+                    </form>
+                </div>
+            </div>
+            <div class="accordion-item">
+                <button class="accordion-header" id="schedule-btn">SCHEDULE <span>+</span></button>
+                <div class="accordion-content">
+                    <div id="schedule-content">Loading schedule...</div>
+                </div>
+            </div>
+            <div class="accordion-item">
+                <button class="accordion-header">ABOUT <span>+</span></button>
+                <div class="accordion-content">
+                    <p>WRIT-FM is an autonomous, AI-driven internet radio station broadcasting talk segments, listener letters, and late-night philosophy.</p>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            the signal persists
+        </footer>
+        </section><!-- /live-view -->
+
+        <section id="ondemand-view" style="display:none;">
+            <div class="od-sources" id="od-sources"></div>
+            <div class="od-hide-listened-row">
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+                    <input type="checkbox" id="od-hide-listened"> hide listened
+                </label>
+                <span id="od-loading" style="display:none;">loading…</span>
+            </div>
+            <ul class="od-list" id="od-list">
+                <li class="od-empty">Select a source above.</li>
+            </ul>
+            <div class="od-player" id="od-player" style="display:none;">
+                <div class="od-player-title" id="od-player-title">—</div>
+                <div class="od-player-time">
+                    <span id="od-time-current">0:00</span>
+                    <span id="od-time-total">0:00</span>
+                </div>
+                <input type="range" class="od-scrub" id="od-scrub" min="0" max="100" step="0.1" value="0">
+                <div class="od-controls">
+                    <button class="od-btn" id="od-rr" title="Rewind 15s">« 15</button>
+                    <button class="od-btn od-btn-play" id="od-play-btn" aria-label="Play/Pause">
+                        <span id="od-play-icon">▶</span>
+                    </button>
+                    <button class="od-btn" id="od-ff" title="Forward 30s">30 »</button>
+                </div>
+            </div>
+        </section><!-- /ondemand-view -->
+    </div>
+
+    <audio id="audio-player" preload="none"></audio>
+
+    <script>
+        // ── API Endpoints ──────────────────────────────────────────────────────
+        const API_BASE = window.location.protocol === 'https:'
+            ? window.location.origin
+            : 'http://' + window.location.hostname + ':8001';
+        const STREAM_URL = window.location.protocol === 'https:'
+            ? window.location.origin + '/stream'
+            : 'http://' + window.location.hostname + ':8000/stream';
+
+        // ── Elements ───────────────────────────────────────────────────────────
+        const audio = document.getElementById('audio-player');
+        const playBtn = document.getElementById('play-btn');
+        const playIcon = document.getElementById('play-icon');
+        const volumeSlider = document.getElementById('volume-slider');
+        const themeBtn = document.getElementById('theme-btn');
+        const clockEl = document.getElementById('clock');
+        const listenerCountEl = document.getElementById('listener-count');
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        const hostNameEl = document.getElementById('host-name');
+        const showTitleEl = document.getElementById('show-title');
+        const trackTitleEl = document.getElementById('track-title');
+        const scheduleContent = document.getElementById('schedule-content');
+
+        // ── State ──────────────────────────────────────────────────────────────
+        let isPlaying = false;
+        let isOnline = false;
+        let currentMode = 'live'; // 'live' | 'ondemand'
+        let npStartedAt = null;   // ms timestamp when current segment began
+        let npTotal = null;       // segment duration in seconds
+
+        // ── Theme Toggle ───────────────────────────────────────────────────────
+        const currentTheme = localStorage.getItem('theme') || 'light';
+        if (currentTheme === 'dark') {
+            document.body.setAttribute('data-theme', 'dark');
+            themeBtn.textContent = 'LIGHT MODE';
+        }
+        themeBtn.addEventListener('click', () => {
+            if (document.body.getAttribute('data-theme') === 'dark') {
+                document.body.removeAttribute('data-theme');
+                localStorage.setItem('theme', 'light');
+                themeBtn.textContent = 'DARK MODE';
+            } else {
+                document.body.setAttribute('data-theme', 'dark');
+                localStorage.setItem('theme', 'dark');
+                themeBtn.textContent = 'LIGHT MODE';
+            }
+        });
+
+        // ── Clock + Progress Ticker ────────────────────────────────────────────
+        const progressEl = document.getElementById('live-progress');
+        const progressFill = document.getElementById('live-progress-fill');
+        const elapsedEl = document.getElementById('live-elapsed');
+        const totalEl = document.getElementById('live-total');
+
+        setInterval(() => {
+            const now = new Date();
+            clockEl.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+
+            if (npStartedAt !== null && npTotal !== null && npTotal > 0) {
+                const elapsed = Math.max(0, (Date.now() - npStartedAt) / 1000);
+                const pct = Math.min(100, (elapsed / npTotal) * 100);
+                progressFill.style.width = pct + '%';
+                elapsedEl.textContent = fmtTime(Math.min(elapsed, npTotal));
+                totalEl.textContent = fmtTime(npTotal);
+                progressEl.style.display = 'block';
+            } else {
+                progressEl.style.display = 'none';
+            }
+        }, 1000);
+
+        // ── Mode Tabs ──────────────────────────────────────────────────────────
+        const tabLive = document.getElementById('tab-live');
+        const tabOD = document.getElementById('tab-ondemand');
+        const liveView = document.getElementById('live-view');
+        const odView = document.getElementById('ondemand-view');
+
+        function switchMode(mode) {
+            if (mode === currentMode) return;
+            // Pause whatever is playing
+            if (!audio.paused) {
+                audio.pause();
+                if (currentMode === 'live') {
+                    audio.src = '';
+                    audio.load();
+                    isPlaying = false;
+                    playIcon.className = 'play-icon';
+                    playIcon.innerHTML = '';
+                } else {
+                    odSavePosition();
+                    odIsPlaying = false;
+                    updateOdPlayBtn();
+                }
+            }
+            currentMode = mode;
+            if (mode === 'live') {
+                tabLive.classList.add('active');
+                tabOD.classList.remove('active');
+                liveView.style.display = '';
+                odView.style.display = 'none';
+            } else {
+                tabOD.classList.add('active');
+                tabLive.classList.remove('active');
+                liveView.style.display = 'none';
+                odView.style.display = '';
+                odLoadSources();
+            }
+        }
+        tabLive.addEventListener('click', () => switchMode('live'));
+        tabOD.addEventListener('click', () => switchMode('ondemand'));
+
+        // ── Live Audio Player ──────────────────────────────────────────────────
+        audio.src = STREAM_URL;
+        audio.volume = volumeSlider.value;
+
+        playBtn.addEventListener('click', () => {
+            if (currentMode !== 'live') return;
+            if (isPlaying) {
+                audio.pause();
+                audio.src = '';
+                audio.load();
+                isPlaying = false;
+                playIcon.className = 'play-icon';
+                playIcon.innerHTML = '';
+            } else {
+                audio.src = STREAM_URL;
+                audio.play().then(() => {
+                    isPlaying = true;
+                    playIcon.className = 'pause-icon';
+                    playIcon.innerHTML = '<div></div><div></div>';
+                }).catch(err => console.error('Error playing audio:', err));
+            }
+        });
+        volumeSlider.addEventListener('input', (e) => { audio.volume = e.target.value; });
+
+        // ── Live API Polling ───────────────────────────────────────────────────
+        async function fetchNowPlaying() {
+            try {
+                const res = await fetch(`${API_BASE}/now-playing`);
+                if (!res.ok) throw new Error('Not OK');
+                const data = await res.json();
+                if (!isOnline) {
+                    isOnline = true;
+                    statusDot.classList.add('online');
+                    statusText.textContent = 'ONLINE';
+                }
+                listenerCountEl.textContent = data.listeners || 0;
+                hostNameEl.textContent = data.host || 'unknown';
+                showTitleEl.textContent = data.show || 'Automated Broadcast';
+                trackTitleEl.textContent = data.track ? `Now Playing: ${data.track}` : '';
+
+                if (data.timestamp && data.duration) {
+                    const newStarted = new Date(data.timestamp).getTime();
+                    if (newStarted !== npStartedAt || npTotal !== data.duration) {
+                        npStartedAt = newStarted;
+                        npTotal = data.duration;
+                    }
+                } else {
+                    npStartedAt = null;
+                    npTotal = null;
+                }
+            } catch (err) {
+                if (isOnline) {
+                    isOnline = false;
+                    statusDot.classList.remove('online');
+                    statusText.textContent = 'OFFLINE';
+                    listenerCountEl.textContent = 0;
+                }
+            }
+        }
+        setInterval(fetchNowPlaying, 5000);
+        fetchNowPlaying();
+
+        // ── Accordions ─────────────────────────────────────────────────────────
+        document.querySelectorAll('.accordion-header').forEach(button => {
+            button.addEventListener('click', () => {
+                const content = button.nextElementSibling;
+                const span = button.querySelector('span');
+                if (content.classList.contains('open')) {
+                    content.classList.remove('open');
+                    span.textContent = '+';
+                } else {
+                    document.querySelectorAll('.accordion-content').forEach(c => c.classList.remove('open'));
+                    document.querySelectorAll('.accordion-header span').forEach(s => s.textContent = '+');
+                    content.classList.add('open');
+                    span.textContent = '-';
+                }
+            });
+        });
+
+        // ── Schedule ───────────────────────────────────────────────────────────
+        document.getElementById('schedule-btn').addEventListener('click', async () => {
+            if (scheduleContent.textContent.includes('Loading')) {
+                try {
+                    const res = await fetch(`${API_BASE}/schedule`);
+                    const data = await res.json();
+                    if (data.upcoming && data.upcoming.length > 0) {
+                        scheduleContent.innerHTML = data.upcoming.map(s =>
+                            `<strong>${s.starts_around}</strong> - ${s.name}<br><span style="color:var(--text-muted);font-size:0.8em">${s.topic_focus}</span>`
+                        ).join('<br><br>');
+                    } else {
+                        scheduleContent.textContent = "No upcoming schedule available.";
+                    }
+                } catch (err) {
+                    scheduleContent.textContent = "Failed to load schedule.";
+                }
+            }
+        });
+
+        // ── Message Form ───────────────────────────────────────────────────────
+        document.getElementById('message-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const msgEl = document.getElementById('msg-text');
+            const statusEl = document.getElementById('msg-status');
+            const text = msgEl.value.trim();
+            if (!text) return;
+            try {
+                statusEl.textContent = 'Sending...';
+                statusEl.style.color = 'var(--text-muted)';
+                const res = await fetch(`${API_BASE}/message`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text })
+                });
+                if (res.ok) {
+                    msgEl.value = '';
+                    statusEl.textContent = 'Message transmitted into the dark.';
+                    statusEl.style.color = '#4CAF50';
+                } else {
+                    const err = await res.json();
+                    statusEl.textContent = err.error || 'Transmission failed.';
+                    statusEl.style.color = 'red';
+                }
+            } catch (err) {
+                statusEl.textContent = 'Transmission failed. Are we offline?';
+                statusEl.style.color = 'red';
+            }
+        });
+
+        // ── On-Demand ──────────────────────────────────────────────────────────
+        let odSources = [];
+        let odItems = [];
+        let odCurrentSource = null;
+        let odCurrentItem = null;
+        let odIsPlaying = false;
+        let odSaveTimer = null;
+        let odScrubbing = false;
+
+        const odSourcesEl = document.getElementById('od-sources');
+        const odListEl = document.getElementById('od-list');
+        const odPlayerEl = document.getElementById('od-player');
+        const odPlayerTitle = document.getElementById('od-player-title');
+        const odTimeCurrent = document.getElementById('od-time-current');
+        const odTimeTotal = document.getElementById('od-time-total');
+        const odScrub = document.getElementById('od-scrub');
+        const odPlayBtn = document.getElementById('od-play-btn');
+        const odPlayIcon = document.getElementById('od-play-icon');
+        const odRR = document.getElementById('od-rr');
+        const odFF = document.getElementById('od-ff');
+        const odHideListened = document.getElementById('od-hide-listened');
+        const odLoading = document.getElementById('od-loading');
+
+        // Restore hide-listened preference
+        odHideListened.checked = localStorage.getItem('od_hide_listened') === '1';
+        odHideListened.addEventListener('change', () => {
+            localStorage.setItem('od_hide_listened', odHideListened.checked ? '1' : '0');
+            renderOdList();
+        });
+
+        function fmtTime(s) {
+            if (!s || isNaN(s)) return '0:00';
+            const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+            return `${m}:${String(sec).padStart(2, '0')}`;
+        }
+
+        async function odLoadSources() {
+            try {
+                const data = await fetch(`${API_BASE}/api/ondemand/sources`).then(r => r.json());
+                odSources = data.sources || [];
+                renderOdSources();
+                if (odSources.length > 0 && !odCurrentSource) {
+                    odSelectSource(odSources[0].id);
+                } else if (odCurrentSource) {
+                    odSelectSource(odCurrentSource);
+                }
+            } catch(e) {}
+        }
+
+        function renderOdSources() {
+            odSourcesEl.innerHTML = '';
+            odSources.forEach(src => {
+                const btn = document.createElement('button');
+                btn.className = 'od-source-pill' + (src.id === odCurrentSource ? ' active' : '');
+                btn.textContent = src.name;
+                btn.addEventListener('click', () => odSelectSource(src.id));
+                odSourcesEl.appendChild(btn);
+            });
+        }
+
+        async function odSelectSource(sourceId) {
+            odCurrentSource = sourceId;
+            renderOdSources();
+            odLoading.style.display = '';
+            try {
+                const url = `${API_BASE}/api/ondemand/items?source=${encodeURIComponent(sourceId)}`;
+                const data = await fetch(url).then(r => r.json());
+                odItems = data.items || [];
+            } catch(e) { odItems = []; }
+            odLoading.style.display = 'none';
+            renderOdList();
+        }
+
+        function renderOdList() {
+            const hideListened = odHideListened.checked;
+            let visible = odItems.filter(i => !hideListened || !i.listened);
+            odListEl.innerHTML = '';
+            if (visible.length === 0) {
+                const li = document.createElement('li');
+                li.className = 'od-empty';
+                li.textContent = odItems.length === 0 ? 'No items in this source.' : 'All items listened. Uncheck "hide listened" to show them.';
+                odListEl.appendChild(li);
+                return;
+            }
+            visible.forEach(item => {
+                const li = document.createElement('li');
+                li.className = 'od-item' + (odCurrentItem && odCurrentItem.id === item.id ? ' playing' : '');
+                li.innerHTML = `
+                    <div class="od-item-info">
+                        <div class="od-item-title">${escHtml(item.title)}</div>
+                        <div class="od-item-meta">${escHtml(item.subtitle || '')}${item.subtitle && item.duration_seconds ? ' · ' : ''}${item.duration_seconds ? fmtTime(item.duration_seconds) : ''}</div>
+                    </div>
+                    <div class="od-item-badges">
+                        ${item.listened ? '<span class="od-badge-listened" title="Listened">✓</span>' : ''}
+                        ${!item.listened && item.position_s > 5 ? `<span class="od-badge-resume">▶ ${fmtTime(item.position_s)}</span>` : ''}
+                    </div>`;
+                li.addEventListener('click', () => odPlayItem(item));
+                odListEl.appendChild(li);
+            });
+        }
+
+        function escHtml(s) {
+            return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+
+        function odPlayItem(item) {
+            // Save position for previously playing item
+            if (odCurrentItem && odCurrentItem.id !== item.id) {
+                odSavePosition();
+            }
+            odCurrentItem = item;
+            renderOdList();
+            const audioUrl = `${API_BASE}/api/ondemand/audio/${encodeURIComponent(item.id)}`;
+            audio.src = audioUrl;
+            audio.load();
+            odPlayerTitle.textContent = item.title + (item.subtitle ? ` — ${item.subtitle}` : '');
+            odPlayerEl.style.display = '';
+            odScrub.value = 0;
+            odTimeCurrent.textContent = '0:00';
+            odTimeTotal.textContent = fmtTime(item.duration_seconds);
+
+            // Register MediaSession
+            if ('mediaSession' in navigator) {
+                navigator.mediaSession.metadata = new MediaMetadata({
+                    title: item.title,
+                    artist: item.subtitle || 'WRIT-FM On-Demand',
+                });
+                navigator.mediaSession.setActionHandler('play', () => odResume());
+                navigator.mediaSession.setActionHandler('pause', () => odPause());
+                navigator.mediaSession.setActionHandler('seekbackward', () => { audio.currentTime = Math.max(0, audio.currentTime - 15); });
+                navigator.mediaSession.setActionHandler('seekforward', () => { audio.currentTime = audio.currentTime + 30; });
+            }
+
+            audio.addEventListener('loadedmetadata', function onMeta() {
+                audio.removeEventListener('loadedmetadata', onMeta);
+                const resumeAt = item.position_s || 0;
+                if (resumeAt > 5 && resumeAt < (audio.duration || Infinity) - 5) {
+                    audio.currentTime = resumeAt;
+                }
+                if (item.duration_seconds) {
+                    odScrub.max = item.duration_seconds;
+                } else if (audio.duration && isFinite(audio.duration)) {
+                    odScrub.max = audio.duration;
+                    odTimeTotal.textContent = fmtTime(audio.duration);
+                }
+                odResume();
+            }, { once: true });
+        }
+
+        function odResume() {
+            audio.play().then(() => {
+                odIsPlaying = true;
+                updateOdPlayBtn();
+                startOdSaveTimer();
+            }).catch(e => console.error('OD play error:', e));
+        }
+
+        function odPause() {
+            audio.pause();
+            odIsPlaying = false;
+            updateOdPlayBtn();
+            odSavePosition();
+        }
+
+        function updateOdPlayBtn() {
+            odPlayIcon.textContent = odIsPlaying ? '⏸' : '▶';
+        }
+
+        function startOdSaveTimer() {
+            clearInterval(odSaveTimer);
+            odSaveTimer = setInterval(() => {
+                if (odIsPlaying && !odScrubbing) odSavePosition();
+            }, 5000);
+        }
+
+        function odSavePosition() {
+            if (!odCurrentItem) return;
+            const pos = audio.currentTime || 0;
+            const dur = audio.duration && isFinite(audio.duration) ? audio.duration : (odCurrentItem.duration_seconds || null);
+            fetch(`${API_BASE}/api/ondemand/state`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ item_id: odCurrentItem.id, position_s: pos, duration_s: dur })
+            }).catch(() => {});
+        }
+
+        // Audio time update
+        audio.addEventListener('timeupdate', () => {
+            if (currentMode !== 'ondemand' || !odCurrentItem || odScrubbing) return;
+            const t = audio.currentTime || 0;
+            const dur = audio.duration && isFinite(audio.duration) ? audio.duration : (odCurrentItem.duration_seconds || 0);
+            odTimeCurrent.textContent = fmtTime(t);
+            if (dur) {
+                odScrub.max = dur;
+                odScrub.value = t;
+                odTimeTotal.textContent = fmtTime(dur);
+            }
+        });
+
+        audio.addEventListener('ended', () => {
+            if (currentMode !== 'ondemand' || !odCurrentItem) return;
+            odIsPlaying = false;
+            updateOdPlayBtn();
+            clearInterval(odSaveTimer);
+            // Mark as listened
+            const id = odCurrentItem.id;
+            fetch(`${API_BASE}/api/ondemand/state`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ item_id: id, listened: true, position_s: 0 })
+            }).then(() => {
+                const idx = odItems.findIndex(i => i.id === id);
+                if (idx >= 0) { odItems[idx].listened = true; odItems[idx].position_s = 0; }
+                renderOdList();
+            }).catch(() => {});
+        });
+
+        audio.addEventListener('pause', () => {
+            if (currentMode !== 'ondemand') return;
+            odIsPlaying = false;
+            updateOdPlayBtn();
+        });
+        audio.addEventListener('play', () => {
+            if (currentMode !== 'ondemand') return;
+            odIsPlaying = true;
+            updateOdPlayBtn();
+        });
+
+        // Scrub bar
+        odScrub.addEventListener('mousedown', () => { odScrubbing = true; });
+        odScrub.addEventListener('touchstart', () => { odScrubbing = true; });
+        odScrub.addEventListener('input', () => {
+            odTimeCurrent.textContent = fmtTime(parseFloat(odScrub.value));
+        });
+        odScrub.addEventListener('change', () => {
+            audio.currentTime = parseFloat(odScrub.value);
+            odScrubbing = false;
+            odSavePosition();
+        });
+        odScrub.addEventListener('mouseup', () => { odScrubbing = false; });
+        odScrub.addEventListener('touchend', () => { odScrubbing = false; });
+
+        // Play/pause button
+        odPlayBtn.addEventListener('click', () => {
+            if (!odCurrentItem) return;
+            if (odIsPlaying) { odPause(); } else { odResume(); }
+        });
+
+        // RR / FF
+        odRR.addEventListener('click', () => { if (audio.src) audio.currentTime = Math.max(0, audio.currentTime - 15); });
+        odFF.addEventListener('click', () => { if (audio.src) audio.currentTime = audio.currentTime + 30; });
+    </script>
+</body>
+</html>

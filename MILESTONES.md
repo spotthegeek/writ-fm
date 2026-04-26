@@ -1,76 +1,108 @@
 # WRIT-FM Milestones
 
-## Current Snapshot (2026-04-12)
+## Current Snapshot (2026-04-26, updated)
 
-- Milestone 3 is complete in the admin/runtime path.
-- Milestone 4 is complete for managed segment definitions and Kokoro-backed multi-voice generation.
-- Milestones 1, 2, and 5 remain open.
+- Milestone 3 is complete.
+- Milestone 4 is complete with follow-up polish still available.
+- Milestone 1 is in progress — scheduler reliability improved (failure backoff, HF_TOKEN, streaming jobs).
+- Milestone 2 has started indirectly through config management, but key quality work remains open.
+- Milestone 5 has not started.
+- The architecture simplification effort is now active, not just planned.
+- Admin UI and listener app have received significant UX polish (structured logs, progress bars, grouped library, favicon, project structure cleanup).
 
 ## Milestone 1 — Pipeline Completeness
 
-Status: In progress, intentionally deferred.
+Status: In progress.
+
+Delivered so far:
+
+- End-to-end station stack is running from one repo
+- Scheduler-driven inventory generation exists
+- Google TTS support landed
+- Shared voice/default helpers and regression tests now cover several production bugs
 
 Open work:
-- Push git remote / latest local milestone work
-- Fully wire `WRIT_TTS_BACKEND=minimax` routing throughout talk generation
-- Add MiniMax emotion/sound markers (`[laugh]`, `[sigh]`, etc.) to prompts
-- Seed bumper inventory for shows that still have none
-- Flip `WRIT_CONSUME_SEGMENTS=1` in production and tune per-show lifecycle rules
+
+- Finish MiniMax routing and validation across all talk-generation paths
+- Add MiniMax emotion/sound markers where useful
+- Seed or verify bumper inventory for all scheduled shows
+- Flip `WRIT_CONSUME_SEGMENTS=1` in production once lifecycle replenishment is trusted
+- Clean up scheduler failure handling so retries happen correctly
 
 ## Milestone 2 — Generation Quality
 
-Status: Not started.
+Status: In progress.
+
+Delivered so far:
+
+- Segment types are managed in config/admin
+- Source-aware generation exists for Reddit, YouTube, and web inputs
+- Station taxonomy exists in `config/show_taxonomy.yaml`
 
 Open work:
-- Wire `bumper_style` from `schedule.yaml` into music bumper caption selection
-- Make topic pool contents editable in config/admin instead of hardcoded in `talk_generator.py`
+
+- Wire `bumper_style` into music bumper prompt selection
+- Make topic-pool contents editable in config/admin instead of hardcoded
+- Tune default prompt templates against actual on-air output
+- Expand source-rule-driven scheduled generation behavior
 
 ## Milestone 3 — Hosts & Voices Management
 
 Status: Complete.
 
 Delivered:
+
 - Global host roster in `config/hosts.yaml`
-- Dedicated Hosts tab in admin UI with CRUD
-- Cached voice samples with play/stop audition buttons, plus split `Hosts & Speakers` / `Voices` admin sub-tabs
-- Show host assignment from roster instead of ad hoc inline-only data
-- Kokoro and MiniMax voice preview in admin
-- Schedule/runtime normalization so roster-backed host assignments flow into generation
-- Fixes for lifecycle persistence and invalid custom-host saves
+- Dedicated Hosts UI with CRUD
+- Cached voice samples with audition controls
+- Per-backend voice defaults handled in shared helpers
+- Roster-backed voice resolution covered by tests
+- Google, Kokoro, and MiniMax voice-selection paths represented in admin/runtime
 
-## Milestone 4 — Segment Type Management
+## Milestone 4 — Segment Type And Source Management
 
-Status: Complete, with one MiniMax caveat.
+Status: Complete, with follow-up caveats.
 
 Delivered:
-- Managed segment type registry in `config/segment_types.yaml`
-- Dedicated Segment Types admin tab with CRUD
-- Show modal segment type picker driven from the managed registry
-- Generator prompt templates and word counts loaded from managed segment definitions
-- Multi-voice flag controls generation behavior instead of hardcoded `panel`/`interview` checks
-- Multi-host prompt wiring for panel/interview generation
-- Station Settings now manage global station name and timezone
-- Source-aware manual generation for web URLs and Reddit threads/subreddits
-- `reddit_storytelling` and `reddit_post` Reddit segment types with story-aware routing for narrative subreddits
-- `youtube` source ingest with `yt-dlp` direct audio capture and stored metadata/captions
-- Manual generation `Include topic` toggle and `--no-topic` CLI support for intro/outro/station IDs
-- Station-time alignment for admin logs, scheduler, generator metadata, and now-playing timestamps
 
-Caveat:
-- MiniMax multi-voice rendering still falls back to the primary voice. Kokoro multi-voice is fully wired.
+- Managed segment type registry in `config/segment_types.yaml`
+- Segment Types UI with CRUD
+- Prompt templates and word counts loaded from managed config
+- Multi-voice behavior driven by segment metadata
+- Source-aware manual generation for web, Reddit, and YouTube
+- `reddit_storytelling`, `reddit_post`, and `youtube` segment types
+- Station Settings for station name and timezone
+- Scheduler-side generate-now actions
+
+Caveats:
+
+- MiniMax multi-voice still falls back to a primary-voice path
+- Legacy flattened show fields still exist alongside canonical `hosts[]` assignments
 
 ## Milestone 5 — Live Show Control
 
 Status: Not started.
 
 Open work:
-- Live queue view: current + next N items
+
+- Live queue view
 - Skip current audio
 - Reorder upcoming queue
-- Inject a specific file to the front of the queue
-- Richer IPC between admin and streamer
+- Inject specific library items into the queue
+- Richer admin-to-streamer IPC
 
-## Out of Scope For Now
+## Parallel Track — Architecture Simplification
 
-- ACE-Step local music generation unless cloud costs justify the extra setup
-- Automated MiniMax cost monitoring
+Status: In progress.
+
+Delivered:
+
+- Initial shared modules in `shared/`
+- Test coverage for several previously regressed behaviors
+- Updated plan in `docs/plans/2026-04-23-architecture-simplification-plan.md`
+
+Next:
+
+- Finish canonical schedule/host schema migration
+- Centralize more defaults and runtime settings
+- Reduce `mac/`-specific imports and script entrypoints

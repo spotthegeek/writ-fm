@@ -50,6 +50,8 @@ CADENCE_SECONDS = {
     "monthly":    2592000,
 }
 
+FAILURE_BACKOFF_SECONDS = 1800  # 30 min cooldown after a failed generation
+
 DEFAULT_TALK_CONFIG = {
     "enabled": False,
     "min_inventory": 5,
@@ -104,11 +106,12 @@ class SchedulerState:
         self.running = False
         self.last_check: datetime | None = None
         self.last_run_per_show: dict[str, dict] = {}  # show_id → {talk: dt, music: dt}
+        self.last_failure_per_show: dict[str, dict] = {}  # show_id → {talk: dt, music: dt}
         self.log: list[dict] = []  # recent activity log, newest first
         self.active_jobs: dict[str, dict] = {}  # job_id → info
         self.recent_jobs: list[dict] = []  # recent job history, newest first
 
-    def add_log(self, show_id: str, content_type: str, msg: str, level: str = "info"):
+    def add_log(self, show_id: str, content_type: str, msg: str, level: str = "info", job_id: str | None = None):
         entry = {
             "ts": _station_now().strftime("%Y-%m-%d %H:%M:%S"),
             "show_id": show_id,
@@ -116,6 +119,8 @@ class SchedulerState:
             "msg": msg,
             "level": level,
         }
+        if job_id:
+            entry["job_id"] = job_id
         with self._lock:
             self.log.insert(0, entry)
             self.log = self.log[:200]  # keep last 200 entries
@@ -131,9 +136,25 @@ class SchedulerState:
                 self.last_run_per_show[show_id] = {}
             self.last_run_per_show[show_id][content_type] = _station_now()
 
+    def record_failure(self, show_id: str, content_type: str):
+        with self._lock:
+            if show_id not in self.last_failure_per_show:
+                self.last_failure_per_show[show_id] = {}
+            self.last_failure_per_show[show_id][content_type] = _station_now()
+
     def last_run(self, show_id: str, content_type: str) -> datetime | None:
         with self._lock:
             return self.last_run_per_show.get(show_id, {}).get(content_type)
+
+    def last_failure(self, show_id: str, content_type: str) -> datetime | None:
+        with self._lock:
+            return self.last_failure_per_show.get(show_id, {}).get(content_type)
+
+    def in_failure_backoff(self, show_id: str, content_type: str) -> bool:
+        fail_time = self.last_failure(show_id, content_type)
+        if fail_time is None:
+            return False
+        return (_station_now() - fail_time).total_seconds() < FAILURE_BACKOFF_SECONDS
 
     def snapshot(self) -> dict:
         with self._lock:
@@ -143,6 +164,10 @@ class SchedulerState:
                 "last_run_per_show": {
                     sid: {ct: dt.isoformat() for ct, dt in runs.items()}
                     for sid, runs in self.last_run_per_show.items()
+                },
+                "last_failure_per_show": {
+                    sid: {ct: dt.isoformat() for ct, dt in fails.items()}
+                    for sid, fails in self.last_failure_per_show.items()
                 },
                 "active_jobs": dict(self.active_jobs),
                 "recent_jobs": list(self.recent_jobs[:20]),
@@ -204,7 +229,7 @@ def _resolve_show_key(shows: dict, show_id: str) -> tuple[str | None, dict | Non
 
 
 def _build_generation_env() -> dict:
-    return {
+    env = {
         "OLLAMA_URL": ollama_url(),
         "OLLAMA_MODEL": ollama_model(),
         "MINIMAX_API_KEY": os.environ.get("MINIMAX_API_KEY", ""),
@@ -212,37 +237,63 @@ def _build_generation_env() -> dict:
         "MINIMAX_MUSIC_MODEL": minimax_music_model(),
         "WRIT_CONSUME_SEGMENTS": os.environ.get("WRIT_CONSUME_SEGMENTS", "1"),
     }
+    hf_token = os.environ.get("HF_TOKEN", "")
+    if hf_token:
+        env["HF_TOKEN"] = hf_token
+    return env
 
 
-def _run_talk_generation(show_id: str, count: int, job_registry: dict, env: dict, cache_invalidator: Callable[[str | None], None] | None = None):
+def _run_talk_generation(show_id: str, count: int, job_registry: dict, env: dict, cache_invalidator: Callable[[str | None], None] | None = None, job_id: str | None = None):
     """Generate talk segments for a show in a background thread."""
     gen_script = PROJECT_ROOT / "mac" / "content_generator" / "talk_generator.py"
     cmd = [str(VENV_PYTHON), str(gen_script), "--show", show_id, "--count", str(count)]
-    job_id = f"sched-talk-{show_id}-{int(time.time())}"
-    state.add_log(show_id, "talk", f"Generating {count} segment(s) (job {job_id})")
+    if job_id is None:
+        job_id = f"sched-talk-{show_id}-{int(time.time())}"
+    state.add_log(show_id, "talk", f"Generating {count} segment(s) (job {job_id})", job_id=job_id)
     state.active_jobs[job_id] = {"show_id": show_id, "type": "talk", "count": count,
                                   "started": _station_now().isoformat(), "status": "running"}
 
+    def _jlog(msg: str):
+        ts = _station_now().strftime("%H:%M:%S")
+        line = f"[{ts}] {msg}"
+        if job_id in job_registry:
+            job_registry[job_id]["log"].append(line)
+        print(line)
+
+    if job_id not in job_registry:
+        job_registry[job_id] = {
+            "id": job_id, "show_id": show_id, "content_type": "talk",
+            "segment_type": "scheduled", "source": "scheduler",
+            "status": "running", "log": [],
+            "created_at": _station_now().isoformat(), "completed_at": None,
+        }
+    _jlog(f"Starting: show={show_id} count={count}")
+
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
-            capture_output=True, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True,
             env={**os.environ, **env},
             cwd=str(PROJECT_ROOT / "mac" / "content_generator"),
-            timeout=1800,
         )
+        for line in proc.stdout:
+            line = line.rstrip()
+            if line:
+                _jlog(line)
+        proc.wait(timeout=1800)
         if proc.returncode == 0:
-            state.add_log(show_id, "talk", f"Generation complete ({count} requested)")
+            state.add_log(show_id, "talk", f"Generation complete ({count} requested)", job_id=job_id)
             final_status = "completed"
         else:
-            details = _summarize_process_failure(proc.stderr, proc.stdout)
-            state.add_log(show_id, "talk", f"Generation failed: {details}", "error")
+            state.add_log(show_id, "talk", f"Generation failed (exit {proc.returncode})", "error", job_id=job_id)
             final_status = "failed"
     except subprocess.TimeoutExpired:
-        state.add_log(show_id, "talk", "Generation timed out", "error")
+        proc.kill()
+        state.add_log(show_id, "talk", "Generation timed out", "error", job_id=job_id)
         final_status = "timeout"
     except Exception as e:
-        state.add_log(show_id, "talk", f"Error: {e}", "error")
+        state.add_log(show_id, "talk", f"Error: {e}", "error", job_id=job_id)
         final_status = "error"
     finally:
         state.active_jobs[job_id]["status"] = final_status
@@ -256,14 +307,18 @@ def _run_talk_generation(show_id: str, count: int, job_registry: dict, env: dict
                 state.recent_jobs = state.recent_jobs[:20]
         state.active_jobs.pop(job_id, None)
 
+    _jlog(f"Generation {'complete' if final_status == 'completed' else final_status}.")
     state.record_run(show_id, "talk")
+    if final_status in ("failed", "error", "timeout"):
+        state.record_failure(show_id, "talk")
     if job_id in job_registry:
         job_registry[job_id]["status"] = final_status
+        job_registry[job_id]["completed_at"] = _station_now().isoformat()
     if final_status == "completed" and cache_invalidator:
         cache_invalidator("segments")
 
 
-def _run_music_generation(show_id: str, count: int, bumper_style: str, job_registry: dict, env: dict, cache_invalidator: Callable[[str | None], None] | None = None):
+def _run_music_generation(show_id: str, count: int, bumper_style: str, job_registry: dict, env: dict, cache_invalidator: Callable[[str | None], None] | None = None, job_id: str | None = None):
     """Generate music bumpers for a show in a background thread."""
     gen_script = PROJECT_ROOT / "mac" / "content_generator" / "music_bumper_generator.py"
     if not gen_script.exists():
@@ -271,28 +326,53 @@ def _run_music_generation(show_id: str, count: int, bumper_style: str, job_regis
         return
 
     cmd = [str(VENV_PYTHON), str(gen_script), "--show", show_id, "--count", str(count)]
-    job_id = f"sched-music-{show_id}-{int(time.time())}"
-    state.add_log(show_id, "music", f"Generating {count} bumper(s) (job {job_id})")
+    if job_id is None:
+        job_id = f"sched-music-{show_id}-{int(time.time())}"
+    state.add_log(show_id, "music", f"Generating {count} bumper(s) (job {job_id})", job_id=job_id)
     state.active_jobs[job_id] = {"show_id": show_id, "type": "music", "count": count,
                                   "started": _station_now().isoformat(), "status": "running"}
 
+    def _jlog(msg: str):
+        ts = _station_now().strftime("%H:%M:%S")
+        line = f"[{ts}] {msg}"
+        if job_id in job_registry:
+            job_registry[job_id]["log"].append(line)
+        print(line)
+
+    if job_id not in job_registry:
+        job_registry[job_id] = {
+            "id": job_id, "show_id": show_id, "content_type": "music",
+            "segment_type": "scheduled", "source": "scheduler",
+            "status": "running", "log": [],
+            "created_at": _station_now().isoformat(), "completed_at": None,
+        }
+    _jlog(f"Starting: show={show_id} count={count}")
+
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
-            capture_output=True, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True,
             env={**os.environ, **env},
             cwd=str(PROJECT_ROOT / "mac" / "content_generator"),
-            timeout=3600,
         )
+        for line in proc.stdout:
+            line = line.rstrip()
+            if line:
+                _jlog(line)
+        proc.wait(timeout=3600)
         if proc.returncode == 0:
-            state.add_log(show_id, "music", f"Bumper generation complete")
+            state.add_log(show_id, "music", "Bumper generation complete", job_id=job_id)
             final_status = "completed"
         else:
-            details = _summarize_process_failure(proc.stderr, proc.stdout)
-            state.add_log(show_id, "music", f"Bumper generation failed: {details}", "error")
+            state.add_log(show_id, "music", f"Bumper generation failed (exit {proc.returncode})", "error", job_id=job_id)
             final_status = "failed"
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        state.add_log(show_id, "music", "Bumper generation timed out", "error", job_id=job_id)
+        final_status = "timeout"
     except Exception as e:
-        state.add_log(show_id, "music", f"Error: {e}", "error")
+        state.add_log(show_id, "music", f"Error: {e}", "error", job_id=job_id)
         final_status = "error"
     finally:
         state.active_jobs[job_id]["status"] = final_status
@@ -306,7 +386,13 @@ def _run_music_generation(show_id: str, count: int, bumper_style: str, job_regis
                 state.recent_jobs = state.recent_jobs[:20]
         state.active_jobs.pop(job_id, None)
 
+    _jlog(f"Generation {'complete' if final_status == 'completed' else final_status}.")
     state.record_run(show_id, "music")
+    if final_status in ("failed", "error", "timeout"):
+        state.record_failure(show_id, "music")
+    if job_id in job_registry:
+        job_registry[job_id]["status"] = final_status
+        job_registry[job_id]["completed_at"] = _station_now().isoformat()
     if final_status == "completed" and cache_invalidator:
         cache_invalidator("bumpers")
 
@@ -320,14 +406,7 @@ def _check_and_generate(job_registry: dict):
         return
 
     shows = data.get("shows", {})
-    env = {
-        "OLLAMA_URL": ollama_url(),
-        "OLLAMA_MODEL": ollama_model(),
-        "MINIMAX_API_KEY": os.environ.get("MINIMAX_API_KEY", ""),
-        "MINIMAX_TOKEN_PLAN_API_KEY": os.environ.get("MINIMAX_TOKEN_PLAN_API_KEY", ""),
-        "MINIMAX_MUSIC_MODEL": minimax_music_model(),
-        "WRIT_CONSUME_SEGMENTS": os.environ.get("WRIT_CONSUME_SEGMENTS", "1"),
-    }
+    env = _build_generation_env()
 
     for show_id, show in shows.items():
         gen_cfg = show.get("generation", {})
@@ -335,6 +414,9 @@ def _check_and_generate(job_registry: dict):
         # ── Talk segments ──────────────────────────────────────────
         talk_cfg = {**DEFAULT_TALK_CONFIG, **(gen_cfg.get("talk") or {})}
         if talk_cfg["enabled"]:
+            if state.in_failure_backoff(show_id, "talk"):
+                continue
+
             # Skip if a generation job is already running for this show
             already_running = any(
                 j.get("show_id") == show_id and j.get("type") == "talk"
@@ -344,8 +426,8 @@ def _check_and_generate(job_registry: dict):
                 continue
 
             inventory = _count_inventory(TALK_DIR, show_id)
-            target = talk_cfg["target_inventory"]
-            minimum = talk_cfg["min_inventory"]
+            target = int(talk_cfg["target_inventory"])
+            minimum = int(talk_cfg["min_inventory"])
 
             if inventory < minimum and _cadence_ok(show_id, "talk", talk_cfg["cadence"]):
                 needed = target - inventory
@@ -361,6 +443,9 @@ def _check_and_generate(job_registry: dict):
         # ── Music bumpers ──────────────────────────────────────────
         music_cfg = {**DEFAULT_MUSIC_CONFIG, **(gen_cfg.get("music") or {})}
         if music_cfg["enabled"]:
+            if state.in_failure_backoff(show_id, "music"):
+                continue
+
             already_running = any(
                 j.get("show_id") == show_id and j.get("type") == "music"
                 for j in state.active_jobs.values()
@@ -369,8 +454,8 @@ def _check_and_generate(job_registry: dict):
                 continue
 
             inventory = _count_inventory(BUMPERS_DIR, show_id)
-            target = music_cfg["target_inventory"]
-            minimum = music_cfg["min_inventory"]
+            target = int(music_cfg["target_inventory"])
+            minimum = int(music_cfg["min_inventory"])
 
             if inventory < minimum and _cadence_ok(show_id, "music", music_cfg["cadence"]):
                 needed = target - inventory
@@ -423,56 +508,72 @@ def start_scheduler(
     return t
 
 
-def trigger_now(show_id: str, content_type: str, job_registry: dict) -> str:
-    """Manually trigger generation for a show immediately, bypassing cadence check."""
+def trigger_now(show_id: str, content_type: str, job_registry: dict) -> dict:
+    """Manually trigger generation for a show immediately, bypassing cadence check.
+
+    Returns a dict with keys: message, job_id (or job_ids for "all").
+    """
     try:
         data = _load_schedule()
     except Exception as e:
-        return f"Failed to load schedule: {e}"
+        return {"message": f"Failed to load schedule: {e}", "job_id": None}
 
     show_key, show = _resolve_show_key(data.get("shows", {}), show_id)
     if not show:
-        return f"Show '{show_id}' not found"
+        return {"message": f"Show '{show_id}' not found", "job_id": None}
     show_id = show_key or show_id
 
     talk_cfg, music_cfg = _effective_generation_configs(show)
     env = _build_generation_env()
 
-    def _trigger_talk(needed_override: int | None = None) -> str:
+    def _trigger_talk(needed_override: int | None = None) -> tuple[str, str]:
         inventory = _count_inventory(TALK_DIR, show_id)
-        needed = max(1, needed_override if needed_override is not None else talk_cfg["target_inventory"] - inventory)
-        state.add_log(show_id, "talk", "Manual trigger requested")
+        needed = max(1, needed_override if needed_override is not None else int(talk_cfg["target_inventory"]) - inventory)
+        jid = f"sched-talk-{show_id}-{int(time.time())}"
+        job_registry[jid] = {
+            "id": jid, "show_id": show_id, "content_type": "talk",
+            "segment_type": "scheduled", "source": "scheduler",
+            "status": "running", "log": [],
+            "created_at": _station_now().isoformat(), "completed_at": None,
+        }
+        state.add_log(show_id, "talk", "Manual trigger requested", job_id=jid)
         t = threading.Thread(
             target=_run_talk_generation,
-            args=(show_id, needed, job_registry, env, _inventory_invalidator),
+            args=(show_id, needed, job_registry, env, _inventory_invalidator, jid),
             daemon=True,
         )
         t.start()
-        return f"talk ({needed} segments)"
+        return f"talk ({needed} segments)", jid
 
-    def _trigger_music(needed_override: int | None = None) -> str:
+    def _trigger_music(needed_override: int | None = None) -> tuple[str, str]:
         inventory = _count_inventory(BUMPERS_DIR, show_id)
-        needed = max(1, needed_override if needed_override is not None else music_cfg["target_inventory"] - inventory)
+        needed = max(1, needed_override if needed_override is not None else int(music_cfg["target_inventory"]) - inventory)
         bumper_style = show.get("bumper_style", "ambient")
-        state.add_log(show_id, "music", "Manual trigger requested")
+        jid = f"sched-music-{show_id}-{int(time.time())}"
+        job_registry[jid] = {
+            "id": jid, "show_id": show_id, "content_type": "music",
+            "segment_type": "scheduled", "source": "scheduler",
+            "status": "running", "log": [],
+            "created_at": _station_now().isoformat(), "completed_at": None,
+        }
+        state.add_log(show_id, "music", "Manual trigger requested", job_id=jid)
         t = threading.Thread(
             target=_run_music_generation,
-            args=(show_id, needed, bumper_style, job_registry, env, _inventory_invalidator),
+            args=(show_id, needed, bumper_style, job_registry, env, _inventory_invalidator, jid),
             daemon=True,
         )
         t.start()
-        return f"music ({needed} bumpers)"
+        return f"music ({needed} bumpers)", jid
 
     if content_type == "talk":
-        return f"Triggered {_trigger_talk(1)} for {show_id}"
+        desc, jid = _trigger_talk(1)
+        return {"message": f"Triggered {desc} for {show_id}", "job_id": jid}
     elif content_type == "music":
-        return f"Triggered {_trigger_music(1)} for {show_id}"
+        desc, jid = _trigger_music(1)
+        return {"message": f"Triggered {desc} for {show_id}", "job_id": jid}
     elif content_type in {"show", "all"}:
-        parts = []
-        parts.append(_trigger_talk())
-        parts.append(_trigger_music())
-        if not parts:
-            return f"No enabled generators configured for {show_id}"
-        return f"Triggered {', '.join(parts)} for {show_id}"
+        t_desc, t_jid = _trigger_talk()
+        m_desc, m_jid = _trigger_music()
+        return {"message": f"Triggered {t_desc}, {m_desc} for {show_id}", "job_ids": [t_jid, m_jid], "job_id": t_jid}
 
-    return f"Unknown content type: {content_type}"
+    return {"message": f"Unknown content type: {content_type}", "job_id": None}
