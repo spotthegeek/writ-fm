@@ -26,13 +26,14 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form, Header
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import scheduler as _sched
-from mac.schedule import (
+from station.schedule import (
     ScheduleError as StationScheduleError,
     load_schedule as validate_station_schedule,
     merge_playback_sequence,
@@ -77,7 +78,7 @@ _inventory_cache: dict[str, dict[str, Any]] = {
     "bumpers": {"ts": 0.0, "value": {}},
 }
 
-from mac.voice_samples import (
+from station.voice_samples import (
     KOKORO_VOICES,
     MINIMAX_VOICES,
     ensure_voice_sample,
@@ -121,13 +122,15 @@ _jobs: dict[str, dict] = _load_jobs()
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
-app = FastAPI(title="Station Admin", version="1.0")
-
-@app.on_event("startup")
-def _start_scheduler():
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
     check_interval = int(os.environ.get("WRIT_SCHEDULER_INTERVAL", "300"))
     _sched.start_scheduler(_jobs, check_interval=check_interval, cache_invalidator=_invalidate_inventory_cache)
     print(f"[admin] Scheduler started (interval={check_interval}s)")
+    yield
+
+
+app = FastAPI(title="Station Admin", version="1.0", lifespan=_lifespan)
 
 STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
@@ -267,10 +270,9 @@ def _hosts_yaml_to_api(hid: str, h: dict) -> dict:
 def get_hosts_from_persona() -> dict[str, dict]:
     """Read host definitions from persona.py."""
     try:
-        sys.path.insert(0, str(PROJECT_ROOT / "mac" / "content_generator"))
         import importlib
-        import persona
-        importlib.reload(persona)
+        import station.content_generator.persona as _persona
+        importlib.reload(_persona)
         return {
             hid: {
                 "id": hid,
@@ -282,7 +284,7 @@ def get_hosts_from_persona() -> dict[str, dict]:
                 "speaking_pace_wpm_minimax": h.get("speaking_pace_wpm_minimax", h.get("speaking_pace_wpm", 130)),
                 "speaking_pace_wpm_google": h.get("speaking_pace_wpm_google", h.get("speaking_pace_wpm", 130)),
         }
-            for hid, h in persona.HOSTS.items()
+            for hid, h in _persona.HOSTS.items()
         }
     except Exception as e:
         return {}
@@ -1507,7 +1509,7 @@ def tts_preview(body: dict, background_tasks: BackgroundTasks):
 
     if backend == "kokoro":
         spec = importlib.util.spec_from_file_location(
-            "kokoro_tts", PROJECT_ROOT / "mac" / "kokoro" / "tts.py"
+            "kokoro_tts", PROJECT_ROOT / "station" / "kokoro" / "tts.py"
         )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -1527,7 +1529,7 @@ def tts_preview(body: dict, background_tasks: BackgroundTasks):
             raise HTTPException(503, "MINIMAX_API_KEY not set")
 
         spec = importlib.util.spec_from_file_location(
-            "minimax_tts", PROJECT_ROOT / "mac" / "minimax_tts.py"
+            "minimax_tts", PROJECT_ROOT / "station" / "minimax_tts.py"
         )
         mod = importlib.util.module_from_spec(spec)
         # Inject env so the module picks up the key at load time
@@ -1548,7 +1550,7 @@ def tts_preview(body: dict, background_tasks: BackgroundTasks):
             raise HTTPException(503, "GOOGLE_TTS_API_KEY or GEMINI_API_KEY not set")
 
         spec = importlib.util.spec_from_file_location(
-            "google_tts", PROJECT_ROOT / "mac" / "google_tts.py"
+            "google_tts", PROJECT_ROOT / "station" / "google_tts.py"
         )
         mod = importlib.util.module_from_spec(spec)
         os.environ["GOOGLE_TTS_API_KEY"] = api_key
@@ -1965,7 +1967,7 @@ def _run_generation_job(job_id: str, req: GenerateRequest):
 
         # Build command
         if req.content_type == "music":
-            gen_script = PROJECT_ROOT / "mac" / "content_generator" / "music_bumper_generator.py"
+            gen_script = PROJECT_ROOT / "station" / "content_generator" / "music_bumper_generator.py"
             if not gen_script.exists():
                 _log_job(job_id, "ERROR: music_bumper_generator.py not found")
                 _jobs[job_id]["status"] = "failed"
@@ -1980,7 +1982,7 @@ def _run_generation_job(job_id: str, req: GenerateRequest):
             _log_job(job_id, f"Generating {req.count} music bumper(s) for {req.show_id}"
                      + (f" — custom: {req.topic[:60]}" if req.topic else " — random from pool"))
         else:
-            gen_script = PROJECT_ROOT / "mac" / "content_generator" / "talk_generator.py"
+            gen_script = PROJECT_ROOT / "station" / "content_generator" / "talk_generator.py"
             cmd = [str(VENV_PYTHON), str(gen_script),
                    "--show", req.show_id,
                    "--count", str(req.count)]
@@ -2041,7 +2043,7 @@ def _run_generation_job(job_id: str, req: GenerateRequest):
             stderr=subprocess.STDOUT,
             text=True,
             env=env,
-            cwd=str(PROJECT_ROOT / "mac" / "content_generator"),
+            cwd=str(PROJECT_ROOT / "station" / "content_generator"),
         )
 
         for line in proc.stdout:
@@ -2218,8 +2220,7 @@ def update_generation_config(show_id: str, config: GenerationConfig):
 # API: On-Demand Content
 # ---------------------------------------------------------------------------
 
-sys.path.insert(0, str(PROJECT_ROOT / "mac"))
-from ondemand import (
+from station.ondemand import (
     load_config as _od_load_config,
     save_config as _od_save_config,
     get_inventory as _od_get_inventory,

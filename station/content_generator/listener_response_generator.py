@@ -26,14 +26,12 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-
 import os
 # Ensure Claude CLI can run (may be blocked inside a Claude Code session)
 os.environ.pop("CLAUDECODE", None)
 
-from helpers import log, preprocess_for_tts, run_claude
-from persona import build_host_prompt, get_host, STATION_NAME
+from station.content_generator.helpers import log, preprocess_for_tts, run_claude
+from station.content_generator.persona import build_host_prompt, get_host, STATION_NAME
 from shared.hosts import assignment_voice, primary_host_assignment
 from shared.settings import default_voice_for_backend
 
@@ -43,9 +41,8 @@ OUTPUT_DIR = PROJECT_ROOT / "output" / "talk_segments"
 SCRIPTS_DIR = PROJECT_ROOT / "output" / "scripts"
 MESSAGES_FILE = Path.home() / ".writ" / "messages.json"
 
-sys.path.insert(0, str(PROJECT_ROOT / "mac"))
-from schedule import load_schedule
-from time_utils import station_now, station_iso_now
+from station.schedule import load_schedule
+from station.time_utils import station_now, station_iso_now
 
 # Short segments for quick turnaround
 WORD_TARGET_SINGLE = (100, 200)   # One message: short personal reply
@@ -183,7 +180,7 @@ Guidelines:
 # =============================================================================
 
 
-from talk_generator import render_single_voice, get_duration
+from station.content_generator.talk_generator import render_single_voice, get_duration
 
 # =============================================================================
 # MAIN PIPELINE

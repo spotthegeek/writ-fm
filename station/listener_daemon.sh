@@ -35,7 +35,7 @@ except: print(0)
     if [ "$UNREAD" -gt 0 ] 2>/dev/null; then
         echo "[listener-daemon $(ts)] $UNREAD unread message(s) — generating response..."
         cd "$RADIO_DIR"
-        uv run python mac/content_generator/listener_response_generator.py
+        uv run python station/content_generator/listener_response_generator.py
         echo "[listener-daemon $(ts)] Done."
     fi
 

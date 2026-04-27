@@ -11,7 +11,7 @@ Setup:
     uv pip install kokoro soundfile
 
 Usage:
-    from mac.kokoro.tts import render_speech
+    from station.kokoro.tts import render_speech
     render_speech("Hello world", Path("output.wav"), voice="af_heart")
 
 Available voices:

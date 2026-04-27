@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """MiniMax music-2.6 client for WRIT-FM bumper generation.
 
-Replaces the previous ACE-Step (localhost:4009) integration.
 API: POST https://api.minimax.io/v1/music_generation
 Returns hex-encoded MP3 audio (~130s per generation).
 """
@@ -18,12 +17,9 @@ from shared.settings import minimax_music_model
 MINIMAX_BASE_URL = "https://api.minimax.io/v1"
 MINIMAX_MODEL = minimax_music_model()
 
-# Legacy env var kept for health-check callers that test server availability.
-MUSIC_GEN_BASE_URL = os.environ.get("MUSIC_GEN_URL", "http://localhost:4009")
 
-
-def is_server_available(base_url: str = MUSIC_GEN_BASE_URL, timeout: float = 2.0) -> bool:
-    """Check if music generation is available. For MiniMax, just verify API key is set."""
+def is_server_available() -> bool:
+    """Check if music generation is available (MiniMax API key is set)."""
     return bool(_music_api_key())
 
 
@@ -44,25 +40,12 @@ def generate_music(
     instrumental: bool = True,
     lyrics: str = "[Instrumental]",
     guidance_scale: float = 0.0,
-    base_url: str = MUSIC_GEN_BASE_URL,
     timeout: float = 300.0,
 ) -> bool:
     """Generate music via MiniMax music-2.6 and save to output_path.
 
-    Args:
-        caption: Text description of music style/mood (used as prompt).
-        output_path: Where to save the generated audio file (.mp3).
-        duration: Ignored — MiniMax generates ~130s tracks regardless.
-        audio_format: Ignored — MiniMax always returns MP3.
-        seed: Ignored — MiniMax does not support seeding.
-        instrumental: If True, no vocals generated.
-        lyrics: Lyrics text (used when instrumental=False).
-        guidance_scale: Ignored.
-        base_url: Ignored (legacy ACE-Step param).
-        timeout: HTTP request timeout in seconds.
-
-    Returns:
-        True if successful, False otherwise.
+    MiniMax always generates ~130s MP3 tracks; duration/audio_format/seed/guidance_scale are ignored.
+    Returns True if successful, False otherwise.
     """
     api_key = _music_api_key()
     if not api_key:

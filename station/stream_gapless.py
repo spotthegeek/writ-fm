@@ -30,15 +30,16 @@ except ImportError:
     HISTORY_ENABLED = False
 
 try:
-    from schedule import load_schedule, StationSchedule
+    from schedule import load_schedule, StationSchedule, merge_playback_sequence
     SCHEDULE_ENABLED = True
 except ImportError:
     SCHEDULE_ENABLED = False
+    def merge_playback_sequence(seq):  # type: ignore[misc]
+        return seq or {}
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT / "mac"))
-from time_utils import station_now, station_from_timestamp, station_iso_now
-import api_server as live_api
+from station.time_utils import station_now, station_from_timestamp, station_iso_now
+import station.api_server as live_api
 
 # Directories
 TALK_SEGMENTS_DIR = PROJECT_ROOT / "output" / "talk_segments"
@@ -62,6 +63,12 @@ ICECAST_STATUS_URL = os.environ.get(
     "ICECAST_STATUS_URL",
     f"http://{ICECAST_HOST}:{ICECAST_PORT}/status-json.xsl",
 )
+# Icecast sends burst_size bytes to each new listener on connect, creating a
+# ~5.5s buffer at 96 kbps.  Adding this to the reported segment duration keeps
+# the progress bar accurate for the listener's actual experience.
+_ICECAST_BURST_BYTES = 65536
+_ENCODER_BITRATE_KBPS = 96
+ICECAST_LISTENER_LATENCY = _ICECAST_BURST_BYTES / (_ENCODER_BITRATE_KBPS * 125)  # ≈ 5.46 s
 
 # =============================================================================
 # RUNTIME STATE
@@ -243,10 +250,44 @@ class ProgramContext:
     music_lifecycle: ContentLifecycle = field(default_factory=ContentLifecycle)
 
 
+def _build_program_context_for_show(station_schedule, show_id: str) -> ProgramContext:
+    """Build ProgramContext directly from a show definition (used for overrides)."""
+    show = station_schedule.shows[show_id]
+    return ProgramContext(
+        show_id=show.show_id,
+        show_name=show.name,
+        show_description=show.description,
+        host=show.host,
+        topic_focus=show.topic_focus,
+        segment_types=list(show.segment_types),
+        bumper_style=show.bumper_style,
+        voices=dict(show.voices),
+        playback_sequence=merge_playback_sequence(show.playback_sequence),
+        talk_lifecycle=_load_lifecycle(show.show_id, "talk"),
+        music_lifecycle=_load_lifecycle(show.show_id, "music"),
+    )
+
+
 def get_program_context(station_schedule=None) -> ProgramContext:
-    """Resolve the current show/program from the schedule."""
+    """Resolve the current show/program from the schedule, respecting any live override."""
     if station_schedule is None:
         raise RuntimeError("Station schedule is required")
+
+    override = live_api.get_live_override()
+    if override:
+        try:
+            end_at = datetime.fromisoformat(override["end_at"])
+            now = station_now()
+            if end_at.tzinfo is None and now.tzinfo is not None:
+                end_at = end_at.replace(tzinfo=now.tzinfo)
+            elif end_at.tzinfo is not None and now.tzinfo is not None:
+                end_at = end_at.astimezone(now.tzinfo)
+            if now < end_at and override["show_id"] in station_schedule.shows:
+                return _build_program_context_for_show(station_schedule, override["show_id"])
+        except Exception:
+            pass
+        # Expired or invalid — clear it
+        live_api.clear_live_override()
 
     resolved = station_schedule.resolve()
     return ProgramContext(
@@ -339,6 +380,7 @@ def update_now_playing(
     host: str | None = None,
     segment_type: str | None = None,
     caption: str | None = None,
+    duration: float | None = None,
 ):
     """Update current track info in-memory and write to disk for external sync."""
     new_info = {
@@ -350,6 +392,7 @@ def update_now_playing(
         "show": show_name,
         "timestamp": station_iso_now(),
         "listeners": get_listener_count(),
+        "duration": round(duration + ICECAST_LISTENER_LATENCY, 2) if duration else None,
     }
     if caption is not None:
         new_info["ai_generated"] = True
@@ -603,6 +646,20 @@ def _apply_live_command_to_queue(command: dict, talk_queue: list[Path], current_
                 talk_queue.insert(upcoming_start, candidate)
         return current_index
 
+    if action == "reorder":
+        order = command.get("order", [])  # list of filenames / paths in desired order
+        upcoming = talk_queue[upcoming_start:]
+        resolved: list[Path] = []
+        remaining = list(upcoming)
+        for ref_item in order:
+            for i, p in enumerate(remaining):
+                if p.name == ref_item or str(p) == ref_item:
+                    resolved.append(remaining.pop(i))
+                    break
+        resolved.extend(remaining)  # append any not in order list
+        talk_queue[upcoming_start:] = resolved
+        return current_index
+
     if action in {"move_up", "move_down", "move_top", "move_bottom", "remove"}:
         target = _resolve_queue_index(talk_queue, ref, upcoming_start)
         if target is None:
@@ -627,7 +684,7 @@ def _apply_live_command_to_queue(command: dict, talk_queue: list[Path], current_
 
 def _drain_live_commands() -> list[dict]:
     commands = []
-    movable = {"play_next", "insert_next", "enqueue_next", "add_next", "move_up", "move_down", "move_top", "move_bottom", "remove"}
+    movable = {"play_next", "insert_next", "enqueue_next", "add_next", "move_up", "move_down", "move_top", "move_bottom", "remove", "reorder"}
     while True:
         try:
             cmd = live_api.pop_live_command(movable)
@@ -1380,6 +1437,7 @@ def run():
                         show_name=ctx.show_name,
                         host=ctx.host,
                         segment_type=item_type,
+                        duration=get_track_duration(track),
                     )
                     status = pipe_track(
                         track,
@@ -1423,6 +1481,7 @@ def run():
                         show_id=ctx.show_id,
                         show_name=ctx.show_name,
                         caption=caption,
+                        duration=duration,
                     )
                     status = pipe_track(
                         track,
@@ -1476,8 +1535,11 @@ def run():
 
                 _publish_live_queue_state(ctx.show_id, ctx.show_name, ctx.host, main_segments, 0, display_queue=display_queue)
                 while running and encoder_proc.poll() is None and speak_index < len(main_segments):
-                    for cmd in _drain_live_commands():
+                    cmds = _drain_live_commands()
+                    for cmd in cmds:
                         speak_index = _apply_live_command_to_queue(cmd, main_segments, speak_index)
+                    if cmds:
+                        display_queue = _build_display_queue(intro_seg, main_segments, outro_seg, station_pool, sequence)
                     _publish_live_queue_state(ctx.show_id, ctx.show_name, ctx.host, main_segments, speak_index, display_queue=display_queue)
                     talk_seg = main_segments[speak_index]
                     if not running or encoder_proc.poll() is not None:
@@ -1592,6 +1654,7 @@ def run():
                         show_name=ctx.show_name,
                         host=None,
                         caption=bcaption,
+                        duration=bdur,
                     )
                     bumper_status = pipe_track(
                         bpath,
@@ -1620,6 +1683,7 @@ def run():
                             show_id=ctx.show_id,
                             show_name=ctx.show_name,
                             caption="Signal lost... awaiting data.",
+                            duration=get_track_duration(fallback_tone),
                         )
                         tone_status = pipe_track(
                             fallback_tone,

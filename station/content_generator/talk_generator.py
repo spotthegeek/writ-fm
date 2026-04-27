@@ -50,9 +50,7 @@ import urllib.error
 
 import yaml
 
-sys.path.insert(0, str(Path(__file__).parent))
-
-from helpers import log, preprocess_for_tts, fetch_headlines, format_headlines, run_claude
+from station.content_generator.helpers import log, preprocess_for_tts, fetch_headlines, format_headlines, run_claude
 
 warnings.filterwarnings(
     "ignore",
@@ -73,12 +71,9 @@ SCRIPTS_DIR = PROJECT_ROOT / "output" / "scripts"
 SOURCE_CACHE_DIR = PROJECT_ROOT / "output" / "source_cache"
 YOUTUBE_CACHE_DIR = SOURCE_CACHE_DIR / "youtube"
 
-sys.path.insert(0, str(PROJECT_ROOT / "mac"))
-from schedule import load_schedule, StationSchedule
-from time_utils import station_now, station_iso_now
-
-sys.path.insert(0, str(Path(__file__).parent))
-from persona import HOSTS, get_host, build_host_prompt, STATION_NAME
+from station.schedule import load_schedule, StationSchedule
+from station.time_utils import station_now, station_iso_now
+from station.content_generator.persona import HOSTS, get_host, build_host_prompt, STATION_NAME
 from shared.hosts import (
     assignment_voice as shared_assignment_voice,
     assignment_wpm as shared_assignment_wpm,
@@ -506,6 +501,82 @@ def _fetch_web_source(url: str) -> tuple[str, str]:
     return title, body
 
 
+def _fetch_rss_feed_items(
+    feed_url: str,
+    lookback_days: int = 1,
+    max_items: int = 8,
+) -> list[dict]:
+    """Fetch recent items from an RSS 2.0 or Atom feed using stdlib XML.
+    Returns list of {title, summary, link}. Fail-open: items with unparseable
+    dates pass through rather than being excluded."""
+    import xml.etree.ElementTree as ET
+    import email.utils
+
+    cutoff = time.time() - max(1, lookback_days) * 86400
+
+    try:
+        raw = _fetch_url(feed_url, timeout=10)
+        root = ET.fromstring(raw)
+    except Exception as exc:
+        log(f"RSS fetch failed for {feed_url}: {exc}")
+        return []
+
+    def _strip_ns(tag: str) -> str:
+        return tag.split("}", 1)[1] if "}" in tag else tag
+
+    def _child_text(elem, name: str) -> str:
+        for child in elem:
+            if _strip_ns(child.tag) == name and child.text:
+                return child.text.strip()
+        return ""
+
+    def _parse_date(s: str) -> float | None:
+        if not s:
+            return None
+        # RFC 2822 (RSS pubDate)
+        try:
+            return email.utils.parsedate_to_datetime(s).timestamp()
+        except Exception:
+            pass
+        # ISO 8601 (Atom published/updated)
+        for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z"):
+            try:
+                from datetime import datetime as _dt
+                return _dt.strptime(s[:25], fmt[:len(s[:25])]).timestamp()
+            except Exception:
+                continue
+        return None
+
+    items: list[dict] = []
+    for elem in root.iter():
+        if _strip_ns(elem.tag) not in ("item", "entry"):
+            continue
+        title = _child_text(elem, "title")
+        if not title:
+            continue
+        date_str = (
+            _child_text(elem, "pubDate")
+            or _child_text(elem, "published")
+            or _child_text(elem, "updated")
+        )
+        pub_ts = _parse_date(date_str)
+        if pub_ts is not None and pub_ts < cutoff:
+            continue
+        link = _child_text(elem, "link") or ""
+        if not link:
+            for child in elem:
+                if _strip_ns(child.tag) == "link":
+                    link = child.get("href", "")
+                    break
+        raw_summary = _child_text(elem, "description") or _child_text(elem, "summary") or ""
+        summary = re.sub(r"<[^>]+>", " ", raw_summary)
+        summary = re.sub(r"\s+", " ", summary).strip()[:400]
+        items.append({"title": _clean_text_block(title), "summary": summary, "link": link})
+        if len(items) >= max_items:
+            break
+    return items
+
+
 def _normalize_reddit_source(source_value: str) -> tuple[str, str]:
     value = (source_value or "").strip()
     if not value:
@@ -530,6 +601,8 @@ def _canonical_source_key(source_type: str, source_value: str) -> str:
     source_type = (source_type or "").strip().lower()
     source_value = (source_value or "").strip()
     if not source_type or not source_value:
+        return ""
+    if source_type in {"news_briefing", "daily_briefing"}:
         return ""
     if source_type in {"reddit", "reddit_thread"}:
         kind, normalized = _normalize_reddit_source(source_value)
@@ -1298,9 +1371,188 @@ def _normalize_source_rule(rule: dict | None) -> dict[str, str | int]:
         "lookback_days": lookback_days,
         "selection_strategy": selection_strategy,
         "segment_type": segment_type,
+        "favourite": bool(rule.get("favourite", False)),
     }
 
 SOURCE_REQUIRED_SEGMENT_TYPES = {"reddit_post", "reddit_storytelling", "youtube"}
+
+BRIEFING_SHOW_IDS = ["briefing_ai", "briefing_crypto", "briefing_tech", "briefing_news_aus"]
+_MAX_BRIEFING_SOURCES = 10
+_MAX_BRIEFING_CHARS = 12000
+_FAV_YT_TRANSCRIPT_LIMIT = 3   # max favourite YT channels that get full transcript fetch
+_FAV_ITEM_COUNT = 5
+_NONFAV_ITEM_COUNT = 2
+
+
+def _fetch_all_sources_for_briefing(show, show_id: str) -> tuple[str, str]:
+    """Batch-fetch source material from ALL research_sources for a briefing show.
+
+    Favourites get transcript-level detail (YouTube) or more items (Reddit/RSS).
+    Non-favourites get titles only (fast flat-playlist / listing fetch).
+    Returns (combined_source_material, show_name).
+    """
+    raw_rules = list(getattr(show, "source_rules", []) or [])
+    rules = [_normalize_source_rule(r) for r in raw_rules if isinstance(r, dict)]
+    rules = [r for r in rules if r.get("value")]
+
+    # Sort: favourites first, then by type (reddit/rss cheapest last)
+    type_order = {"youtube_channel": 0, "youtube_playlist": 0, "reddit_subreddit": 1, "rss_feed": 2}
+
+    def _rule_sort_key(r: dict) -> tuple:
+        return (0 if r.get("favourite") else 1, type_order.get(str(r["type"]), 3))
+
+    rules.sort(key=_rule_sort_key)
+    rules = rules[:_MAX_BRIEFING_SOURCES]
+
+    sections: list[str] = []
+    fav_yt_fetched = 0
+
+    for rule in rules:
+        src_type = str(rule["type"])
+        src_value = str(rule["value"])
+        is_fav = bool(rule.get("favourite"))
+        lookback = int(rule.get("lookback_days", 1))
+
+        try:
+            if src_type in {"youtube_channel", "youtube_playlist"}:
+                if is_fav and fav_yt_fetched < _FAV_YT_TRANSCRIPT_LIMIT:
+                    # Full transcript for favourite channels
+                    try:
+                        selected_url = _select_youtube_video_url_from_collection(
+                            src_value, lookback_days=lookback, selection_strategy="latest"
+                        )
+                        ctx = _fetch_youtube_context(selected_url)
+                        if ctx and ctx.source_material:
+                            channel_name = ctx.channel or src_value
+                            sections.append(
+                                f"[YouTube — {channel_name}]\n"
+                                f"Video: {ctx.title}\n"
+                                f"{ctx.source_material[:3000]}"
+                            )
+                            fav_yt_fetched += 1
+                            continue
+                    except Exception as exc:
+                        log(f"  Briefing: full YT fetch failed for {src_value}: {exc}")
+                # Fallback / non-favourite: titles only via flat-playlist
+                try:
+                    source_url = _youtube_collection_url(_normalize_youtube_source(src_value))
+                    meta = _run_yt_dlp(
+                        ["--flat-playlist", "--dump-single-json", "--skip-download",
+                         "--playlist-end", str(_FAV_ITEM_COUNT if is_fav else _NONFAV_ITEM_COUNT),
+                         source_url],
+                        timeout=45,
+                    )
+                    if meta.returncode == 0 and meta.stdout.strip():
+                        payload = json.loads(meta.stdout)
+                        entries = payload.get("entries", [])
+                        channel_name = payload.get("channel") or payload.get("uploader") or src_value
+                        titles = [
+                            _clean_text_block(e.get("title", ""))
+                            for e in entries
+                            if isinstance(e, dict) and e.get("title")
+                        ]
+                        if titles:
+                            sections.append(
+                                f"[YouTube — {channel_name}]\n"
+                                + "\n".join(f"  - {t}" for t in titles)
+                            )
+                except Exception as exc:
+                    log(f"  Briefing: flat-playlist failed for {src_value}: {exc}")
+
+            elif src_type in {"reddit_subreddit", "reddit"}:
+                _, subreddit = _normalize_reddit_source(src_value)
+                try:
+                    url = f"{_reddit_listing_base()}/r/{subreddit}/hot.json?limit=12"
+                    payload = json.loads(_fetch_url(url, timeout=10).decode("utf-8", errors="ignore"))
+                    posts = []
+                    for child in payload.get("data", {}).get("children", []):
+                        data = child.get("data", {})
+                        if data.get("stickied") or data.get("over_18"):
+                            continue
+                        title = _clean_text_block(data.get("title", ""))
+                        if title:
+                            posts.append(title)
+                        if len(posts) >= (_FAV_ITEM_COUNT if is_fav else _NONFAV_ITEM_COUNT):
+                            break
+                    if posts:
+                        sections.append(
+                            f"[Reddit — r/{subreddit}]\n"
+                            + "\n".join(f"  - {p}" for p in posts)
+                        )
+                except Exception as exc:
+                    log(f"  Briefing: Reddit listing failed for r/{subreddit}: {exc}")
+
+            elif src_type == "rss_feed":
+                items = _fetch_rss_feed_items(
+                    src_value,
+                    lookback_days=lookback,
+                    max_items=_FAV_ITEM_COUNT if is_fav else _NONFAV_ITEM_COUNT,
+                )
+                if items:
+                    lines = [f"[RSS — {src_value}]"]
+                    for item in items:
+                        lines.append(f"  - {item['title']}")
+                        if item["summary"]:
+                            lines.append(f"    {item['summary'][:200]}")
+                    sections.append("\n".join(lines))
+
+        except Exception as exc:
+            log(f"  Briefing: source fetch error [{src_type}] {src_value}: {exc}")
+
+    combined = "\n\n".join(sections) if sections else "[No source material available]"
+
+    # Trim to budget: drop trailing sections first (non-favourites already at end)
+    while len(combined) > _MAX_BRIEFING_CHARS and len(sections) > 1:
+        sections.pop()
+        combined = "\n\n".join(sections)
+
+    show_name = getattr(show, "name", show_id)
+    return combined, show_name
+
+
+def _fetch_category_briefing_scripts() -> str:
+    """Read the most recent news_briefing script from each of the 4 category shows.
+    Returns combined source material. Proceeds if at least 2 of 4 shows have content."""
+    parts: list[str] = []
+    for show_id in BRIEFING_SHOW_IDS:
+        show_dir = OUTPUT_DIR / show_id
+        if not show_dir.exists():
+            continue
+        candidates = sorted(
+            show_dir.glob("news_briefing_*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if not candidates:
+            # Also check for any .json with segment_type news_briefing
+            all_json = sorted(
+                show_dir.glob("*.json"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            for jf in all_json[:5]:
+                try:
+                    meta = json.loads(jf.read_text())
+                    if meta.get("type") == "news_briefing" and meta.get("script"):
+                        candidates = [jf]
+                        break
+                except Exception:
+                    continue
+        if not candidates:
+            log(f"  daily_briefing: no news_briefing found for {show_id}")
+            continue
+        try:
+            meta = json.loads(candidates[0].read_text())
+            script = (meta.get("script") or "").strip()
+            show_name = meta.get("show_name") or show_id
+            if script:
+                parts.append(f"=== {show_name} ===\n{script[:4000]}")
+        except Exception as exc:
+            log(f"  daily_briefing: failed to read script for {show_id}: {exc}")
+
+    if not parts:
+        return "[No category briefings available — run category briefings first]"
+    return "\n\n".join(parts)
 
 
 def load_source_context(
@@ -1337,6 +1589,27 @@ def load_source_context(
         if source_type in {"youtube_channel", "youtube_playlist"}:
             selected_url = _select_youtube_video_url_from_collection(source_value, lookback_days, selection_strategy, used_source_keys)
             return _fetch_youtube_context(selected_url)
+        if source_type == "rss_feed":
+            items = _fetch_rss_feed_items(source_value, lookback_days=lookback_days, max_items=8)
+            if not items:
+                return None
+            lines = [f"RSS Feed: {source_value}", ""]
+            for item in items:
+                lines.append(f"- {item['title']}")
+                if item["summary"]:
+                    lines.append(f"  {item['summary']}")
+            source_material = "\n".join(lines)
+            return SourceContext(
+                source_type="rss_feed",
+                source_value=source_value,
+                title=f"RSS: {source_value}",
+                topic=f"RSS feed items from {source_value}",
+                source_material=source_material,
+                format_instructions=(
+                    "Use the RSS feed items as source material. "
+                    "Report on the most significant stories. Do not read headlines verbatim."
+                ),
+            )
         if source_type == "url":
             if used_source_keys and _canonical_source_key("url", source_value) in used_source_keys:
                 return None
@@ -1762,7 +2035,7 @@ def get_kokoro_pipeline():
         try:
             # Use CUDA for GPU acceleration
             _KOKORO_PIPELINE = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M", device="cuda")
-        except Exception as e:
+        except (Exception, SystemExit) as e:
             log(f"Failed to load Kokoro: {e}")
             return None
     return _KOKORO_PIPELINE
@@ -2441,11 +2714,31 @@ def generate_segment(
 ) -> Path | None:
     """Generate a single talk segment with audio."""
     show_id = show.show_id
-    explicit_source_agnostic_types = {"station_id", "show_intro", "show_outro"}
+    explicit_source_agnostic_types = {"station_id", "show_intro", "show_outro", "news_briefing", "daily_briefing"}
     if segment_type in explicit_source_agnostic_types:
         source_type = ""
         source_value = ""
         source_context = None
+    if segment_type == "news_briefing" and source_context is None:
+        source_material, _sname = _fetch_all_sources_for_briefing(show, show_id)
+        source_context = SourceContext(
+            source_type="news_briefing",
+            source_value=show_id,
+            title=show.name,
+            topic=show.name,
+            source_material=source_material,
+            format_instructions="",
+        )
+    elif segment_type == "daily_briefing" and source_context is None:
+        source_material = _fetch_category_briefing_scripts()
+        source_context = SourceContext(
+            source_type="daily_briefing",
+            source_value=show_id,
+            title="Daily Briefing",
+            topic="Daily Briefing",
+            source_material=source_material,
+            format_instructions="",
+        )
     if source_context is None:
         source_context = load_source_context(
             source_type,
@@ -2469,6 +2762,10 @@ def generate_segment(
     if segment_type == "youtube":
         if not source_context or source_context.source_type != "youtube":
             log("  YouTube segments require a YouTube source and use direct audio ingest only.")
+            return None
+    if segment_type == "youtube_commentary":
+        if not source_context or source_context.source_type != "youtube":
+            log("  YouTube Commentary requires a YouTube source.")
             return None
     if source_context and source_context.source_type in {"reddit", "youtube"}:
         topic = source_context.title or topic
@@ -2505,13 +2802,16 @@ def generate_segment(
             log(f"  Subreddit: r/{source_context.subreddit}")
         if source_context.story_mode:
             log("  Source mode: direct read-through")
-        elif source_context.source_type == "youtube":
+        elif source_context.source_type == "youtube" and segment_type == "youtube":
             log("  Source mode: direct audio ingest")
             log(f"  Channel: {source_context.channel or 'unknown'}")
             if source_context.duration_seconds:
                 log(f"  Duration: {int(source_context.duration_seconds)}s")
             if source_context.audio_path:
                 log(f"  Cached audio: {source_context.audio_path}")
+        elif source_context.source_type == "youtube" and segment_type == "youtube_commentary":
+            log("  Source mode: LLM analysis of YouTube content")
+            log(f"  Channel: {source_context.channel or 'unknown'}")
 
     script = None
     if (
@@ -2820,7 +3120,7 @@ def generate_segment(
             "type": segment_type,
             "show_id": show_id,
             "show_name": _show_value(show, "name", show_id),
-            "host": _show_value(show, "host", ""),
+            "host": primary.get("id", _show_value(show, "host", "")),
             "topic": topic,
             "word_count": word_count,
             "voices": voices,
@@ -2890,10 +3190,14 @@ def generate_for_show(
         iter_source_selection_strategy = base_source_selection_strategy
         selected_source_rule = None
         selected_source_context: SourceContext | None = None
+        _agnostic_types = {"station_id", "show_intro", "show_outro", "news_briefing", "daily_briefing"}
+        _show_seg_types = list(getattr(show, "segment_types", []) or [])
+        _all_agnostic = bool(_show_seg_types) and all(s in _agnostic_types for s in _show_seg_types)
         auto_source = (
             not iter_source_type
             and not iter_source_value
             and requested_segment_type in {"random", "reddit_post", "reddit_storytelling", "youtube"}
+            and not _all_agnostic
         )
         if auto_source:
             selected_source_rule = _choose_source_rule_for_show(show, show_id, requested_segment_type)

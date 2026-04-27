@@ -245,7 +245,7 @@ def _build_generation_env() -> dict:
 
 def _run_talk_generation(show_id: str, count: int, job_registry: dict, env: dict, cache_invalidator: Callable[[str | None], None] | None = None, job_id: str | None = None):
     """Generate talk segments for a show in a background thread."""
-    gen_script = PROJECT_ROOT / "mac" / "content_generator" / "talk_generator.py"
+    gen_script = PROJECT_ROOT / "station" / "content_generator" / "talk_generator.py"
     cmd = [str(VENV_PYTHON), str(gen_script), "--show", show_id, "--count", str(count)]
     if job_id is None:
         job_id = f"sched-talk-{show_id}-{int(time.time())}"
@@ -275,7 +275,7 @@ def _run_talk_generation(show_id: str, count: int, job_registry: dict, env: dict
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True,
             env={**os.environ, **env},
-            cwd=str(PROJECT_ROOT / "mac" / "content_generator"),
+            cwd=str(PROJECT_ROOT / "station" / "content_generator"),
         )
         for line in proc.stdout:
             line = line.rstrip()
@@ -320,7 +320,7 @@ def _run_talk_generation(show_id: str, count: int, job_registry: dict, env: dict
 
 def _run_music_generation(show_id: str, count: int, bumper_style: str, job_registry: dict, env: dict, cache_invalidator: Callable[[str | None], None] | None = None, job_id: str | None = None):
     """Generate music bumpers for a show in a background thread."""
-    gen_script = PROJECT_ROOT / "mac" / "content_generator" / "music_bumper_generator.py"
+    gen_script = PROJECT_ROOT / "station" / "content_generator" / "music_bumper_generator.py"
     if not gen_script.exists():
         state.add_log(show_id, "music", "music_bumper_generator.py not found", "error")
         return
@@ -354,7 +354,7 @@ def _run_music_generation(show_id: str, count: int, bumper_style: str, job_regis
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True,
             env={**os.environ, **env},
-            cwd=str(PROJECT_ROOT / "mac" / "content_generator"),
+            cwd=str(PROJECT_ROOT / "station" / "content_generator"),
         )
         for line in proc.stdout:
             line = line.rstrip()
@@ -397,6 +397,65 @@ def _run_music_generation(show_id: str, count: int, bumper_style: str, job_regis
         cache_invalidator("bumpers")
 
 
+BRIEFING_SHOW_IDS = ["briefing_ai", "briefing_crypto", "briefing_tech", "briefing_news_aus"]
+
+
+def _cleanup_expired_segments(show_id: str, max_days: int) -> int:
+    """Delete talk segments (audio + sidecar .json + .plays.json) older than max_days.
+    Returns count of audio files deleted."""
+    show_dir = TALK_DIR / show_id
+    if not show_dir.exists():
+        return 0
+    cutoff = timedelta(days=max_days)
+    now = datetime.now()
+    deleted = 0
+    for f in list(show_dir.iterdir()):
+        if not f.is_file() or f.suffix.lower() not in AUDIO_EXTS:
+            continue
+        sidecar = f.with_suffix(".json")
+        age = None
+        if sidecar.exists():
+            try:
+                import json as _json
+                meta = _json.loads(sidecar.read_text())
+                generated_at = meta.get("generated_at")
+                if generated_at:
+                    age = now - datetime.fromisoformat(generated_at.replace("Z", "+00:00").split("+")[0])
+            except Exception:
+                pass
+        if age is None:
+            age = now - datetime.fromtimestamp(f.stat().st_mtime)
+        if age > cutoff:
+            for path in (f, sidecar, f.with_suffix(".plays.json")):
+                if path.exists():
+                    try:
+                        path.unlink()
+                    except Exception:
+                        pass
+            deleted += 1
+    return deleted
+
+
+def _briefing_daily_has_deps() -> bool:
+    """Check that at least 2 of 4 category briefings exist with mtime < 26 hours."""
+    now = datetime.now()
+    cutoff = timedelta(hours=26)
+    found = 0
+    for show_id in BRIEFING_SHOW_IDS:
+        show_dir = TALK_DIR / show_id
+        if not show_dir.exists():
+            continue
+        candidates = list(show_dir.glob("news_briefing_*.json"))
+        if not candidates:
+            candidates = list(show_dir.glob("*.json"))
+        for jf in candidates:
+            age = now - datetime.fromtimestamp(jf.stat().st_mtime)
+            if age < cutoff:
+                found += 1
+                break
+    return found >= 2
+
+
 def _check_and_generate(job_registry: dict):
     """One pass: check inventory for all shows and trigger generation as needed."""
     try:
@@ -423,6 +482,10 @@ def _check_and_generate(job_registry: dict):
                 for j in state.active_jobs.values()
             )
             if already_running:
+                continue
+
+            if show_id == "briefing_daily" and not _briefing_daily_has_deps():
+                state.add_log(show_id, "talk", "Waiting for category briefings (need ≥2 of 4 recent)")
                 continue
 
             inventory = _count_inventory(TALK_DIR, show_id)
@@ -480,6 +543,7 @@ def run_scheduler(job_registry: dict, check_interval: int = 300):
     """
     state.running = True
     print(f"[scheduler] Started. Check interval: {check_interval}s")
+    last_cleanup = 0.0
 
     while state.running:
         state.last_check = _station_now()
@@ -487,6 +551,21 @@ def run_scheduler(job_registry: dict, check_interval: int = 300):
             _check_and_generate(job_registry)
         except Exception as e:
             print(f"[scheduler] Unexpected error: {e}")
+
+        now_ts = time.time()
+        if now_ts - last_cleanup >= 3600:
+            last_cleanup = now_ts
+            try:
+                data = _load_schedule()
+                for show_id, show in data.get("shows", {}).items():
+                    max_days = (show.get("content_lifecycle") or {}).get("talk", {}).get("max_days")
+                    if max_days:
+                        n = _cleanup_expired_segments(show_id, int(max_days))
+                        if n:
+                            print(f"[scheduler] Cleaned up {n} expired segment(s) for {show_id}")
+            except Exception as e:
+                print(f"[scheduler] Cleanup error: {e}")
+
         time.sleep(check_interval)
 
 

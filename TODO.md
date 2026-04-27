@@ -44,7 +44,7 @@ Recent code-level progress since the older doc set:
 - Verify MiniMax behavior across every talk-generation path and document the remaining gaps clearly
 - Add MiniMax emotion/sound markers where they materially improve delivery
 - Implement true MiniMax multi-voice rendering instead of primary-voice fallback
-- Decide whether Chatterbox remains supported or should be marked experimental
+- Chatterbox: removed (zero usage, experimental only — deleted mac/chatterbox/)
 
 ### Generation Quality
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from mac.schedule import load_schedule
+from station.schedule import load_schedule
 
 
 def test_load_schedule_normalizes_legacy_show_voice_defaults(tmp_path: Path) -> None:

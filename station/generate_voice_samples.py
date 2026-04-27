@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 
-from mac.voice_samples import ensure_voice_samples
+from station.voice_samples import ensure_voice_samples
 
 
 def main() -> int:

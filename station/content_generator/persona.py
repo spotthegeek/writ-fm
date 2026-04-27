@@ -9,13 +9,10 @@ All content generators should import from here to maintain consistency.
 from pathlib import Path
 
 from datetime import datetime
-import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT / "mac"))
-from time_utils import station_now
-from helpers import get_time_of_day
+from station.time_utils import station_now
+from station.content_generator.helpers import get_time_of_day
 
 
 def _load_hosts_from_yaml() -> dict:

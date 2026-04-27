@@ -12,9 +12,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import sys
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT / "mac"))
-from time_utils import station_now, station_iso_now
+from station.time_utils import station_now, station_iso_now
 from typing import Optional
 
 # Default database location

@@ -34,9 +34,7 @@ def _od():
     return _ondemand
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT / "mac"))
-sys.path.insert(0, str(PROJECT_ROOT))
-from time_utils import station_now, station_iso_now, station_from_timestamp
+from station.time_utils import station_now, station_iso_now, station_from_timestamp
 from shared.settings import icecast_status_url, message_cooldown_seconds
 
 # Import play history
@@ -239,6 +237,41 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
 
         if item_id.startswith("upload:"):
             audio_path = od.get_upload_path(item_id)
+            if audio_path is None:
+                return self._send_error(404, "Item not found")
+            mime = od._mime_for(audio_path)
+            file_size = audio_path.stat().st_size
+            start, end = 0, file_size - 1
+            if range_header:
+                try:
+                    rng = range_header.replace("bytes=", "")
+                    parts = rng.split("-")
+                    start = int(parts[0]) if parts[0] else 0
+                    end = int(parts[1]) if parts[1] else file_size - 1
+                except Exception:
+                    pass
+            length = end - start + 1
+            with open(audio_path, "rb") as f:
+                f.seek(start)
+                data = f.read(length)
+            if range_header:
+                self.send_response(206)
+                self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+            else:
+                self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            try:
+                self.wfile.write(data)
+            except BrokenPipeError:
+                pass
+            return
+
+        if item_id.startswith("show:"):
+            audio_path = od.get_segment_path(item_id)
             if audio_path is None:
                 return self._send_error(404, "Item not found")
             mime = od._mime_for(audio_path)
@@ -823,11 +856,12 @@ def get_qr_code() -> bytes | None:
 
 
 def get_ondemand_sources() -> dict:
-    """Return list of configured on-demand sources (ABS libraries + upload buckets)."""
+    """Return list of on-demand sources: shows + ABS libraries + upload buckets."""
     try:
         od = _od()
         cfg = od.load_config()
         sources = []
+        sources.extend(od.get_show_sources())
         for lib in cfg.get("abs", {}).get("libraries", []):
             sources.append({"id": f"abs:{lib['id']}", "name": lib["name"], "type": "abs"})
         for src in cfg.get("upload_sources", []):

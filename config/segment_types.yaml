@@ -248,3 +248,92 @@ segment_types:
       Use [pause] for natural rhythm. Output ONLY the spoken words.
 
       '
+  youtube_commentary:
+    name: YouTube Commentary
+    description: LLM-generated on-air analysis of a YouTube video using its transcript
+      and metadata. Unlike the youtube segment type (which rips audio directly), this
+      generates spoken commentary via TTS.
+    word_count_min: 800
+    word_count_max: 1600
+    multi_voice: false
+    prompt_template: 'You are producing a segment about this YouTube video.
+
+      Ground the listener in the channel, the creator, and what kind of video this
+      is.
+
+      Use the transcript, description, and metadata as your primary sources.
+
+      Summarise the key arguments, demonstrations, or story beats clearly.
+
+      Add a brief editorial perspective — what is interesting or worth noting about
+      this.
+
+      If no transcript is available, work from the title, description, and chapters.
+
+      Do not invent facts not present in the source material.
+
+      Do not use [pause] excessively — keep the pace brisk.
+
+      Output ONLY the spoken words.'
+  news_briefing:
+    name: News Briefing
+    description: Professional podcast-style daily briefing synthesised from multiple
+      sources covering a specific topic area.
+    word_count_min: 800
+    word_count_max: 2800
+    multi_voice: false
+    prompt_template: 'You are producing a professional on-demand audio news podcast
+      episode for {show_name}.
+
+      Tone: clear, confident, informative. Not late-night radio — a focused daily briefing.
+
+      Structure:
+
+      1. Open with 2-3 sentences framing today''s key themes. No "welcome back" filler.
+
+      2. Cover each major story: what happened, why it matters, what is next.
+
+      3. Where sources contradict or add nuance, acknowledge it briefly.
+
+      4. Close with one sentence of outlook or synthesis.
+
+      Rules:
+
+      - Attribute claims to their source (e.g. "On r/LocalLLaMA...", "via TechCrunch...",
+      "From a recent YouTube video by...").
+
+      - Do not invent facts not present in the source material.
+
+      - Skip trivial or purely promotional items.
+
+      - Use [pause] sparingly — this is a podcast, not late-night radio.
+
+      - Output ONLY the spoken words.'
+  daily_briefing:
+    name: Daily Briefing
+    description: Consolidated two-host briefing covering all topic areas — AI, Crypto,
+      Tech, and Australian News.
+    word_count_min: 3500
+    word_count_max: 5000
+    multi_voice: true
+    prompt_template: 'Two hosts — HOST_A and HOST_B — co-present this consolidated
+      daily briefing.
+
+      Format every line with HOST_A: or HOST_B: at the start.
+
+      Guidelines:
+
+      - Divide topic areas between them naturally. Do not always alternate.
+
+      - React to each other''s stories with genuine curiosity or a brief observation.
+
+      - Provide smooth transitions between topic areas (AI, Crypto, Tech, Australian
+      News).
+
+      - Avoid formal handoff language ("Now over to you for...").
+
+      - Cover the top 2-3 stories from each topic area.
+
+      - Keep the combined runtime to roughly 25-30 minutes of spoken audio.
+
+      Output ONLY the spoken dialogue with HOST_A: and HOST_B: markers.'

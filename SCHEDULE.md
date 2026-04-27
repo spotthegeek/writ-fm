@@ -1,83 +1,46 @@
-# Weekly Program Schedule (WRIT-FM)
+# Program Schedule
 
-All times are local, 24-hour. The base clock runs daily; weekly shows override it.
+This file mirrors the checked-in default schedule in `config/schedule.yaml`.
 
-## Monday
+Current station defaults:
 
-- 00:00–06:00 — Liminal Overnight
-- 06:00–10:00 — Sunrise Drift
-- 10:00–14:00 — Midday Mosaic
-- 14:00–15:00 — The Talk Hour
-- 15:00–18:00 — Peak Signal
-- 18:00–20:00 — Golden Hour
-- 20:00–22:00 — Sonic Archaeology: Jazz Archives (weekly)
-- 22:00–00:00 — Night Transmission
+- Station name: `Crouch-FM`
+- Timezone: `Australia/Adelaide`
+- Weekly overrides: none
 
-## Tuesday
+All times below are local station time and repeat every day unless `schedule.overrides` is populated.
 
-- 00:00–06:00 — Liminal Overnight
-- 06:00–10:00 — Sunrise Drift
-- 10:00–14:00 — Midday Mosaic
-- 14:00–15:00 — The Talk Hour
-- 15:00–18:00 — Peak Signal
-- 18:00–20:00 — Golden Hour
-- 20:00–22:00 — World Circuit (weekly)
-- 22:00–00:00 — Night Transmission
+## Daily Base Schedule
 
-## Wednesday
+- `00:00-03:00` — `/r/alien_theory`
+- `03:00-06:00` — `/r/nosleep`
+- `06:00-09:00` — `/r/sysadmin`
+- `09:00-12:00` — `YouTube AI`
+- `12:00-15:00` — `/r/alien_theory`
+- `15:00-18:00` — `/r/nosleep`
+- `18:00-21:00` — `/r/sysadmin`
+- `21:00-00:00` — `YouTube AI`
 
-- 00:00–06:00 — Liminal Overnight
-- 06:00–10:00 — Sunrise Drift
-- 10:00–14:00 — Midday Mosaic
-- 14:00–15:00 — The Talk Hour
-- 15:00–18:00 — Peak Signal
-- 18:00–20:00 — Golden Hour
-- 20:00–22:00 — Electric Drift (weekly)
-- 22:00–00:00 — Night Transmission
+## Show Notes
 
-## Thursday
+- `alien_theory`
+  Uses Reddit subreddit sources such as `/r/Alien_Theory`, `/r/EBEs`, and `/r/UFOs`, primarily routed to `reddit_post`.
 
-- 00:00–06:00 — Liminal Overnight
-- 06:00–10:00 — Sunrise Drift
-- 10:00–14:00 — Midday Mosaic
-- 14:00–15:00 — The Talk Hour
-- 15:00–18:00 — Peak Signal
-- 18:00–20:00 — Golden Hour
-- 20:00–22:00 — Memory Lane: Rock & Indie (weekly)
-- 22:00–00:00 — Night Transmission
+- `nosleep`
+  Uses `/r/nosleep` and routes to `reddit_storytelling`.
 
-## Friday
+- `sysadmin`
+  Uses `/r/sysadmin` and adjacent infrastructure discussion as `reddit_post`.
 
-- 00:00–06:00 — Liminal Overnight
-- 06:00–10:00 — Sunrise Drift
-- 10:00–14:00 — Midday Mosaic
-- 14:00–15:00 — The Talk Hour
-- 15:00–18:00 — Peak Signal
-- 18:00–21:00 — Golden Hour
-- 21:00–22:00 — Night Transmission
-- 22:00–00:00 — Club Liminal (weekly; continues into Saturday)
+- `youtube-ai`
+  Pulls from configured AI-related YouTube channels and routes to the `youtube` segment type.
 
-## Saturday
+## Defined But Not Scheduled
 
-- 00:00–02:00 — Club Liminal (weekly; continuation)
-- 02:00–06:00 — Liminal Overnight
-- 06:00–10:00 — Sunrise Drift
-- 10:00–12:00 — Midday Mosaic
-- 12:00–14:00 — Saturday Soul Service (weekly)
-- 14:00–15:00 — The Talk Hour
-- 15:00–18:00 — Peak Signal
-- 18:00–21:00 — Golden Hour
-- 21:00–00:00 — Night Transmission
+These shows still exist in `config/schedule.yaml` but are not in the current base rotation:
 
-## Sunday
+- `signal_report`
+- `crosswire`
+- `listener_hours`
 
-- 00:00–06:00 — Liminal Overnight
-- 06:00–10:00 — Sunrise Drift
-- 10:00–12:00 — Slow Sunday (weekly)
-- 12:00–14:00 — Midday Mosaic
-- 14:00–15:00 — The Talk Hour
-- 15:00–18:00 — Peak Signal
-- 18:00–19:00 — Listener Mailbag (weekly)
-- 19:00–21:00 — Golden Hour
-- 21:00–00:00 — Night Transmission
-
+If those are meant to return, add them back through the admin UI or directly in `config/schedule.yaml`.

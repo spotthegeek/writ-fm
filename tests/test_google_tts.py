@@ -4,7 +4,7 @@ import json
 import socket
 from pathlib import Path
 
-from mac import google_tts
+from station import google_tts
 
 
 def test_generate_speech_retries_timeout_then_succeeds(monkeypatch, tmp_path: Path) -> None:

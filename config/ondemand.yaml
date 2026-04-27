@@ -1,0 +1,12 @@
+abs:
+  base_url: https://abs.area4.net
+  libraries:
+  - id: ab67e8eb-96dc-41f5-bd01-7207223daaa1
+    name: Comedy
+  - id: d6dcb31a-d670-4d49-bdd9-e88f3708cb61
+    name: TV
+upload_sources:
+- id: news
+  name: News
+- id: misc
+  name: Misc

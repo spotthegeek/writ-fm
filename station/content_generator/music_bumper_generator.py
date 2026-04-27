@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate AI music bumpers for WRIT-FM shows using music-gen.server.
+"""Generate AI music bumpers for WRIT-FM shows using MiniMax music-2.6.
 
 Bumpers are short instrumental tracks that play between talk segments.
 Each show can configure its preferred bumper length range in schedule.yaml,
@@ -21,14 +21,11 @@ from datetime import datetime
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT / "mac"))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from schedule import load_schedule, merge_playback_sequence
-from time_utils import station_now, station_iso_now
-
-from music_gen_client import MUSIC_GEN_BASE_URL, generate_music, is_server_available
-from helpers import run_claude
-from persona import get_host
+from station.schedule import load_schedule, merge_playback_sequence
+from station.time_utils import station_now, station_iso_now
+from station.music_gen_client import generate_music, is_server_available
+from station.content_generator.helpers import run_claude
+from station.content_generator.persona import get_host
 
 BUMPERS_DIR = PROJECT_ROOT / "output" / "music_bumpers"
 SCHEDULE_PATH = PROJECT_ROOT / "config" / "schedule.yaml"
@@ -293,8 +290,7 @@ def _show_primary_host(show_id: str) -> tuple[str, str]:
     return host_id, host_name
 
 # Merge expanded caption pools (25 instrumental + 10 vocal per show)
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from music_pools_expanded import (  # noqa: E402
+from station.content_generator.music_pools_expanded import (  # noqa: E402
     midnight_signal_new, the_night_garden_new, dawn_chorus_new,
     sonic_archaeology_new, signal_report_new, the_groove_lab_new,
     crosswire_new, listener_hours_new,

@@ -5,8 +5,8 @@ import types
 from pathlib import Path
 from types import SimpleNamespace
 
-from mac.content_generator import talk_generator
-from mac.schedule import Show
+from station.content_generator import talk_generator
+from station.schedule import Show
 
 
 def test_voice_for_assignment_uses_roster_google_default(monkeypatch) -> None:

@@ -1,6 +1,6 @@
 #!/bin/bash
 # WRIT-FM Operator - Launch Claude Code for maintenance
-# Run manually, via cron, or from mac/operator_daemon.sh.
+# Run manually, via cron, or from station/operator_daemon.sh.
 
 set -euo pipefail
 
@@ -10,7 +10,7 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOM
 cd "$(dirname "$0")"
 
 # Read the operator prompt
-PROMPT=$(cat mac/operator_prompt.md)
+PROMPT=$(cat station/operator_prompt.md)
 
 # Launch Gemini CLI with the prompt
 # Note: gemini -p expects the prompt as an argument.

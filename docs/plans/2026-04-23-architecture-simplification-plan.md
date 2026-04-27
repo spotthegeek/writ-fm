@@ -10,6 +10,20 @@ Simplify WRIT-FM into a Linux-first, test-backed application without regressing 
 - stale legacy fields masking real bugs
 - environment- or machine-specific defaults leaking into runtime behavior
 
+## Status Update (2026-04-26)
+
+This plan is no longer purely aspirational. Some of the early work has already landed:
+
+- `shared/settings.py` centralizes several provider defaults and environment-backed settings
+- `shared/hosts.py` centralizes primary-host, secondary-host, voice, and WPM resolution
+- Tests now cover schedule normalization, Google TTS voice defaults, admin voice resolution, shared host helpers, and talk-generator voice logic
+
+What remains true:
+
+- The schedule schema is still mixed between canonical `hosts[]` data and legacy flattened fields
+- The repo still relies heavily on `mac/` paths and script-style imports
+- Packaging and runtime entrypoints have not fully caught up to the Linux-first direction
+
 ## Principles
 
 - Keep the station working at every phase.
@@ -52,6 +66,8 @@ tests/
 
 Add repo-level tests and cover the bugs we have already seen in production.
 
+Status: Started, with an initial suite already green.
+
 Initial regression coverage should include:
 
 - schedule normalization from legacy `host` / `voices` into canonical host assignments
@@ -64,6 +80,8 @@ Initial regression coverage should include:
 ### Phase 1: Canonical Schema
 
 Make `shows[].hosts[]` the canonical show/voice model.
+
+Status: In progress but incomplete.
 
 Steps:
 
@@ -80,6 +98,8 @@ Exit condition:
 ### Phase 2: Centralized Settings
 
 Replace scattered hard-coded defaults with a shared settings layer.
+
+Status: Started.
 
 Candidates to centralize:
 
@@ -99,6 +119,8 @@ Exit condition:
 
 Move duplicated logic into shared modules.
 
+Status: Started.
+
 High-value extractions:
 
 - timezone/station clock helpers
@@ -115,27 +137,24 @@ Exit condition:
 
 Rename and reorganize the old `mac/` layout into Linux-neutral packages.
 
-Steps:
+Status: ✅ Complete (2026-04-27).
 
-- introduce package-based imports
-- remove ad hoc `sys.path` insertion
-- move generators/providers/services into explicit packages
-- update admin subprocess paths and service entrypoints
-- preserve backwards-compatible entry scripts only as thin shims during rollout
-
-Exit condition:
-
-- `mac/` is gone or contains only temporary shims slated for deletion
+All `sys.path.insert` hacks removed from mac/ and content_generator/. All intra-mac imports now use
+package-qualified paths (`from mac.xxx import`, `from mac.content_generator.xxx import`). The editable
+install (`_editable_impl_writ_radio.pth`) puts `/code/writ-fm` on sys.path for all venv-run scripts,
+making the hacks unnecessary. The `mac/` directory stays for now as the runtime location — renaming
+to Linux-neutral package names is deferred until it adds clear value.
 
 ### Phase 5: Legacy Feature Review And Pruning
 
 Decide which old components remain supported.
 
-Likely review targets:
+Status: ✅ Complete (2026-04-27).
 
-- Chatterbox integration
-- `mac/config.yaml` legacy config
-- tmux helper scripts
+- Chatterbox integration: **removed** (`mac/chatterbox/` deleted — zero usage, experimental only)
+- `mac/config.yaml` legacy config: already absent — nothing to do
+- tmux helper scripts: kept — `listener_daemon.sh`, `operator_daemon.sh`, `start_music_gen.sh` are still functional
+- ACE-Step references: **updated** — README, music_gen_client.py, music_bumper_generator.py docstrings corrected to MiniMax
 - stale docs for obsolete segment types and old startup flows
 - unused QR/cache helpers and outdated provider compatibility code
 
@@ -193,8 +212,8 @@ We can call the refactor successful when:
 
 ## Immediate Next Steps
 
-1. Land the initial test suite covering voice fallback, WPM, and schedule normalization.
-2. Freeze the canonical schema for show host assignments.
-3. Remove compatibility writes from admin after migration coverage is in place.
-4. Extract shared voice/settings/time helpers.
-5. Start moving runtime code out of `mac/` behind package imports.
+1. Freeze the canonical schema for show host assignments and remove compatibility writes from admin once coverage is sufficient.
+2. Continue migrating voice/default/time logic into `shared/`.
+3. Expand tests around scheduler-triggered generation and failure handling.
+4. Replace script-style imports and `sys.path` hacks with package-based imports.
+5. Move runtime entrypoints toward Linux-neutral package paths while keeping thin compatibility shims only where necessary.

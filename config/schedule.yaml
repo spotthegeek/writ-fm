@@ -5,37 +5,58 @@ shows:
     name: Signal Report
     description: Current events decoded. The news behind the news, through a late-night
       lens.
-    host: signal
+    hosts:
+    - id: signal
+      role: primary
+      voice_kokoro: am_onyx
+      voice_minimax: Deep_Voice_Man
+      voice_google: Kore
+      tts_backend: kokoro
+      display_name: Signal
     segment_types:
     - news_analysis
     - deep_dive
     - panel
     bumper_style: downtempo
-    voices:
-      host: am_onyx
   crosswire:
     name: Crosswire
     description: Two voices, one topic. Where ideas collide and sparks fly.
-    host: dr_resonance
+    hosts:
+    - id: dr_resonance
+      role: primary
+      voice_kokoro: bm_daniel
+      voice_minimax: Elegant_Man
+      voice_google: Kore
+      tts_backend: kokoro
+      display_name: Dr. Resonance
+    - id: ember
+      role: co-host
+      voice_kokoro: af_bella
+      voice_minimax: Friendly_Person
+      voice_google: Zephyr
+      tts_backend: kokoro
+      display_name: Ember
     segment_types:
     - panel
     - deep_dive
     - interview
     bumper_style: indie
-    voices:
-      host: bm_daniel
-      guest: af_bella
   listener_hours:
     name: Listener Hours
     description: Your messages, your questions, your frequency. The mailbag opens.
-    host: liminal_operator
+    hosts:
+    - id: liminal_operator
+      role: primary
+      voice_kokoro: am_michael
+      voice_minimax: Deep_Voice_Man
+      voice_google: Puck
+      tts_backend: kokoro
+      display_name: The Liminal Operator
     segment_types:
     - listener_mailbag
     - deep_dive
     - story
     bumper_style: soul
-    voices:
-      host: am_michael
     generation:
       talk:
         enabled: false
@@ -73,6 +94,8 @@ shows:
       voice_kokoro: am_michael
       voice_minimax: Patient_Man
       voice_google: Puck
+      tts_backend: kokoro
+      display_name: The Archivist
     research_sources: *id001
     content_lifecycle:
       talk:
@@ -91,6 +114,7 @@ shows:
         target_inventory: 8
         cadence: weekly
     playback_sequence: {}
+    tts_backend: google
   alien_theory:
     name: /r/alien_theory
     description: Reddit discussions and theories about extraterrestrials or ancient
@@ -122,13 +146,12 @@ shows:
     hosts:
     - id: nova
       role: primary
-      tts_backend: kokoro
       voice_kokoro: am_puck
       voice_minimax: Elegant_Man
-    host: nova
-    tts_backend: kokoro
-    voices:
-      host: am_puck
+      voice_google: Charon
+      tts_backend: kokoro
+      display_name: Nova
+    tts_backend: minimax
     research_sources: *id002
     content_lifecycle:
       talk:
@@ -168,14 +191,18 @@ shows:
     hosts:
     - id: root
       role: primary
-      tts_backend: kokoro
       voice_kokoro: am_liam
       voice_minimax: Deep_Voice_Man
+      voice_google: Kore
+      tts_backend: google
+      display_name: root
     - id: sudo
       role: co-host
-      tts_backend: kokoro
       voice_kokoro: af_nova
       voice_minimax: Lively_Girl
+      voice_google: Zephyr
+      tts_backend: google
+      display_name: Sudo
     content_lifecycle:
       talk:
         max_days: 3
@@ -185,18 +212,14 @@ shows:
       talk:
         enabled: true
         min_inventory: 6
-        target_inventory: 12
+        target_inventory: '9'
         cadence: continuous
       music:
         enabled: true
         min_inventory: 4
         target_inventory: 8
         cadence: weekly
-    host: root
-    tts_backend: kokoro
-    voices:
-      host: am_liam
-      guest: af_nova
+    tts_backend: minimax
     playback_sequence: {}
   youtube-ai:
     name: YouTube AI
@@ -225,16 +248,19 @@ shows:
     source_rules: *id004
     guests: []
     segment_types:
-    - reddit_storytelling
-    - reddit_post
     - youtube
+    - show_intro
+    - show_outro
+    - station_id
     bumper_style: rock
     hosts:
     - id: vector
       role: primary
-      tts_backend: kokoro
       voice_kokoro: am_liam
       voice_minimax: Friendly_Person
+      voice_google: Umbriel
+      tts_backend: kokoro
+      display_name: Vector
     content_lifecycle:
       talk:
         max_days: 3
@@ -251,11 +277,799 @@ shows:
         min_inventory: 4
         target_inventory: 8
         cadence: weekly
-    host: vector
     tts_backend: kokoro
-    voices:
-      host: am_liam
     playback_sequence: {}
+  briefing_ai:
+    name: AI Briefing
+    description: Daily on-demand AI news briefing from YouTube, Reddit, and RSS sources.
+    hosts:
+    - id: byte
+      role: primary
+      voice_kokoro: am_adam
+      voice_minimax: Deep_Voice_Man
+      voice_google: Kore
+      tts_backend: kokoro
+      display_name: Byte
+    segment_types:
+    - news_briefing
+    - youtube_commentary
+    tts_backend: kokoro
+    content_lifecycle:
+      talk:
+        max_days: 3
+    generation:
+      talk:
+        enabled: true
+        cadence: daily
+        min_inventory: 0
+        target_inventory: 1
+    research_sources:
+    - type: youtube_channel
+      value: https://www.youtube.com/@BoxminingAI
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: true
+    - type: youtube_channel
+      value: https://www.youtube.com/@TechWithTim
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: true
+    - type: youtube_channel
+      value: https://www.youtube.com/@buildnpublic
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: true
+    - type: youtube_channel
+      value: https://www.youtube.com/@ColeMedin
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: true
+    - type: youtube_channel
+      value: https://www.youtube.com/@DigitalSpaceport
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: true
+    - type: youtube_channel
+      value: https://www.youtube.com/@NetworkChuck
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: true
+    - type: youtube_channel
+      value: https://www.youtube.com/@theAIsearch
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: true
+    - type: youtube_channel
+      value: https://www.youtube.com/@CrossTheRubicon
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: true
+    - type: youtube_channel
+      value: https://www.youtube.com/@Clearmud
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@ai-foundations
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@AIPathwaysChannel
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@avtharai
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@AI2Play
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@AlexFinnOfficial
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@briancasel
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@CollaborationSimplified
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@thecraighewitt
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@DigitalBrainBase
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@nicksaraev
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@ostrisai
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@CreatorMagicAI
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@nateherk
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@DavidOndrej
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@aiadvantage
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@mreflow
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@MoeLueker
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@TimCarambat
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@DavesGarage
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@ShanesCows
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@AZisk
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@technovangelist
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: reddit_subreddit
+      value: /r/LocalLLaMA/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: true
+    - type: reddit_subreddit
+      value: /r/openclaw/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: true
+    - type: reddit_subreddit
+      value: /r/AI_Agents/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: false
+    - type: reddit_subreddit
+      value: /r/ArtificialInteligence/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: false
+    - type: reddit_subreddit
+      value: /r/LangChain/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: false
+    - type: reddit_subreddit
+      value: /r/LocalLLM/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: false
+    - type: reddit_subreddit
+      value: /r/ollama/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: false
+    - type: reddit_subreddit
+      value: /r/OpenWebUI/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: false
+    - type: reddit_subreddit
+      value: /r/PydanticAI/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: false
+    - type: rss_feed
+      value: https://www.therundown.ai/feed
+      lookback_days: 1
+      favourite: false
+    - type: rss_feed
+      value: https://www.theneurondaily.com/feed
+      lookback_days: 1
+      favourite: false
+    - type: rss_feed
+      value: https://www.superhuman.ai/feed
+      lookback_days: 1
+      favourite: false
+    - type: rss_feed
+      value: https://techcrunch.com/category/artificial-intelligence/feed/
+      lookback_days: 1
+      favourite: false
+    - type: rss_feed
+      value: https://www.theverge.com/ai-artificial-intelligence/index.xml
+      lookback_days: 1
+      favourite: false
+  briefing_crypto:
+    name: Crypto Briefing
+    description: Daily on-demand crypto news briefing from YouTube, Reddit, and RSS sources.
+    hosts:
+    - id: byte
+      role: primary
+      voice_kokoro: am_adam
+      voice_minimax: Deep_Voice_Man
+      voice_google: Kore
+      tts_backend: kokoro
+      display_name: Byte
+    segment_types:
+    - news_briefing
+    - youtube_commentary
+    tts_backend: kokoro
+    content_lifecycle:
+      talk:
+        max_days: 3
+    generation:
+      talk:
+        enabled: true
+        cadence: daily
+        min_inventory: 0
+        target_inventory: 1
+    research_sources:
+    - type: youtube_channel
+      value: https://www.youtube.com/@CrossTheRubicon
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: true
+    - type: youtube_channel
+      value: https://www.youtube.com/@AlexBeckersChannel
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: true
+    - type: youtube_channel
+      value: https://www.youtube.com/@elliotrades_official
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: true
+    - type: youtube_channel
+      value: https://www.youtube.com/@milesdeutscher1357
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: true
+    - type: youtube_channel
+      value: https://www.youtube.com/@TheCryptoLark
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@CryptoBanterGroup
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@VortexBitcoin
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@CoinBureauTrading
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@jesseeckel2
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@KyleChasseCrypto
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@TheRubiconShow
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@DaviddTech
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@FriedDev
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@ItsRagnar
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@michaelionita
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@SajadAli
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: reddit_subreddit
+      value: /r/CryptoCurrency/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: false
+    - type: rss_feed
+      value: https://cryptonews.com.au/feed/
+      lookback_days: 1
+      favourite: false
+    - type: rss_feed
+      value: https://www.theblock.co/rss.xml
+      lookback_days: 1
+      favourite: false
+  briefing_tech:
+    name: Tech Briefing
+    description: Daily on-demand tech news briefing from YouTube, Reddit, and RSS sources.
+    hosts:
+    - id: byte
+      role: primary
+      voice_kokoro: am_adam
+      voice_minimax: Deep_Voice_Man
+      voice_google: Kore
+      tts_backend: kokoro
+      display_name: Byte
+    segment_types:
+    - news_briefing
+    - youtube_commentary
+    tts_backend: kokoro
+    content_lifecycle:
+      talk:
+        max_days: 3
+    generation:
+      talk:
+        enabled: true
+        cadence: daily
+        min_inventory: 0
+        target_inventory: 1
+    research_sources:
+    - type: youtube_channel
+      value: https://www.youtube.com/@BeardedTinker
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: true
+    - type: youtube_channel
+      value: https://www.youtube.com/@iPhonedo
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: true
+    - type: youtube_channel
+      value: https://www.youtube.com/@JeffGeerling
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: true
+    - type: youtube_channel
+      value: https://www.youtube.com/@NetworkChuck
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: true
+    - type: youtube_channel
+      value: https://www.youtube.com/@TechnoTim
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: true
+    - type: youtube_channel
+      value: https://www.youtube.com/@2GuysTek
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@BrandonButch
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@camshand
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@ChrisMaherDIY
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@Core-Electronics
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@CraigsTechTalk
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@DavesGarage
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@EverythingSmartHome
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@excessorizeme
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@FutureTechOfficial
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@HardwareHaven
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@home_assistant
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@HomeAutomationGuy
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@JerryRigEverything
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@JulianOShea
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@KasmWorkspaces
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@LAWRENCESYSTEMS
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@Level2Jeff
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@LinusTechTips
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@mkbhd
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@mbtech-yt
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@MichaelKlements
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@Microsoft365
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@MikeTholfsen
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@Mrwhosetheboss
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@My_Smart_Home
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@PlayfulTechnology
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@PortainerIO
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@randomfrankp
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@ServeTheHomeVideo
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@ShanesCows
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@ShortCircuit
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@SmartHomeJunkie
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@SmartHomeSolver
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@TechManPat
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@TheVerge
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@ThisWeekinIT
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: youtube_channel
+      value: https://www.youtube.com/@unboxtherapy
+      lookback_days: 1
+      selection_strategy: latest
+      favourite: false
+    - type: reddit_subreddit
+      value: /r/sysadmin/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: true
+    - type: reddit_subreddit
+      value: /r/homelab/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: true
+    - type: reddit_subreddit
+      value: /r/selfhosted/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: true
+    - type: reddit_subreddit
+      value: /r/aussysadmin/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: false
+    - type: reddit_subreddit
+      value: /r/homeassistant/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: false
+    - type: reddit_subreddit
+      value: /r/homeautomation/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: false
+    - type: reddit_subreddit
+      value: /r/jellyfin/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: false
+    - type: reddit_subreddit
+      value: /r/kasmweb/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: false
+    - type: reddit_subreddit
+      value: /r/Proxmox/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: false
+    - type: reddit_subreddit
+      value: /r/talesfromtechsupport/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: false
+    - type: rss_feed
+      value: https://selfh.st/feed/
+      lookback_days: 1
+      favourite: false
+    - type: rss_feed
+      value: https://www.wired.com/feed/rss
+      lookback_days: 1
+      favourite: false
+    - type: rss_feed
+      value: https://techcrunch.com/feed/
+      lookback_days: 1
+      favourite: false
+    - type: rss_feed
+      value: https://www.engadget.com/feed/
+      lookback_days: 1
+      favourite: false
+    - type: rss_feed
+      value: https://www.geekwire.com/feed/
+      lookback_days: 1
+      favourite: false
+    - type: rss_feed
+      value: https://www.itnews.com.au/rss/
+      lookback_days: 1
+      favourite: false
+    - type: rss_feed
+      value: https://www.theregister.com/security/headlines.atom
+      lookback_days: 1
+      favourite: true
+    - type: rss_feed
+      value: https://www.theverge.com/tech/index.xml
+      lookback_days: 1
+      favourite: false
+    - type: rss_feed
+      value: https://feeds.arstechnica.com/arstechnica/index
+      lookback_days: 1
+      favourite: true
+    - type: rss_feed
+      value: https://www.tomshardware.com/feeds/all
+      lookback_days: 1
+      favourite: false
+    - type: rss_feed
+      value: https://rss.slashdot.org/Slashdot/slashdotMain
+      lookback_days: 1
+      favourite: false
+    - type: rss_feed
+      value: https://www.404media.co/rss/
+      lookback_days: 1
+      favourite: false
+    - type: rss_feed
+      value: https://dbtechreviews.com/feed/
+      lookback_days: 1
+      favourite: false
+  briefing_news_aus:
+    name: Australian News Briefing
+    description: Daily on-demand Australian news briefing from Reddit and RSS sources.
+    hosts:
+    - id: matilda
+      role: primary
+      voice_kokoro: af_sky
+      voice_minimax: Calm_Woman
+      voice_google: Zephyr
+      tts_backend: kokoro
+      display_name: Matilda
+    segment_types:
+    - news_briefing
+    tts_backend: kokoro
+    content_lifecycle:
+      talk:
+        max_days: 3
+    generation:
+      talk:
+        enabled: true
+        cadence: daily
+        min_inventory: 0
+        target_inventory: 1
+    research_sources:
+    - type: reddit_subreddit
+      value: /r/australia/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: true
+    - type: reddit_subreddit
+      value: /r/Adelaide/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: true
+    - type: reddit_subreddit
+      value: /r/WaggaNSW/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: false
+    - type: reddit_subreddit
+      value: /r/Riverina/
+      lookback_days: 1
+      selection_strategy: top
+      favourite: false
+    - type: rss_feed
+      value: https://www.abc.net.au/news/feed/2942460/rss.xml
+      lookback_days: 1
+      favourite: true
+    - type: rss_feed
+      value: https://regionriverina.com.au/feed/
+      lookback_days: 1
+      favourite: false
+    - type: rss_feed
+      value: https://www.indailysa.com.au/feeds/all
+      lookback_days: 1
+      favourite: true
+  briefing_daily:
+    name: Daily Briefing
+    description: Consolidated 25-30 min on-demand briefing covering AI, Crypto, Tech, and Australian News.
+    hosts:
+    - id: byte
+      role: primary
+      voice_kokoro: am_adam
+      voice_minimax: Deep_Voice_Man
+      voice_google: Kore
+      tts_backend: kokoro
+      display_name: Byte
+    - id: matilda
+      role: co-host
+      voice_kokoro: af_sky
+      voice_minimax: Calm_Woman
+      voice_google: Zephyr
+      tts_backend: kokoro
+      display_name: Matilda
+    segment_types:
+    - daily_briefing
+    tts_backend: kokoro
+    content_lifecycle:
+      talk:
+        max_days: 3
+    generation:
+      talk:
+        enabled: true
+        cadence: daily
+        min_inventory: 0
+        target_inventory: 1
 schedule:
   base:
   - start: 00:00

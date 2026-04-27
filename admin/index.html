@@ -1224,8 +1224,8 @@ const ShowsScreen = ({ t, shows, reloadShows }) => {
   const [hosts] = useApi("/api/hosts");
 
   const showList = showsToList(shows || {});
-  const active = showList.filter(s => s.generation?.talk?.enabled !== false);
-  const inactive = showList.filter(s => s.generation?.talk?.enabled === false);
+  const active = showList.filter(s => s.generation?.talk?.enabled === true);
+  const inactive = showList.filter(s => s.generation?.talk?.enabled !== true);
   const listed = subtab === "active" ? active : inactive;
 
   return (

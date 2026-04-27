@@ -3,10 +3,10 @@
 # Safe to run multiple times — kills existing instances first.
 #
 # Usage:
-#   ./mac/start_music_gen.sh              # start all
-#   ./mac/start_music_gen.sh server       # server only
-#   ./mac/start_music_gen.sh operator     # operator daemon only
-#   ./mac/start_music_gen.sh listener     # listener daemon only
+#   ./station/start_music_gen.sh              # start all
+#   ./station/start_music_gen.sh server       # server only
+#   ./station/start_music_gen.sh operator     # operator daemon only
+#   ./station/start_music_gen.sh listener     # listener daemon only
 
 set -euo pipefail
 
@@ -53,7 +53,7 @@ start_operator() {
     fi
 
     tmux send-keys -t "$SESSION:operator" \
-        "cd '$RADIO_DIR' && unset CLAUDECODE && bash mac/operator_daemon.sh" Enter
+        "cd '$RADIO_DIR' && unset CLAUDECODE && bash station/operator_daemon.sh" Enter
 
     echo "Operator daemon started in tmux: $SESSION:operator"
     echo "  Logs: tmux attach -t $SESSION:operator"
@@ -70,7 +70,7 @@ start_listener() {
     fi
 
     tmux send-keys -t "$SESSION:listener" \
-        "cd '$RADIO_DIR' && bash mac/listener_daemon.sh" Enter
+        "cd '$RADIO_DIR' && bash station/listener_daemon.sh" Enter
 
     echo "Listener daemon started in tmux: $SESSION:listener"
     echo "  Logs: tmux attach -t $SESSION:listener"

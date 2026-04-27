@@ -12,9 +12,9 @@ import re
 from pathlib import Path
 from typing import Iterable
 
-from mac.google_tts import VOICES as GOOGLE_VOICE_LABELS, generate_speech as generate_google_speech
-from mac.kokoro.tts import VOICES as KOKORO_VOICE_LABELS, render_speech
-from mac.minimax_tts import generate_speech
+from station.google_tts import VOICES as GOOGLE_VOICE_LABELS, generate_speech as generate_google_speech
+from station.kokoro.tts import VOICES as KOKORO_VOICE_LABELS, render_speech
+from station.minimax_tts import generate_speech
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VOICE_SAMPLE_DIR = PROJECT_ROOT / "output" / "voice_samples"
