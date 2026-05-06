@@ -95,3 +95,23 @@ def icecast_status_url() -> str:
         "ICECAST_STATUS_URL",
         f"http://{os.environ.get('ICECAST_HOST', 'localhost')}:{int(os.environ.get('ICECAST_PORT', '8000'))}/status-json.xsl",
     )
+
+
+def admin_password() -> str:
+    return os.environ.get("WRIT_ADMIN_PASSWORD", "")
+
+
+def admin_session_days() -> int:
+    return int(os.environ.get("WRIT_ADMIN_SESSION_DAYS", "30"))
+
+
+def listener_auth_enabled() -> bool:
+    return os.environ.get("WRIT_LISTENER_AUTH", "").strip() == "1"
+
+
+def listener_lan_ranges() -> str:
+    return os.environ.get("WRIT_LISTENER_LAN_RANGES", "10.0.0.0/23")
+
+
+def kokoro_service_url() -> str:
+    return os.environ.get("KOKORO_SERVICE_URL", "")

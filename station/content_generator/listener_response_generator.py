@@ -36,7 +36,7 @@ from shared.hosts import assignment_voice, primary_host_assignment
 from shared.settings import default_voice_for_backend
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SCHEDULE_PATH = PROJECT_ROOT / "config" / "schedule.yaml"
+SCHEDULE_PATH = PROJECT_ROOT / "config"
 OUTPUT_DIR = PROJECT_ROOT / "output" / "talk_segments"
 SCRIPTS_DIR = PROJECT_ROOT / "output" / "scripts"
 MESSAGES_FILE = Path.home() / ".writ" / "messages.json"

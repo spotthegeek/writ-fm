@@ -20,6 +20,17 @@ output/generation.log
 output/jobs/
 output/source_cache/
 output/voice_samples/
+output/listener_tokens.json
+output/ondemand/
+
+# Temp / scratch
+temp/
+tools/p.txt
+handover.md
+listener-app/original.html
+
+# Deployment seed prompts (one-time use, may contain env-specific details)
+deploy/seed-prompt*.md
 
 # Dev files
 command.txt

@@ -1,0 +1,137 @@
+# Docker Swarm production stack.
+# Deploy with:
+#   set -a && source .env.production && set +a
+#   docker stack deploy -c docker-stack.yml writ-fm
+#
+# ⚠️  LXC IPVS limitation: Docker Swarm's overlay VIP routing does not work
+# correctly inside Proxmox LXC containers (IPVS rules are not programmed).
+# Cross-node service-to-service communication via VIP will silently time out.
+#
+# Workarounds applied:
+#   - icecast uses endpoint_mode: dnsrr (bypasses VIP, returns real container IP)
+#   - All services must run on the SAME node so VIP routing is local (and works)
+#
+# Ensure only ONE node is labelled role=writ-fm:
+#   docker node update --label-add role=writ-fm <node-name>
+#   docker node update --label-rm role=writ-fm <other-node>
+
+volumes:
+  config:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/docker-volumes/fm01_config/_data
+  output:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/docker-volumes/fm01_output/_data
+
+services:
+  admin:
+    image: writ-fm:${VERSION:-latest}
+    working_dir: /code/writ-fm/admin
+    command: python app.py
+    ports:
+      - target: 8080
+        published: ${WRIT_ADMIN_PORT:-8080}
+        mode: host
+    environment:
+      # Station
+      - KOKORO_SERVICE_URL=${KOKORO_SERVICE_URL}
+      - OLLAMA_URL=${OLLAMA_URL}
+      - OLLAMA_MODEL=${OLLAMA_MODEL}
+      # TTS
+      - GOOGLE_TTS_API_KEY=${GOOGLE_TTS_API_KEY}
+      - GOOGLE_TTS_MODEL=${GOOGLE_TTS_MODEL}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - MINIMAX_API_KEY=${MINIMAX_API_KEY}
+      - MINIMAX_TOKEN_PLAN_API_KEY=${MINIMAX_TOKEN_PLAN_API_KEY}
+      - MINIMAX_MUSIC_MODEL=${MINIMAX_MUSIC_MODEL}
+      # Icecast
+      - ICECAST_PASS=${ICECAST_PASS}
+      - ICECAST_HOST=${ICECAST_HOST:-icecast}
+      - ICECAST_PORT=${ICECAST_PORT:-8000}
+      # Streamer API (admin talks to streamer over the overlay network)
+      - WRIT_STREAMER_API=http://streamer:8001
+      # Admin auth
+      - WRIT_ADMIN_PASSWORD=${WRIT_ADMIN_PASSWORD}
+      - WRIT_ADMIN_PORT=${WRIT_ADMIN_PORT:-8080}
+      # Listener app
+      - WRIT_LISTENER_AUTH=${WRIT_LISTENER_AUTH:-1}
+      - WRIT_LISTENER_LAN_RANGES=${WRIT_LISTENER_LAN_RANGES:-10.0.0.0/23}
+      # Audiobookshelf
+      - WRIT_ABS_URL=${WRIT_ABS_URL}
+      - WRIT_ABS_API_KEY=${WRIT_ABS_API_KEY}
+      - WRIT_INGEST_API_KEY=${WRIT_INGEST_API_KEY}
+      # Misc
+      - WRIT_CONSUME_SEGMENTS=1
+      - HF_TOKEN=${HF_TOKEN}
+    volumes:
+      - output:/code/writ-fm/output
+      - config:/code/writ-fm/config
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+      placement:
+        constraints:
+          - node.labels.role == writ-fm
+      update_config:
+        order: stop-first
+
+  streamer:
+    image: writ-fm:${VERSION:-latest}
+    command: python station/stream_gapless.py
+    ports:
+      - target: 8001
+        published: 8001
+        mode: host
+    environment:
+      - WRIT_CONSUME_SEGMENTS=1
+      - ICECAST_PASS=${ICECAST_PASS}
+      - ICECAST_HOST=${ICECAST_HOST:-icecast}
+      - ICECAST_PORT=${ICECAST_PORT:-8000}
+      - WRIT_LISTENER_AUTH=${WRIT_LISTENER_AUTH:-1}
+      - WRIT_LISTENER_LAN_RANGES=${WRIT_LISTENER_LAN_RANGES:-10.0.0.0/23}
+      - WRIT_INGEST_API_KEY=${WRIT_INGEST_API_KEY}
+    volumes:
+      - output:/code/writ-fm/output
+      - config:/code/writ-fm/config
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+      placement:
+        constraints:
+          - node.labels.role == writ-fm
+      update_config:
+        order: stop-first
+
+  icecast:
+    image: libretime/icecast
+    environment:
+      - ICECAST_SOURCE_PASSWORD=${ICECAST_PASS}
+      - ICECAST_RELAY_PASSWORD=${ICECAST_PASS}
+      - ICECAST_ADMIN_PASSWORD=${ICECAST_ADMIN_PASS}
+      - ICECAST_MAX_CLIENTS=100
+      - ICECAST_MAX_SOURCES=4
+      - ICECAST_HOSTNAME=${ICECAST_HOSTNAME:-localhost}
+    deploy:
+      endpoint_mode: dnsrr
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+      placement:
+        constraints:
+          - node.labels.role == writ-fm
+      update_config:
+        order: stop-first

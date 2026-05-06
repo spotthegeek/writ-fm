@@ -33,10 +33,11 @@ from pathlib import Path
 from typing import Callable
 
 import yaml
+from shared.config_loader import load_station_config, load_station
 from shared.settings import minimax_music_model, ollama_model, ollama_url
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SCHEDULE_PATH = PROJECT_ROOT / "config" / "schedule.yaml"
+CONFIG_DIR = PROJECT_ROOT / "config"
 TALK_DIR = PROJECT_ROOT / "output" / "talk_segments"
 BUMPERS_DIR = PROJECT_ROOT / "output" / "music_bumpers"
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python3"
@@ -179,32 +180,60 @@ state = SchedulerState()
 _inventory_invalidator: Callable[[str | None], None] | None = None
 
 
+_STRUCTURAL_SEGMENT_PREFIXES = (
+    "station_id_", "show_intro_", "show_outro_", "news_briefing_", "daily_briefing_",
+)
+
 def _count_inventory(directory: Path, show_id: str) -> int:
     d = directory / show_id
     if not d.exists():
         return 0
-    return sum(1 for f in d.iterdir() if f.is_file() and f.suffix.lower() in AUDIO_EXTS)
+    return sum(
+        1 for f in d.iterdir()
+        if f.is_file()
+        and f.suffix.lower() in AUDIO_EXTS
+        and not f.name.startswith(_STRUCTURAL_SEGMENT_PREFIXES)
+    )
 
 
-def _cadence_ok(show_id: str, content_type: str, cadence: str) -> bool:
-    """Return True if enough time has passed since the last run for this cadence."""
+def _cadence_ok(show_id: str, content_type: str, cadence: str, time_after: str | None = None) -> bool:
+    """Return True if the cadence allows generation now.
+
+    For daily/weekly/etc. cadences with a time_after value (e.g. "05:30"),
+    uses a calendar-day check: allowed once per day after that local time.
+    Without time_after, falls back to a rolling minimum-gap check.
+    """
     min_gap = CADENCE_SECONDS.get(cadence, 0)
     if min_gap == 0:
         return True
+
+    now = _station_now()
+
+    if cadence == "daily" and time_after:
+        try:
+            hh, mm = (int(x) for x in time_after.split(":"))
+        except Exception:
+            hh, mm = 0, 0
+        if now.hour < hh or (now.hour == hh and now.minute < mm):
+            return False  # too early in the day
+        last = state.last_run(show_id, content_type)
+        if last is None:
+            return True
+        return last.date() < now.date()
+
     last = state.last_run(show_id, content_type)
     if last is None:
         return True
-    return (_station_now() - last).total_seconds() >= min_gap
+    return (now - last).total_seconds() >= min_gap
 
 
 def _load_schedule() -> dict:
-    with open(SCHEDULE_PATH) as f:
-        return yaml.safe_load(f)
+    return load_station_config(CONFIG_DIR)
 
 
 def _station_tz():
     try:
-        data = _load_schedule()
+        data = load_station(CONFIG_DIR)
         tz_name = str(data.get("timezone", "local")).strip() or "local"
         if tz_name in {"local", "system"}:
             return None
@@ -236,6 +265,7 @@ def _build_generation_env() -> dict:
         "MINIMAX_TOKEN_PLAN_API_KEY": os.environ.get("MINIMAX_TOKEN_PLAN_API_KEY", ""),
         "MINIMAX_MUSIC_MODEL": minimax_music_model(),
         "WRIT_CONSUME_SEGMENTS": os.environ.get("WRIT_CONSUME_SEGMENTS", "1"),
+        "KOKORO_SERVICE_URL": os.environ.get("KOKORO_SERVICE_URL", ""),
     }
     hf_token = os.environ.get("HF_TOKEN", "")
     if hf_token:
@@ -456,6 +486,60 @@ def _briefing_daily_has_deps() -> bool:
     return found >= 2
 
 
+def _newest_segment_time(show_dir: Path) -> datetime | None:
+    """Return the most recent generation datetime from audio files in show_dir."""
+    if not show_dir.exists():
+        return None
+    tz = _station_tz()
+    best: datetime | None = None
+    for f in show_dir.iterdir():
+        if not f.is_file() or f.suffix.lower() not in AUDIO_EXTS:
+            continue
+        dt: datetime | None = None
+        sidecar = f.with_suffix(".json")
+        if sidecar.exists():
+            try:
+                import json as _json
+                meta = _json.loads(sidecar.read_text())
+                gen_at = meta.get("generated_at")
+                if gen_at:
+                    dt = datetime.fromisoformat(gen_at.replace("Z", "+00:00"))
+            except Exception:
+                pass
+        if dt is None:
+            mtime = f.stat().st_mtime
+            dt = datetime.fromtimestamp(mtime, tz) if tz else datetime.fromtimestamp(mtime)
+        # Normalise to station-aware datetime for comparison
+        if dt.tzinfo is None and tz:
+            dt = dt.replace(tzinfo=tz)
+        elif dt.tzinfo is not None and tz:
+            dt = dt.astimezone(tz)
+        if best is None or dt > best:
+            best = dt
+    return best
+
+
+def _seed_last_run_from_fs() -> None:
+    """Seed last_run_per_show from the newest on-disk segments so restarts don't storm.
+
+    Without this, every daily/weekly show fires immediately after a restart
+    because last_run_per_show is empty and _cadence_ok returns True for all of them.
+    """
+    try:
+        data = _load_schedule()
+    except Exception:
+        return
+    for show_id in data.get("shows", {}):
+        talk_time = _newest_segment_time(TALK_DIR / show_id)
+        if talk_time:
+            with state._lock:
+                state.last_run_per_show.setdefault(show_id, {})["talk"] = talk_time
+        music_time = _newest_segment_time(BUMPERS_DIR / show_id)
+        if music_time:
+            with state._lock:
+                state.last_run_per_show.setdefault(show_id, {})["music"] = music_time
+
+
 def _check_and_generate(job_registry: dict):
     """One pass: check inventory for all shows and trigger generation as needed."""
     try:
@@ -491,11 +575,22 @@ def _check_and_generate(job_registry: dict):
             inventory = _count_inventory(TALK_DIR, show_id)
             target = int(talk_cfg["target_inventory"])
             minimum = int(talk_cfg["min_inventory"])
+            cadence = talk_cfg.get("cadence", "continuous")
+            time_after = talk_cfg.get("time_after") or None
 
-            if inventory < minimum and _cadence_ok(show_id, "talk", talk_cfg["cadence"]):
+            if cadence == "continuous":
+                # Top up whenever inventory drops below minimum
+                should_run = inventory < minimum
                 needed = target - inventory
+            else:
+                # Time-based (daily/weekly/…): cadence drives generation, not inventory.
+                # Always produce at least 1; never exceed target.
+                should_run = _cadence_ok(show_id, "talk", cadence, time_after)
+                needed = max(1, target - inventory)
+
+            if should_run and needed > 0:
                 state.add_log(show_id, "talk",
-                    f"Inventory {inventory} < min {minimum} → generating {needed}")
+                    f"Inventory {inventory}, cadence={cadence} → generating {needed}")
                 t = threading.Thread(
                     target=_run_talk_generation,
                     args=(show_id, needed, job_registry, env, _inventory_invalidator),
@@ -519,12 +614,19 @@ def _check_and_generate(job_registry: dict):
             inventory = _count_inventory(BUMPERS_DIR, show_id)
             target = int(music_cfg["target_inventory"])
             minimum = int(music_cfg["min_inventory"])
+            cadence = music_cfg.get("cadence", "continuous")
 
-            if inventory < minimum and _cadence_ok(show_id, "music", music_cfg["cadence"]):
+            if cadence == "continuous":
+                should_run = inventory < minimum
                 needed = target - inventory
+            else:
+                should_run = _cadence_ok(show_id, "music", cadence)
+                needed = max(1, target - inventory)
+
+            if should_run and needed > 0:
                 bumper_style = show.get("bumper_style", "ambient")
                 state.add_log(show_id, "music",
-                    f"Bumper inventory {inventory} < min {minimum} → generating {needed}")
+                    f"Bumper inventory {inventory}, cadence={cadence} → generating {needed}")
                 t = threading.Thread(
                     target=_run_music_generation,
                     args=(show_id, needed, bumper_style, job_registry, env, _inventory_invalidator),
@@ -543,6 +645,7 @@ def run_scheduler(job_registry: dict, check_interval: int = 300):
     """
     state.running = True
     print(f"[scheduler] Started. Check interval: {check_interval}s")
+    _seed_last_run_from_fs()
     last_cleanup = 0.0
 
     while state.running:

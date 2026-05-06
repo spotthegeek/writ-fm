@@ -282,6 +282,7 @@ class StationSchedule:
     overrides: list[ScheduleBlock]
     timezone_name: str = "local"
     station_name: str = "WRIT-FM"
+    tagline: str = "AI generated radio"
     podcast_hours: set[int] = field(default_factory=set)
 
     def validate(self) -> None:
@@ -381,12 +382,16 @@ class StationSchedule:
 
 
 def load_schedule(path: Path) -> StationSchedule:
-    try:
-        payload = yaml.safe_load(path.read_text())
-    except FileNotFoundError:
-        raise
-    except Exception as exc:
-        raise ScheduleError(f"Failed to read schedule YAML: {exc}") from exc
+    if path.is_dir():
+        from shared.config_loader import load_station_config
+        payload = load_station_config(path)
+    else:
+        try:
+            payload = yaml.safe_load(path.read_text())
+        except FileNotFoundError:
+            raise
+        except Exception as exc:
+            raise ScheduleError(f"Failed to read schedule YAML: {exc}") from exc
 
     if not isinstance(payload, dict):
         raise ScheduleError("Schedule YAML must be a mapping at the top level")
@@ -497,6 +502,7 @@ def load_schedule(path: Path) -> StationSchedule:
         raise ScheduleError("Missing or invalid `schedule` section")
     timezone_name = str(payload.get("timezone", "local")).strip() or "local"
     station_name = str(payload.get("station_name", "WRIT-FM")).strip() or "WRIT-FM"
+    tagline = str(payload.get("tagline", "AI generated radio")).strip()
     _station_tz(timezone_name)
 
     base_raw = sched.get("base")
@@ -529,6 +535,7 @@ def load_schedule(path: Path) -> StationSchedule:
         overrides=override_blocks,
         timezone_name=timezone_name,
         station_name=station_name,
+        tagline=tagline,
         podcast_hours=podcast_hours,
     )
     schedule.validate()
@@ -541,8 +548,8 @@ def _cli() -> int:
     parser = argparse.ArgumentParser(description="WRIT-FM schedule tools")
     parser.add_argument(
         "--schedule",
-        default=str(Path(__file__).resolve().parents[1] / "config" / "schedule.yaml"),
-        help="Path to schedule.yaml",
+        default=str(Path(__file__).resolve().parents[1] / "config"),
+        help="Path to config directory (or legacy schedule.yaml)",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 

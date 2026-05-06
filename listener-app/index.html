@@ -1,1127 +1,2011 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WRIT-FM</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <style>
-        :root {
-            --bg-color: #ffffff;
-            --text-color: #333333;
-            --text-muted: #888888;
-            --box-bg: #f9f9f9;
-            --border-color: #eeeeee;
-            --font-mono: 'Courier New', Courier, monospace;
-            --font-serif: Georgia, 'Times New Roman', Times, serif;
-        }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WRIT-FM</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230891b2'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23fff'/%3E%3Cpath d='M16 7a9 9 0 0 1 9 9' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' fill='none'/%3E%3Cpath d='M16 7a9 9 0 0 0-9 9' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' fill='none'/%3E%3Cpath d='M16 3a13 13 0 0 1 13 13' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' fill='none' opacity='.45'/%3E%3Cpath d='M16 3a13 13 0 0 0-13 13' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' fill='none' opacity='.45'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ── Palettes ─────────────────────────────────────────────────────────────
+   * Five curated palettes; each defines a complete light + dark token set.
+   * The active palette is set via [data-palette="..."] on <html>.
+   * Light/dark within a palette is set via [data-theme="dark"] on <body>.
+   */
 
-        [data-theme="dark"] {
-            --bg-color: #121212;
-            --text-color: #e0e0e0;
-            --text-muted: #888888;
-            --box-bg: #1e1e1e;
-            --border-color: #333333;
-        }
+  /* Defaults / type / spacing — palette-independent */
+  :root {
+    --on-accent: #ffffff;
 
-        body {
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            font-family: var(--font-mono);
-            margin: 0;
-            padding: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            transition: background-color 0.3s, color 0.3s;
-        }
+    --font-display: 'Geist', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --font-sans:    'Geist', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --font-mono:    'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
-        .container {
-            width: 100%;
-            max-width: 600px;
-            padding: 20px;
-            box-sizing: border-box;
-        }
+    --pad-page-x: 36px;
+    --pad-card:   36px;
+    --pad-row-y:  14px;
 
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 20px;
-        }
+    --radius: 12px;
+  }
 
-        .header-left .title {
-            font-size: 1.2rem;
-            letter-spacing: 2px;
-            margin: 0 0 5px 0;
-            font-weight: normal;
-        }
+  /* ── Palette: Pine (default — green, neutral grays) ────────────────────── */
+  :root,
+  [data-palette="pine"] {
+    --accent: #2f8a5e;
+    --accent-soft: #2f8a5e22;
+    --bg:        #f4f5f6;
+    --surface:   #ffffff;
+    --surface-2: #f8f9fa;
+    --surface-hi:#e8f1ec;
+    --ink:       #14171a;
+    --ink-2:     #3d4248;
+    --ink-3:     #6b7178;
+    --ink-4:     #9ca2a9;
+    --hairline:  #e3e5e8;
+    --hairline-q:#eceef0;
+    --inv-bg:    #14171a;
+    --inv-ink:   #f4f5f6;
+    --inv-ink-2: #b8bcc1;
+  }
+  [data-palette="pine"][data-theme="dark"],
+  [data-palette="pine"] [data-theme="dark"],
+  body[data-theme="dark"] {
+    --bg:        #0e1013;
+    --surface:   #181b1f;
+    --surface-2: #131519;
+    --surface-hi:#15241c;
+    --ink:       #ecedee;
+    --ink-2:     #b6b9bd;
+    --ink-3:     #878a8f;
+    --ink-4:     #5a5d62;
+    --hairline:  #262a30;
+    --hairline-q:#1d2024;
+    --inv-bg:    #ecedee;
+    --inv-ink:   #0e1013;
+    --inv-ink-2: #44474c;
+  }
 
-        .header-left .subtitle {
-            font-family: var(--font-serif);
-            font-style: italic;
-            color: var(--text-muted);
-            margin: 0;
-            font-size: 0.9rem;
-        }
+  /* ── Palette: Signal (orange on cool gray) ─────────────────────────────── */
+  [data-palette="signal"] {
+    --accent: #e25c39;
+    --accent-soft: #e25c3922;
+    --bg:        #f4f5f6;
+    --surface:   #ffffff;
+    --surface-2: #f8f9fa;
+    --surface-hi:#fbece6;
+    --ink:       #14171a;
+    --ink-2:     #3d4248;
+    --ink-3:     #6b7178;
+    --ink-4:     #9ca2a9;
+    --hairline:  #e3e5e8;
+    --hairline-q:#eceef0;
+    --inv-bg:    #14171a;
+    --inv-ink:   #f4f5f6;
+    --inv-ink-2: #b8bcc1;
+  }
+  [data-palette="signal"][data-theme="dark"],
+  body[data-palette="signal"][data-theme="dark"] {
+    --bg:        #0e1013;
+    --surface:   #181b1f;
+    --surface-2: #131519;
+    --surface-hi:#2a1a14;
+    --ink:       #ecedee;
+    --ink-2:     #b6b9bd;
+    --ink-3:     #878a8f;
+    --ink-4:     #5a5d62;
+    --hairline:  #262a30;
+    --hairline-q:#1d2024;
+    --inv-bg:    #ecedee;
+    --inv-ink:   #0e1013;
+    --inv-ink-2: #44474c;
+  }
 
-        .header-right {
-            text-align: right;
-            font-size: 0.9rem;
-            color: var(--text-muted);
-            display: flex;
-            flex-direction: column;
-            align-items: flex-end;
-            gap: 5px;
-        }
+  /* ── Palette: Cobalt (blue on neutral) ─────────────────────────────────── */
+  [data-palette="cobalt"] {
+    --accent: #3768d6;
+    --accent-soft: #3768d622;
+    --bg:        #f4f5f6;
+    --surface:   #ffffff;
+    --surface-2: #f8f9fa;
+    --surface-hi:#e7eefa;
+    --ink:       #14171a;
+    --ink-2:     #3d4248;
+    --ink-3:     #6b7178;
+    --ink-4:     #9ca2a9;
+    --hairline:  #e3e5e8;
+    --hairline-q:#eceef0;
+    --inv-bg:    #14171a;
+    --inv-ink:   #f4f5f6;
+    --inv-ink-2: #b8bcc1;
+  }
+  [data-palette="cobalt"][data-theme="dark"],
+  body[data-palette="cobalt"][data-theme="dark"] {
+    --bg:        #0e1013;
+    --surface:   #181b1f;
+    --surface-2: #131519;
+    --surface-hi:#152038;
+    --ink:       #ecedee;
+    --ink-2:     #b6b9bd;
+    --ink-3:     #878a8f;
+    --ink-4:     #5a5d62;
+    --hairline:  #262a30;
+    --hairline-q:#1d2024;
+    --inv-bg:    #ecedee;
+    --inv-ink:   #0e1013;
+    --inv-ink-2: #44474c;
+  }
 
-        .theme-toggle {
-            background: none;
-            border: 1px solid var(--border-color);
-            color: var(--text-muted);
-            font-family: var(--font-mono);
-            font-size: 0.7rem;
-            cursor: pointer;
-            padding: 2px 6px;
-            border-radius: 3px;
-        }
+  /* ── Palette: Plum (mauve on cool gray) ────────────────────────────────── */
+  [data-palette="plum"] {
+    --accent: #9c3f87;
+    --accent-soft: #9c3f8722;
+    --bg:        #f4f5f6;
+    --surface:   #ffffff;
+    --surface-2: #f8f9fa;
+    --surface-hi:#f4e8f1;
+    --ink:       #14171a;
+    --ink-2:     #3d4248;
+    --ink-3:     #6b7178;
+    --ink-4:     #9ca2a9;
+    --hairline:  #e3e5e8;
+    --hairline-q:#eceef0;
+    --inv-bg:    #14171a;
+    --inv-ink:   #f4f5f6;
+    --inv-ink-2: #b8bcc1;
+  }
+  [data-palette="plum"][data-theme="dark"],
+  body[data-palette="plum"][data-theme="dark"] {
+    --bg:        #0e1013;
+    --surface:   #181b1f;
+    --surface-2: #131519;
+    --surface-hi:#26152a;
+    --ink:       #ecedee;
+    --ink-2:     #b6b9bd;
+    --ink-3:     #878a8f;
+    --ink-4:     #5a5d62;
+    --hairline:  #262a30;
+    --hairline-q:#1d2024;
+    --inv-bg:    #ecedee;
+    --inv-ink:   #0e1013;
+    --inv-ink-2: #44474c;
+  }
 
-        .main-box {
-            background-color: var(--box-bg);
-            border: 1px solid var(--border-color);
-            padding: 30px;
-            position: relative;
-            min-height: 250px;
-            display: flex;
-            flex-direction: column;
-            margin-bottom: 20px;
-            transition: background-color 0.3s, border-color 0.3s;
-        }
+  /* ── Palette: Mono (true monochrome — no accent hue) ───────────────────── */
+  [data-palette="mono"] {
+    --accent: #14171a;
+    --accent-soft: #14171a22;
+    --bg:        #f5f6f7;
+    --surface:   #ffffff;
+    --surface-2: #fafbfc;
+    --surface-hi:#ebedee;
+    --ink:       #14171a;
+    --ink-2:     #3d4248;
+    --ink-3:     #6b7178;
+    --ink-4:     #9ca2a9;
+    --hairline:  #e1e3e6;
+    --hairline-q:#ebedee;
+    --inv-bg:    #14171a;
+    --inv-ink:   #f5f6f7;
+    --inv-ink-2: #b8bcc1;
+    --on-accent: #f5f6f7;
+  }
+  [data-palette="mono"][data-theme="dark"],
+  body[data-palette="mono"][data-theme="dark"] {
+    --accent: #ecedee;
+    --accent-soft: #ecedee22;
+    --bg:        #0d0e10;
+    --surface:   #16181b;
+    --surface-2: #121316;
+    --surface-hi:#1f2125;
+    --ink:       #ecedee;
+    --ink-2:     #b6b9bd;
+    --ink-3:     #878a8f;
+    --ink-4:     #5a5d62;
+    --hairline:  #25282d;
+    --hairline-q:#1c1e22;
+    --inv-bg:    #ecedee;
+    --inv-ink:   #0d0e10;
+    --inv-ink-2: #4a4d52;
+    --on-accent: #0d0e10;
+  }
 
-        .box-header {
-            display: flex;
-            justify-content: space-between;
-            font-size: 0.8rem;
-            color: var(--text-muted);
-            margin-bottom: 30px;
-        }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    transition: background-color .25s, color .25s;
+  }
 
-        .status {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
+  .page { max-width: 1240px; margin: 0 auto; }
 
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background-color: #ccc;
-        }
+  /* ── Top nav ──────────────────────────────────────────────────────────── */
+  .topnav {
+    display: flex; align-items: center; gap: 28px;
+    padding: 18px var(--pad-page-x);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-mark {
+    width: 36px; height: 36px; border-radius: 8px;
+    background: var(--ink); color: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-display); font-size: 18px; font-weight: 600; letter-spacing: -0.02em;
+  }
+  .brand-text { font-family: var(--font-mono); font-size: 12px; letter-spacing: 3px; font-weight: 500; }
+  .brand-sub  { font-family: var(--font-sans); font-size: 11px; color: var(--ink-3); margin-top: 2px; }
 
-        .status-dot.online {
-            background-color: #4CAF50;
-            box-shadow: 0 0 5px #4CAF50;
-        }
+  .nav-tabs { display: flex; gap: 28px; margin-left: 12px; }
+  .nav-tab  {
+    background: none; border: none; padding: 4px 0;
+    font: inherit; font-size: 14px; color: var(--ink-3);
+    cursor: pointer; letter-spacing: .2px;
+  }
+  .nav-tab:hover { color: var(--ink-2); }
+  .nav-tab.active {
+    color: var(--ink); font-weight: 500;
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 4px;
+  }
 
-        .host-info {
-            font-family: var(--font-serif);
-            font-style: italic;
-        }
+  .nav-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  .listener-badge {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--ink); color: var(--bg);
+    padding: 6px 12px; border-radius: 999px;
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 1.5px;
+  }
+  .listener-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .listener-dot.offline { background: var(--ink-4); box-shadow: none; }
 
-        .show-info {
-            margin-bottom: 40px;
-        }
+  .icon-btn {
+    width: 36px; height: 36px; border-radius: 8px;
+    border: 1px solid var(--hairline); background: transparent;
+    color: var(--ink-3); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 14px;
+  }
+  .icon-btn:hover { color: var(--ink); border-color: var(--ink-3); }
+  a.icon-btn { text-decoration: none; }
 
-        .transmission-label {
-            font-size: 0.7rem;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            color: var(--text-muted);
-            margin-bottom: 10px;
-        }
+  /* Palette picker */
+  .palette-wrap { position: relative; }
+  .palette-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    height: 36px; padding: 0 12px; border-radius: 8px;
+    border: 1px solid var(--hairline); background: transparent;
+    color: var(--ink-2); cursor: pointer;
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 1.5px;
+  }
+  .palette-btn:hover { color: var(--ink); border-color: var(--ink-3); }
+  .palette-swatch {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
+  }
+  .palette-menu {
+    position: absolute; top: calc(100% + 6px); right: 0;
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    padding: 6px;
+    min-width: 200px;
+    box-shadow: 0 12px 28px rgba(0,0,0,0.12);
+    display: none;
+    z-index: 100;
+  }
+  .palette-menu.open { display: block; }
+  .palette-option {
+    display: flex; align-items: center; gap: 12px;
+    width: 100%; padding: 8px 10px;
+    background: none; border: none; cursor: pointer;
+    border-radius: 6px; text-align: left;
+    font-family: var(--font-sans); font-size: 13px; color: var(--ink-2);
+  }
+  .palette-option:hover { background: var(--surface-2); color: var(--ink); }
+  .palette-option.active { color: var(--ink); }
+  .palette-option.active::after {
+    content: '✓'; margin-left: auto; color: var(--accent); font-size: 12px;
+  }
+  .palette-option .palette-swatch {
+    width: 18px; height: 18px;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
+  }
 
-        .show-title {
-            font-family: var(--font-serif);
-            font-size: 2rem;
-            margin: 0;
-            font-weight: normal;
-        }
-        
-        .track-title {
-            font-family: var(--font-mono);
-            font-size: 0.9rem;
-            color: var(--text-muted);
-            margin-top: 10px;
-        }
+  /* ── Main grid ────────────────────────────────────────────────────────── */
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1.6fr 1fr;
+    gap: 28px;
+    padding: 32px var(--pad-page-x);
+  }
+  @media (max-width: 880px) {
+    .main-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 520px) {
+    :root { --pad-page-x: 14px; --pad-card: 18px; }
+    .topnav { gap: 10px; padding: 12px var(--pad-page-x); }
+    .brand { flex-shrink: 0; }
+    .brand-words { display: none; }
+    .nav-tabs { gap: 16px; flex-shrink: 0; }
+    .nav-right { gap: 8px; }
+    .listener-badge { display: none; }
+    #palette-label { display: none; }
+    .palette-btn { padding: 0 8px; }
+    .player-vol { display: none; }
+  }
 
-        .live-progress {
-            margin-top: 14px;
-            display: none;
-        }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    padding: var(--pad-card);
+  }
 
-        .live-progress-bar {
-            width: 100%;
-            height: 2px;
-            background-color: var(--border-color);
-            position: relative;
-            overflow: hidden;
-        }
+  /* Hero */
+  .hero-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px; letter-spacing: 2.5px;
+    color: var(--accent);
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 14px;
+  }
+  .hero-eyebrow.offline { color: var(--ink-4); }
+  .air-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  .hero-eyebrow.offline .air-dot { background: var(--ink-4); box-shadow: none; animation: none; }
+  @keyframes pulse {
+    0%,100% { opacity: 1; }
+    50% { opacity: .55; }
+  }
 
-        .live-progress-fill {
-            height: 100%;
-            background-color: var(--text-muted);
-            width: 0%;
-            transition: width 0.8s linear;
-        }
+  .hero-title {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: clamp(44px, 6.5vw, 72px);
+    line-height: 1.02;
+    letter-spacing: -0.04em;
+    margin: 0;
+    color: var(--ink);
+  }
+  .hero-segment {
+    font-family: var(--font-sans);
+    font-size: 16px;
+    color: var(--ink-2);
+    margin-top: 14px;
+  }
+  .hero-host {
+    display: flex; align-items: center; gap: 12px;
+    margin-top: 22px; padding-bottom: 22px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .host-avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: var(--ink); color: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-display); font-size: 15px; font-weight: 600; letter-spacing: -0.01em;
+  }
+  .host-meta-label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 2px; color: var(--ink-4); }
+  .host-meta-name  { font-family: var(--font-display); font-size: 15px; font-weight: 500; color: var(--ink); margin-top: 2px; }
 
-        .live-progress-time {
-            display: flex;
-            justify-content: space-between;
-            font-size: 0.7rem;
-            color: var(--text-muted);
-            margin-top: 5px;
-            letter-spacing: 1px;
-        }
+  /* Player card (inverted) */
+  .player {
+    margin-top: 22px;
+    display: flex; align-items: center; gap: 18px;
+    background: var(--inv-bg); color: var(--inv-ink);
+    padding: 16px;
+    border-radius: var(--radius);
+  }
+  .player-play {
+    width: 56px; height: 56px; border-radius: 50%;
+    background: var(--accent); color: var(--on-accent);
+    border: none; cursor: pointer; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    transition: transform .15s, filter .15s;
+  }
+  .player-play:hover { filter: brightness(1.08); }
+  .player-play:active { transform: scale(0.96); }
+  .player-mid { flex: 1; min-width: 0; }
+  .player-track {
+    font-size: 13px; color: var(--inv-ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    margin-bottom: 8px;
+  }
+  .progress-track {
+    width: 100%; height: 3px; border-radius: 2px;
+    background: var(--inv-ink-2); opacity: .5; overflow: hidden;
+  }
+  .progress-fill { height: 100%; background: var(--accent); width: 0%; transition: width .8s linear; }
+  .progress-times {
+    display: flex; justify-content: space-between;
+    font-family: var(--font-mono); font-size: 10px; color: var(--inv-ink-2);
+    margin-top: 6px; letter-spacing: 1px;
+  }
+  .player-vol { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+  .vol-icon { color: var(--inv-ink-2); font-size: 14px; }
+  input[type="range"].vol-slider {
+    -webkit-appearance: none; appearance: none;
+    width: 90px; height: 3px; border-radius: 2px;
+    background: var(--inv-ink-2);
+    outline: none; cursor: pointer;
+  }
+  input[type="range"].vol-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--inv-ink); cursor: pointer;
+  }
+  input[type="range"].vol-slider::-moz-range-thumb {
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--inv-ink); cursor: pointer; border: none;
+  }
 
-        .controls-area {
-            margin-top: auto;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            position: relative;
-        }
+  .pill {
+    font-size: 12px; color: var(--ink-2);
+    border: 1px solid var(--hairline);
+    padding: 8px 14px; border-radius: 999px;
+    background: transparent; cursor: pointer;
+    font-family: inherit;
+  }
+  .pill:hover { color: var(--ink); border-color: var(--ink-3); }
+  .pill.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 
-        .play-btn {
-            width: 60px;
-            height: 60px;
-            border-radius: 50%;
-            border: 2px solid var(--text-color);
-            background: transparent;
-            cursor: pointer;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            color: var(--text-color);
-            transition: all 0.2s;
-        }
+  /* Aside — schedule */
+  .schedule-row {
+    display: flex; align-items: flex-start; gap: 14px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .schedule-row:last-child { border-bottom: none; }
+  .schedule-time {
+    font-family: var(--font-mono);
+    font-size: 13px; color: var(--ink); font-weight: 500;
+    width: 56px; flex-shrink: 0;
+  }
+  .schedule-name { font-family: var(--font-display); font-size: 14px; font-weight: 500; color: var(--ink); letter-spacing: -0.01em; }
+  .schedule-topic { font-size: 12px; color: var(--ink-3); margin-top: 2px; line-height: 1.4; }
+  .schedule-section-label {
+    font-family: var(--font-mono); font-size: 9px; letter-spacing: 2px;
+    color: var(--ink-4); text-transform: uppercase;
+    padding: 12px 0 4px;
+    border-top: 1px solid var(--hairline-q);
+    margin-top: 2px;
+  }
+  .schedule-section-label:first-child { border-top: none; padding-top: 0; }
+  .schedule-row.is-segment .schedule-time { color: var(--accent); }
+  .schedule-duration { font-size: 11px; color: var(--ink-4); margin-left: auto; padding-left: 8px; font-family: var(--font-mono); flex-shrink: 0; }
 
-        .play-btn:hover {
-            background-color: var(--text-color);
-            color: var(--bg-color);
-        }
+  /* On-Demand section */
+  .ondemand-section { padding: 0 var(--pad-page-x); margin-top: 8px; }
+  .ondemand-head {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    flex-wrap: wrap; gap: 16px; margin-bottom: 20px;
+  }
+  .ondemand-title {
+    font-family: var(--font-display);
+    font-size: 28px; font-weight: 600;
+    letter-spacing: -0.025em; color: var(--ink);
+    margin: 0;
+  }
+  .ondemand-filters { display: flex; gap: 8px; flex-wrap: wrap; }
+  .hide-listened-row {
+    display: flex; align-items: center; gap: 12px;
+    margin: 0 0 12px;
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 1.5px; color: var(--ink-3);
+  }
+  .hide-listened-row label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 
-        .play-icon {
-            margin-left: 4px;
-            border-top: 10px solid transparent;
-            border-bottom: 10px solid transparent;
-            border-left: 15px solid currentColor;
-        }
+  .ondemand-table {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .od-table-head {
+    display: grid;
+    grid-template-columns: 1fr 120px 80px;
+    gap: 16px;
+    padding: 14px 24px;
+    font-family: var(--font-mono);
+    font-size: 10px; letter-spacing: 2.5px; color: var(--ink-4);
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .od-row {
+    display: grid;
+    grid-template-columns: 1fr 120px 80px;
+    gap: 16px;
+    align-items: center;
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--hairline-q);
+    cursor: pointer;
+    transition: background-color .12s;
+  }
+  .od-row:last-child { border-bottom: none; }
+  .od-row:hover { background: var(--surface-2); }
+  .od-row.playing { background: var(--surface-hi); }
+  .od-row-title { font-family: var(--font-display); font-size: 15px; font-weight: 500; line-height: 1.3; color: var(--ink); letter-spacing: -0.01em; }
+  .od-row-meta {
+    font-size: 12px; color: var(--ink-3); margin-top: 4px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .od-row-progress { width: 100%; height: 2px; background: var(--hairline); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+  .od-row-progress-fill { height: 100%; background: var(--accent); }
+  .od-row-duration { font-family: var(--font-mono); font-size: 12px; color: var(--ink-3); }
+  .od-row-status {
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 1px;
+    color: var(--ink-4); text-align: right;
+  }
+  .od-row-status.listened { color: var(--accent); }
 
-        .pause-icon {
-            display: flex;
-            gap: 4px;
-        }
+  .od-empty {
+    padding: 28px 24px; text-align: center;
+    font-size: 13px; color: var(--ink-3);
+    font-family: var(--font-sans);
+  }
+  .od-loading {
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 1.5px; color: var(--ink-4);
+  }
 
-        .pause-icon div {
-            width: 4px;
-            height: 18px;
-            background-color: currentColor;
-        }
+  /* Player dock (on-demand) */
+  .od-dock {
+    margin-bottom: 20px;
+    display: flex; align-items: center; gap: 18px;
+    background: var(--inv-bg); color: var(--inv-ink);
+    padding: 16px; border-radius: var(--radius);
+  }
+  .od-dock-mid { flex: 1; min-width: 0; }
+  .od-dock-title {
+    font-family: var(--font-display); font-size: 14px; font-weight: 500;
+    color: var(--inv-ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    margin-bottom: 8px;
+  }
+  .od-dock-controls { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+  .od-skip {
+    background: none; border: none; color: var(--inv-ink-2);
+    cursor: pointer; font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 1px; padding: 4px 6px;
+  }
+  .od-skip:hover { color: var(--inv-ink); }
 
-        .volume-container {
-            position: absolute;
-            right: 0;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
+  input[type="range"].scrub {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 3px; border-radius: 2px;
+    background: var(--inv-ink-2);
+    outline: none; cursor: pointer;
+  }
+  input[type="range"].scrub::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--accent); cursor: pointer;
+  }
+  input[type="range"].scrub::-moz-range-thumb {
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--accent); cursor: pointer; border: none;
+  }
 
-        .volume-icon {
-            font-size: 1.2rem;
-            color: var(--text-muted);
-        }
+  /* ── Daily Briefings ─────────────────────────────────────────────────── */
+  .bf-section { padding: 28px var(--pad-page-x) 0; }
 
-        .volume-slider {
-            width: 80px;
-            accent-color: var(--text-muted);
-        }
+  .bf-dock {
+    display: flex; align-items: center; gap: 18px;
+    background: var(--inv-bg); color: var(--inv-ink);
+    padding: 16px; border-radius: var(--radius);
+    margin-bottom: 24px;
+  }
+  .bf-dock-mid { flex: 1; min-width: 0; }
+  .bf-dock-title {
+    font-family: var(--font-display); font-size: 14px; font-weight: 500;
+    color: var(--inv-ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    margin-bottom: 8px;
+  }
+  .bf-dock-controls { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
 
-        .accordion {
-            border-top: 1px solid var(--border-color);
-        }
+  .bf-cats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 14px;
+    margin-bottom: 32px;
+  }
+  .bf-cat-card {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    padding: 20px 20px 16px;
+    cursor: pointer;
+    transition: background-color .12s, border-color .12s, box-shadow .12s;
+    display: flex; flex-direction: column; gap: 6px;
+    min-height: 120px;
+  }
+  .bf-cat-card:hover {
+    border-color: var(--ink-3);
+    background: var(--surface-2);
+    box-shadow: 0 4px 16px rgba(0,0,0,.07);
+  }
+  .bf-cat-card.is-new { border-color: var(--accent); }
+  .bf-cat-card.is-playing {
+    background: var(--surface-hi);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+  }
+  .bf-cat-name {
+    font-family: var(--font-display);
+    font-size: 17px; font-weight: 600; letter-spacing: -0.02em;
+    color: var(--ink); line-height: 1.2;
+  }
+  .bf-cat-date {
+    font-family: var(--font-mono);
+    font-size: 11px; letter-spacing: .5px;
+    color: var(--ink-3);
+    margin-top: 2px;
+  }
+  .bf-cat-status {
+    font-family: var(--font-mono);
+    font-size: 10px; letter-spacing: 1.5px;
+    margin-top: auto; padding-top: 10px;
+    color: var(--accent);
+  }
+  .bf-cat-status.st-listened { color: var(--ink-4); }
+  .bf-cat-status.st-resume   { color: var(--ink-2); }
+  .bf-cat-status.st-playing  { color: var(--accent); }
 
-        .accordion-item {
-            border-bottom: 1px solid var(--border-color);
-        }
+  .bf-archive-head {
+    font-family: var(--font-mono);
+    font-size: 11px; letter-spacing: 2.5px; color: var(--ink-4);
+    text-transform: uppercase;
+    margin-bottom: 0;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .bf-arc-item { border-top: 1px solid var(--hairline); }
+  .bf-arc-header {
+    width: 100%; padding: 14px 0;
+    background: none; border: none; cursor: pointer;
+    display: flex; justify-content: space-between; align-items: center;
+    font-family: var(--font-sans); font-size: 14px; font-weight: 500; color: var(--ink-2);
+    text-align: left;
+  }
+  .bf-arc-header:hover { color: var(--ink); }
+  .bf-arc-header .glyph { font-size: 16px; transition: transform .2s; flex-shrink: 0; margin-left: 8px; }
+  .bf-arc-item.open .bf-arc-header { color: var(--ink); }
+  .bf-arc-item.open .bf-arc-header .glyph { transform: rotate(45deg); }
+  .bf-arc-content {
+    max-height: 0; overflow: hidden;
+    transition: max-height .25s ease-out;
+  }
+  .bf-arc-item.open .bf-arc-content { max-height: 800px; padding-bottom: 12px; overflow-y: auto; }
+  .bf-arc-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--hairline-q);
+    cursor: pointer;
+  }
+  .bf-arc-row:last-child { border-bottom: none; }
+  .bf-arc-row:hover { color: var(--ink); }
+  .bf-arc-date { font-family: var(--font-mono); font-size: 12px; color: var(--ink-3); min-width: 80px; }
+  .bf-arc-dur  { font-family: var(--font-mono); font-size: 12px; color: var(--ink-4); min-width: 44px; }
+  .bf-arc-title { font-size: 13px; color: var(--ink-2); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bf-arc-st   { font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px; margin-left: auto; flex-shrink: 0; }
+  .bf-arc-st.listened { color: var(--accent); }
+  .bf-arc-st.in-progress { color: var(--ink-3); }
 
-        .accordion-header {
-            width: 100%;
-            padding: 15px 0;
-            background: none;
-            border: none;
-            text-align: left;
-            font-family: var(--font-mono);
-            font-size: 0.8rem;
-            letter-spacing: 1px;
-            color: var(--text-muted);
-            cursor: pointer;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .accordion-header:hover {
-            color: var(--text-color);
-        }
+  /* ── Spinner (used by Library tab) ────────────────────────────────────── */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .lib-fetch-state {
+    padding: 48px 24px;
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+  }
+  .lib-spinner {
+    width: 32px; height: 32px;
+    border: 3px solid var(--hairline);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.75s linear infinite;
+  }
+  .lib-fetch-label {
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 2px; color: var(--ink-4);
+  }
+  .lib-error-state {
+    padding: 36px 24px; text-align: center;
+  }
+  .lib-error-state p { font-size: 13px; color: var(--ink-3); margin: 0 0 14px; }
+  .lib-retry-btn {
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 1.5px;
+    border: 1px solid var(--hairline); background: transparent;
+    color: var(--ink-3); padding: 8px 16px; border-radius: 6px; cursor: pointer;
+  }
+  .lib-retry-btn:hover { color: var(--ink); border-color: var(--ink-3); }
 
-        .accordion-content {
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.3s ease-out;
-            font-family: var(--font-serif);
-            font-size: 0.9rem;
-            color: var(--text-muted);
-        }
-        
-        .accordion-content.open {
-            max-height: 400px;
-            padding-bottom: 15px;
-            overflow-y: auto;
-        }
-
-        footer {
-            text-align: center;
-            margin-top: 40px;
-            font-size: 0.8rem;
-            letter-spacing: 2px;
-            color: var(--text-muted);
-        }
-
-        /* Message Form */
-        #message-form {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-        #message-form textarea {
-            width: 100%;
-            background: var(--bg-color);
-            color: var(--text-color);
-            border: 1px solid var(--border-color);
-            padding: 10px;
-            font-family: var(--font-mono);
-            box-sizing: border-box;
-            resize: vertical;
-        }
-        #message-form button {
-            align-self: flex-start;
-            background: transparent;
-            border: 1px solid var(--border-color);
-            color: var(--text-color);
-            padding: 5px 15px;
-            cursor: pointer;
-            font-family: var(--font-mono);
-        }
-        #message-form button:hover {
-            background: var(--text-color);
-            color: var(--bg-color);
-        }
-        
-        #schedule-content {
-            white-space: pre-wrap;
-            font-family: var(--font-mono);
-            font-size: 0.8rem;
-        }
-        
-        @media (max-width: 500px) {
-            .volume-container {
-                position: static;
-                margin-top: 20px;
-            }
-            .controls-area {
-                flex-direction: column;
-            }
-        }
-
-        /* ── Mode tabs ─────────────────────────────────── */
-        .mode-tabs {
-            display: flex;
-            gap: 0;
-            margin-bottom: 16px;
-            border: 1px solid var(--border-color);
-            border-radius: 5px;
-            overflow: hidden;
-        }
-        .mode-tab {
-            flex: 1;
-            background: transparent;
-            border: none;
-            color: var(--text-muted);
-            font-family: var(--font-mono);
-            font-size: 0.75rem;
-            letter-spacing: 1px;
-            padding: 7px 0;
-            cursor: pointer;
-            transition: background 0.15s, color 0.15s;
-        }
-        .mode-tab:first-child { border-right: 1px solid var(--border-color); }
-        .mode-tab.active {
-            background: var(--text-color);
-            color: var(--bg-color);
-        }
-
-        /* ── On-demand source pills ─────────────────────── */
-        .od-sources {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-            margin-bottom: 14px;
-        }
-        .od-source-pill {
-            background: transparent;
-            border: 1px solid var(--border-color);
-            color: var(--text-muted);
-            font-family: var(--font-mono);
-            font-size: 0.72rem;
-            letter-spacing: 1px;
-            padding: 4px 10px;
-            border-radius: 20px;
-            cursor: pointer;
-            transition: background 0.12s, color 0.12s;
-        }
-        .od-source-pill.active {
-            background: var(--text-color);
-            color: var(--bg-color);
-            border-color: var(--text-color);
-        }
-
-        /* ── On-demand item list ─────────────────────────── */
-        .od-list {
-            list-style: none;
-            margin: 0 0 14px 0;
-            padding: 0;
-            max-height: 260px;
-            overflow-y: auto;
-        }
-        .od-item {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 9px 0;
-            border-bottom: 1px solid var(--border-color);
-            cursor: pointer;
-            transition: opacity 0.1s;
-        }
-        .od-item:hover { opacity: 0.75; }
-        .od-item.playing { opacity: 1; }
-        .od-item-info { flex: 1; min-width: 0; }
-        .od-item-title {
-            font-size: 0.82rem;
-            color: var(--text-color);
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .od-item-meta {
-            font-size: 0.72rem;
-            color: var(--text-muted);
-            margin-top: 2px;
-        }
-        .od-item-badges { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
-        .od-badge-listened { font-size: 0.7rem; color: var(--text-muted); }
-        .od-badge-resume { font-size: 0.7rem; color: var(--text-muted); font-style: italic; }
-        .od-hide-listened-row {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .od-empty { font-size: 0.8rem; color: var(--text-muted); padding: 16px 0; text-align: center; }
-
-        /* ── On-demand player ────────────────────────────── */
-        .od-player {
-            background: var(--box-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 5px;
-            padding: 12px 14px;
-            margin-top: 4px;
-        }
-        .od-player-title {
-            font-size: 0.8rem;
-            color: var(--text-color);
-            margin-bottom: 8px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .od-player-time {
-            font-size: 0.72rem;
-            color: var(--text-muted);
-            margin-bottom: 6px;
-            display: flex;
-            justify-content: space-between;
-        }
-        .od-scrub {
-            width: 100%;
-            -webkit-appearance: none;
-            appearance: none;
-            height: 3px;
-            border-radius: 2px;
-            background: var(--border-color);
-            outline: none;
-            cursor: pointer;
-            margin-bottom: 10px;
-        }
-        .od-scrub::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            width: 12px; height: 12px;
-            border-radius: 50%;
-            background: var(--text-color);
-            cursor: pointer;
-        }
-        .od-controls {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 16px;
-        }
-        .od-btn {
-            background: none;
-            border: none;
-            color: var(--text-muted);
-            cursor: pointer;
-            font-family: var(--font-mono);
-            font-size: 0.75rem;
-            padding: 4px 8px;
-            letter-spacing: 1px;
-            transition: color 0.12s;
-        }
-        .od-btn:hover { color: var(--text-color); }
-        .od-btn-play {
-            border: 1px solid var(--border-color);
-            border-radius: 50%;
-            width: 34px; height: 34px;
-            display: flex; align-items: center; justify-content: center;
-            color: var(--text-color);
-        }
-    </style>
+  footer.signal {
+    text-align: center;
+    padding: 28px var(--pad-page-x) 36px;
+    margin-top: 24px;
+    font-family: var(--font-mono);
+    font-size: 11px; letter-spacing: 3px; color: var(--ink-4);
+  }
+</style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <div class="header-left">
-                <h1 class="title">WRIT - FM</h1>
-                <p class="subtitle">the frequency between frequencies</p>
-            </div>
-            <div class="header-right">
-                <div class="clock-listeners">
-                    <span id="clock">00:00</span> • <span id="listener-count">0</span>
-                </div>
-                <button class="theme-toggle" id="theme-btn">DARK MODE</button>
-            </div>
-        </header>
+<div class="page">
 
-        <nav class="mode-tabs">
-            <button class="mode-tab active" id="tab-live">LIVE</button>
-            <button class="mode-tab" id="tab-ondemand">ON-DEMAND</button>
-        </nav>
-
-        <section id="live-view">
-        <div class="main-box">
-            <div class="box-header">
-                <div class="status">
-                    <div class="status-dot" id="status-dot"></div>
-                    <span id="status-text">OFFLINE</span>
-                </div>
-                <div class="host-info">
-                    Listener Hours · <span id="host-name">unknown</span>
-                </div>
-            </div>
-
-            <div class="show-info">
-                <div class="transmission-label">TRANSMISSION</div>
-                <h2 class="show-title" id="show-title">Searching...</h2>
-                <div class="track-title" id="track-title"></div>
-                <div class="live-progress" id="live-progress">
-                    <div class="live-progress-bar">
-                        <div class="live-progress-fill" id="live-progress-fill"></div>
-                    </div>
-                    <div class="live-progress-time">
-                        <span id="live-elapsed">0:00</span>
-                        <span id="live-total">0:00</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="controls-area">
-                <button class="play-btn" id="play-btn" aria-label="Play">
-                    <div class="play-icon" id="play-icon"></div>
-                </button>
-
-                <div class="volume-container">
-                    <span class="volume-icon">🔊</span>
-                    <input type="range" class="volume-slider" id="volume-slider" min="0" max="1" step="0.01" value="0.8">
-                </div>
-            </div>
-        </div>
-
-        <div class="accordion">
-            <div class="accordion-item">
-                <button class="accordion-header">SEND A MESSAGE <span>+</span></button>
-                <div class="accordion-content">
-                    <form id="message-form">
-                        <textarea rows="3" placeholder="Leave a message in the dark..." id="msg-text" required maxlength="280"></textarea>
-                        <button type="submit">SEND</button>
-                        <div id="msg-status" style="font-size: 0.8rem; margin-top: 5px;"></div>
-                    </form>
-                </div>
-            </div>
-            <div class="accordion-item">
-                <button class="accordion-header" id="schedule-btn">SCHEDULE <span>+</span></button>
-                <div class="accordion-content">
-                    <div id="schedule-content">Loading schedule...</div>
-                </div>
-            </div>
-            <div class="accordion-item">
-                <button class="accordion-header">ABOUT <span>+</span></button>
-                <div class="accordion-content">
-                    <p>WRIT-FM is an autonomous, AI-driven internet radio station broadcasting talk segments, listener letters, and late-night philosophy.</p>
-                </div>
-            </div>
-        </div>
-
-        <footer>
-            the signal persists
-        </footer>
-        </section><!-- /live-view -->
-
-        <section id="ondemand-view" style="display:none;">
-            <div class="od-sources" id="od-sources"></div>
-            <div class="od-hide-listened-row">
-                <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                    <input type="checkbox" id="od-hide-listened"> hide listened
-                </label>
-                <span id="od-loading" style="display:none;">loading…</span>
-            </div>
-            <ul class="od-list" id="od-list">
-                <li class="od-empty">Select a source above.</li>
-            </ul>
-            <div class="od-player" id="od-player" style="display:none;">
-                <div class="od-player-title" id="od-player-title">—</div>
-                <div class="od-player-time">
-                    <span id="od-time-current">0:00</span>
-                    <span id="od-time-total">0:00</span>
-                </div>
-                <input type="range" class="od-scrub" id="od-scrub" min="0" max="100" step="0.1" value="0">
-                <div class="od-controls">
-                    <button class="od-btn" id="od-rr" title="Rewind 15s">« 15</button>
-                    <button class="od-btn od-btn-play" id="od-play-btn" aria-label="Play/Pause">
-                        <span id="od-play-icon">▶</span>
-                    </button>
-                    <button class="od-btn" id="od-ff" title="Forward 30s">30 »</button>
-                </div>
-            </div>
-        </section><!-- /ondemand-view -->
+  <!-- ── Top nav ─────────────────────────────────────── -->
+  <header class="topnav">
+    <div class="brand">
+      <div class="brand-mark" id="brand-mark">W</div>
+      <div class="brand-words">
+        <div class="brand-text" id="brand-text">WRIT-FM</div>
+        <div class="brand-sub" id="brand-sub">AI generated radio</div>
+      </div>
     </div>
+    <nav class="nav-tabs">
+      <button class="nav-tab active" id="tab-live">Live</button>
+      <button class="nav-tab" id="tab-briefings">Briefings</button>
+      <button class="nav-tab" id="tab-ondemand">On-Demand</button>
+      <button class="nav-tab" id="tab-library">Library</button>
+    </nav>
+    <div class="nav-right">
+      <div class="listener-badge" id="listener-badge">
+        <span class="listener-dot offline" id="listener-dot"></span>
+        <span id="listener-count">0</span> · <span id="clock">00:00</span>
+      </div>
+      <div class="palette-wrap">
+        <button class="palette-btn" id="palette-btn" title="Palette" aria-haspopup="menu" aria-expanded="false">
+          <span class="palette-swatch"></span>
+          <span id="palette-label">PINE</span>
+        </button>
+        <div class="palette-menu" id="palette-menu" role="menu"></div>
+      </div>
+      <a class="icon-btn" href="https://fm-admin.area4.net" target="_blank" rel="noopener" title="Admin">⚙</a>
+      <button class="icon-btn" id="theme-btn" title="Toggle theme">☼</button>
+    </div>
+  </header>
 
-    <audio id="audio-player" preload="none"></audio>
+  <!-- ── LIVE view ───────────────────────────────────── -->
+  <section id="live-view">
+    <div class="main-grid">
 
-    <script>
-        // ── API Endpoints ──────────────────────────────────────────────────────
-        const API_BASE = window.location.protocol === 'https:'
-            ? window.location.origin
-            : 'http://' + window.location.hostname + ':8001';
-        const STREAM_URL = window.location.protocol === 'https:'
-            ? window.location.origin + '/stream'
-            : 'http://' + window.location.hostname + ':8000/stream';
+      <!-- Hero -->
+      <div class="card hero">
+        <div class="hero-eyebrow offline" id="hero-eyebrow">
+          <span class="air-dot"></span>
+          <span id="status-text">OFFLINE</span>
+        </div>
+        <h1 class="hero-title" id="show-title">Searching…</h1>
+        <div class="hero-segment" id="track-title"></div>
 
-        // ── Elements ───────────────────────────────────────────────────────────
-        const audio = document.getElementById('audio-player');
-        const playBtn = document.getElementById('play-btn');
-        const playIcon = document.getElementById('play-icon');
-        const volumeSlider = document.getElementById('volume-slider');
-        const themeBtn = document.getElementById('theme-btn');
-        const clockEl = document.getElementById('clock');
-        const listenerCountEl = document.getElementById('listener-count');
-        const statusDot = document.getElementById('status-dot');
-        const statusText = document.getElementById('status-text');
-        const hostNameEl = document.getElementById('host-name');
-        const showTitleEl = document.getElementById('show-title');
-        const trackTitleEl = document.getElementById('track-title');
-        const scheduleContent = document.getElementById('schedule-content');
+        <div class="hero-host">
+          <div class="host-avatar" id="host-avatar">·</div>
+          <div>
+            <div class="host-meta-label">HOST</div>
+            <div class="host-meta-name" id="host-name">unknown</div>
+          </div>
+        </div>
 
-        // ── State ──────────────────────────────────────────────────────────────
-        let isPlaying = false;
-        let isOnline = false;
-        let currentMode = 'live'; // 'live' | 'ondemand'
-        let npStartedAt = null;   // ms timestamp when current segment began
-        let npTotal = null;       // segment duration in seconds
+        <!-- Player -->
+        <div class="player">
+          <button class="player-play" id="play-btn" aria-label="Play">
+            <svg id="play-icon" width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <path d="M5 3.5L16 10L5 16.5V3.5Z" fill="currentColor"/>
+            </svg>
+          </button>
+          <div class="player-mid">
+            <div class="player-track" id="player-track">Awaiting transmission…</div>
+            <div class="progress-track"><div class="progress-fill" id="live-progress-fill"></div></div>
+            <div class="progress-times">
+              <span id="live-elapsed">0:00</span>
+              <span id="live-total">0:00</span>
+            </div>
+          </div>
+          <div class="player-vol">
+            <span class="vol-icon">♪</span>
+            <input type="range" class="vol-slider" id="volume-slider" min="0" max="1" step="0.01" value="0.8">
+          </div>
+        </div>
 
-        // ── Theme Toggle ───────────────────────────────────────────────────────
-        const currentTheme = localStorage.getItem('theme') || 'light';
-        if (currentTheme === 'dark') {
-            document.body.setAttribute('data-theme', 'dark');
-            themeBtn.textContent = 'LIGHT MODE';
+      </div>
+
+      <!-- Aside -->
+      <aside class="card">
+        <div id="schedule-list">
+          <div class="schedule-row"><div class="schedule-time">--:--</div><div><div class="schedule-name">Loading…</div></div></div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ── ON-DEMAND view ──────────────────────────────── -->
+  <section id="ondemand-view" style="display:none; padding-top: 32px;">
+    <div class="ondemand-section">
+      <div class="ondemand-head">
+        <h2 class="ondemand-title">On-Demand</h2>
+        <div class="ondemand-filters" id="od-sources"></div>
+      </div>
+      <div class="hide-listened-row">
+        <label><input type="checkbox" id="od-hide-listened"> hide listened</label>
+        <span class="od-loading" id="od-loading" style="display:none;">loading…</span>
+      </div>
+
+      <div class="od-dock" id="od-player" style="display:none;">
+        <button class="player-play" id="od-play-btn" aria-label="Play/Pause" style="width:48px;height:48px;">
+          <svg id="od-play-icon" width="18" height="18" viewBox="0 0 20 20" fill="none">
+            <path d="M5 3.5L16 10L5 16.5V3.5Z" fill="currentColor"/>
+          </svg>
+        </button>
+        <div class="od-dock-mid">
+          <div class="od-dock-title" id="od-player-title">—</div>
+          <input type="range" class="scrub" id="od-scrub" min="0" max="100" step="0.1" value="0">
+          <div class="progress-times">
+            <span id="od-time-current">0:00</span>
+            <span id="od-time-total">0:00</span>
+          </div>
+        </div>
+        <div class="od-dock-controls">
+          <button class="od-skip" id="od-rr" title="Rewind 15s">« 15</button>
+          <button class="od-skip" id="od-ff" title="Forward 30s">30 »</button>
+        </div>
+      </div>
+
+      <div class="ondemand-table">
+        <div class="od-table-head">
+          <div>EPISODE</div>
+          <div>DURATION</div>
+          <div style="text-align:right;">STATUS</div>
+        </div>
+        <div id="od-list">
+          <div class="od-empty">Select a source above.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── LIBRARY view (ABS) ────────────────────────── -->
+  <section id="library-view" style="display:none; padding-top: 32px;">
+    <div class="ondemand-section">
+      <div class="ondemand-head">
+        <h2 class="ondemand-title">Library</h2>
+        <div class="ondemand-filters" id="lib-sources"></div>
+      </div>
+      <div class="hide-listened-row">
+        <label><input type="checkbox" id="lib-hide-listened"> hide listened</label>
+      </div>
+
+      <div class="od-dock" id="lib-player" style="display:none;">
+        <button class="player-play" id="lib-play-btn" aria-label="Play/Pause" style="width:48px;height:48px;">
+          <svg id="lib-play-icon" width="18" height="18" viewBox="0 0 20 20" fill="none">
+            <path d="M5 3.5L16 10L5 16.5V3.5Z" fill="currentColor"/>
+          </svg>
+        </button>
+        <div class="od-dock-mid">
+          <div class="od-dock-title" id="lib-player-title">—</div>
+          <input type="range" class="scrub" id="lib-scrub" min="0" max="100" step="0.1" value="0">
+          <div class="progress-times">
+            <span id="lib-time-current">0:00</span>
+            <span id="lib-time-total">0:00</span>
+          </div>
+        </div>
+        <div class="od-dock-controls">
+          <button class="od-skip" id="lib-rr" title="Rewind 15s">« 15</button>
+          <button class="od-skip" id="lib-ff" title="Forward 30s">30 »</button>
+        </div>
+      </div>
+
+      <div class="ondemand-table">
+        <div class="od-table-head">
+          <div>TITLE</div>
+          <div>DURATION</div>
+          <div style="text-align:right;">STATUS</div>
+        </div>
+        <div id="lib-list">
+          <div class="od-empty">Select a library above.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── DAILY BRIEFINGS view ───────────────────────── -->
+  <section id="briefings-view" style="display:none; padding-top: 28px;">
+    <div class="bf-section">
+
+      <!-- Player dock (hidden until playing) -->
+      <div class="bf-dock" id="bf-player" style="display:none;">
+        <button class="player-play" id="bf-play-btn" aria-label="Play/Pause" style="width:48px;height:48px;">
+          <svg id="bf-play-icon" width="18" height="18" viewBox="0 0 20 20" fill="none">
+            <path d="M5 3.5L16 10L5 16.5V3.5Z" fill="currentColor"/>
+          </svg>
+        </button>
+        <div class="bf-dock-mid">
+          <div class="bf-dock-title" id="bf-player-title">—</div>
+          <input type="range" class="scrub" id="bf-scrub" min="0" max="100" step="0.1" value="0">
+          <div class="progress-times">
+            <span id="bf-time-current">0:00</span>
+            <span id="bf-time-total">0:00</span>
+          </div>
+        </div>
+        <div class="bf-dock-controls">
+          <button class="od-skip" id="bf-rr" title="Rewind 15s">« 15</button>
+          <button class="od-skip" id="bf-ff" title="Forward 30s">30 »</button>
+        </div>
+      </div>
+
+      <!-- Category cards -->
+      <div class="bf-cats-grid" id="bf-cats">
+        <div style="color:var(--ink-4);font-family:var(--font-mono);font-size:11px;letter-spacing:1.5px;">loading…</div>
+      </div>
+
+      <!-- Archive -->
+      <div id="bf-archive" style="display:none;">
+        <div class="bf-archive-head">Archive</div>
+        <div id="bf-archive-list"></div>
+      </div>
+
+    </div>
+  </section>
+
+  <footer class="signal" id="footer-slug">AI GENERATED RADIO</footer>
+</div>
+
+<audio id="audio-player" preload="none"></audio>
+
+<script>
+  // ── API endpoints ────────────────────────────────────────────────────────
+  const API_BASE = window.location.origin;
+  const STREAM_URL = window.location.origin + '/stream';
+
+  // ── Elements ─────────────────────────────────────────────────────────────
+  const audio = document.getElementById('audio-player');
+  const playBtn = document.getElementById('play-btn');
+  const playIcon = document.getElementById('play-icon');
+  const volumeSlider = document.getElementById('volume-slider');
+  const themeBtn = document.getElementById('theme-btn');
+  const clockEl = document.getElementById('clock');
+  const listenerCountEl = document.getElementById('listener-count');
+  const listenerDot = document.getElementById('listener-dot');
+  const heroEyebrow = document.getElementById('hero-eyebrow');
+  const statusText = document.getElementById('status-text');
+  const hostNameEl = document.getElementById('host-name');
+  const hostAvatar = document.getElementById('host-avatar');
+  const showTitleEl = document.getElementById('show-title');
+  const trackTitleEl = document.getElementById('track-title');
+  const playerTrackEl = document.getElementById('player-track');
+  const scheduleList = document.getElementById('schedule-list');
+
+  // ── Station name ─────────────────────────────────────────────────────────
+  let _stationName = 'WRIT-FM';
+  async function loadStationName() {
+    try {
+      const res = await fetch(`${API_BASE}/schedule`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const name = (data.station_name || '').trim();
+      if (name) {
+        _stationName = name;
+        document.title = name;
+        const brandText = document.getElementById('brand-text');
+        if (brandText) brandText.textContent = name;
+        const brandMark = document.getElementById('brand-mark');
+        if (brandMark) brandMark.textContent = name.charAt(0).toUpperCase();
+      }
+      const tagline = (data.tagline || '').trim();
+      if (tagline) {
+        const brandSub = document.getElementById('brand-sub');
+        if (brandSub) brandSub.textContent = tagline;
+        const footer = document.getElementById('footer-slug');
+        if (footer) footer.textContent = tagline.toUpperCase();
+      }
+    } catch (_) {}
+  }
+  loadStationName();
+
+  // ── State ────────────────────────────────────────────────────────────────
+  let isPlaying = false;
+  let isOnline = false;
+  let currentMode = 'live';
+  let npStartedAt = null;
+  let npTotal = null;
+  let _scheduleTimer = null;
+
+  // ── Palette + theme ──────────────────────────────────────────────────────
+  const PALETTES = [
+    { id: 'pine',   label: 'Pine',   color: '#2f8a5e' },
+    { id: 'signal', label: 'Signal', color: '#e25c39' },
+    { id: 'cobalt', label: 'Cobalt', color: '#3768d6' },
+    { id: 'plum',   label: 'Plum',   color: '#9c3f87' },
+    { id: 'mono',   label: 'Mono',   color: '#14171a' },
+  ];
+
+  function applyPalette(id) {
+    const p = PALETTES.find(x => x.id === id) || PALETTES[0];
+    document.documentElement.setAttribute('data-palette', p.id);
+    document.body.setAttribute('data-palette', p.id);
+    localStorage.setItem('palette', p.id);
+    document.getElementById('palette-label').textContent = p.label.toUpperCase();
+  }
+  function applyTheme(mode) {
+    if (mode === 'dark') {
+      document.body.setAttribute('data-theme', 'dark');
+      themeBtn.textContent = '☾';
+    } else {
+      document.body.removeAttribute('data-theme');
+      themeBtn.textContent = '☼';
+    }
+    localStorage.setItem('theme', mode);
+  }
+
+  // Init
+  applyPalette(localStorage.getItem('palette') || 'pine');
+  applyTheme(localStorage.getItem('theme') === 'dark' ? 'dark' : 'light');
+
+  themeBtn.addEventListener('click', () => {
+    applyTheme(document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+  });
+
+  // Palette menu
+  const paletteBtn = document.getElementById('palette-btn');
+  const paletteMenu = document.getElementById('palette-menu');
+  function renderPaletteMenu() {
+    const active = localStorage.getItem('palette') || 'pine';
+    paletteMenu.innerHTML = PALETTES.map(p => `
+      <button class="palette-option ${p.id === active ? 'active' : ''}" data-palette="${p.id}" role="menuitem">
+        <span class="palette-swatch" style="background:${p.color};"></span>
+        <span>${p.label}</span>
+      </button>
+    `).join('');
+    paletteMenu.querySelectorAll('.palette-option').forEach(el => {
+      el.addEventListener('click', () => {
+        applyPalette(el.getAttribute('data-palette'));
+        renderPaletteMenu();
+        paletteMenu.classList.remove('open');
+        paletteBtn.setAttribute('aria-expanded', 'false');
+      });
+    });
+  }
+  renderPaletteMenu();
+  paletteBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = paletteMenu.classList.toggle('open');
+    paletteBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+  });
+  document.addEventListener('click', (e) => {
+    if (!paletteMenu.contains(e.target) && e.target !== paletteBtn) {
+      paletteMenu.classList.remove('open');
+      paletteBtn.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  // ── Icons (play/pause SVG swap) ─────────────────────────────────────────
+  const PLAY_SVG  = '<path d="M5 3.5L16 10L5 16.5V3.5Z" fill="currentColor"/>';
+  const PAUSE_SVG = '<rect x="5" y="4" width="3.5" height="12" fill="currentColor"/><rect x="11.5" y="4" width="3.5" height="12" fill="currentColor"/>';
+
+  function setLivePlayIcon(playing) {
+    playIcon.innerHTML = playing ? PAUSE_SVG : PLAY_SVG;
+  }
+
+  // ── Clock + live progress ticker ─────────────────────────────────────────
+  const progressFill = document.getElementById('live-progress-fill');
+  const elapsedEl = document.getElementById('live-elapsed');
+  const totalEl = document.getElementById('live-total');
+
+  setInterval(() => {
+    const now = new Date();
+    clockEl.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+
+    if (npStartedAt !== null && npTotal !== null && npTotal > 0) {
+      const elapsed = Math.max(0, (Date.now() - npStartedAt) / 1000);
+      const pct = Math.min(100, (elapsed / npTotal) * 100);
+      progressFill.style.width = pct + '%';
+      elapsedEl.textContent = fmtTime(Math.min(elapsed, npTotal));
+      totalEl.textContent = fmtTime(npTotal);
+    } else {
+      progressFill.style.width = '0%';
+      elapsedEl.textContent = '0:00';
+      totalEl.textContent = '0:00';
+    }
+  }, 1000);
+
+  // ── Mode tabs ────────────────────────────────────────────────────────────
+  const tabLive = document.getElementById('tab-live');
+  const tabOD   = document.getElementById('tab-ondemand');
+  const tabBF   = document.getElementById('tab-briefings');
+  const tabLib  = document.getElementById('tab-library');
+  const liveView    = document.getElementById('live-view');
+  const odView      = document.getElementById('ondemand-view');
+  const bfView      = document.getElementById('briefings-view');
+  const libView     = document.getElementById('library-view');
+
+  function _pauseCurrentMode() {
+    if (audio.paused) return;
+    audio.pause();
+    if (currentMode === 'live') {
+      audio.src = ''; audio.load();
+      isPlaying = false; setLivePlayIcon(false);
+    } else if (currentMode === 'ondemand') {
+      odSavePosition(); odIsPlaying = false; updateOdPlayBtn();
+    } else if (currentMode === 'briefings') {
+      bfSavePosition(); bfIsPlaying = false; bfUpdatePlayBtn();
+    } else if (currentMode === 'library') {
+      libSavePosition(); libIsPlaying = false; libUpdatePlayBtn();
+    }
+  }
+
+  function switchMode(mode) {
+    if (mode === currentMode) return;
+    _pauseCurrentMode();
+    currentMode = mode;
+    tabLive.classList.toggle('active', mode === 'live');
+    tabOD.classList.toggle('active',   mode === 'ondemand');
+    tabBF.classList.toggle('active',   mode === 'briefings');
+    tabLib.classList.toggle('active',  mode === 'library');
+    liveView.style.display  = mode === 'live'      ? '' : 'none';
+    odView.style.display    = mode === 'ondemand'  ? '' : 'none';
+    bfView.style.display    = mode === 'briefings' ? '' : 'none';
+    libView.style.display   = mode === 'library'   ? '' : 'none';
+    if (mode === 'ondemand') odLoadSources();
+    if (mode === 'briefings') bfLoad();
+    if (mode === 'library') libLoadSources();
+  }
+  tabLive.addEventListener('click', () => switchMode('live'));
+  tabOD.addEventListener('click',   () => switchMode('ondemand'));
+  tabBF.addEventListener('click',   () => switchMode('briefings'));
+  tabLib.addEventListener('click',  () => switchMode('library'));
+
+  // ── Live audio ───────────────────────────────────────────────────────────
+  audio.volume = volumeSlider.value;
+
+  playBtn.addEventListener('click', () => {
+    if (currentMode !== 'live') return;
+    if (isPlaying) {
+      audio.pause();
+      audio.src = ''; audio.load();
+      isPlaying = false; setLivePlayIcon(false);
+    } else {
+      audio.src = STREAM_URL;
+      audio.play().then(() => {
+        isPlaying = true; setLivePlayIcon(true);
+      }).catch(err => console.error('Error playing audio:', err));
+    }
+  });
+  volumeSlider.addEventListener('input', e => { audio.volume = e.target.value; });
+
+  // ── Now-playing polling ──────────────────────────────────────────────────
+  function setOnline(online) {
+    if (online === isOnline) return;
+    isOnline = online;
+    if (online) {
+      heroEyebrow.classList.remove('offline');
+      listenerDot.classList.remove('offline');
+      statusText.textContent = 'ON AIR';
+    } else {
+      heroEyebrow.classList.add('offline');
+      listenerDot.classList.add('offline');
+      statusText.textContent = 'OFFLINE';
+      listenerCountEl.textContent = '0';
+    }
+  }
+
+  async function fetchNowPlaying() {
+    try {
+      const res = await fetch(`${API_BASE}/now-playing`);
+      if (!res.ok) throw new Error('Not OK');
+      const data = await res.json();
+      setOnline(true);
+      listenerCountEl.textContent = Math.max(1, data.listeners || 0);
+      const hostList = (data.hosts && data.hosts.length > 0) ? data.hosts : (data.host ? [data.host] : ['unknown']);
+      hostNameEl.textContent = hostList.join(' & ');
+      hostAvatar.textContent = (hostList[0] || '·').charAt(0).toUpperCase();
+      showTitleEl.textContent = data.show || 'Automated Broadcast';
+      const ch = data.source_channel || '';
+      const chBadge = ch ? `<span style="color:var(--accent);font-weight:600;">[${escHtml(ch)}]</span> ` : '';
+      trackTitleEl.innerHTML = data.track ? `Now playing — ${chBadge}${escHtml(data.track)}` : '';
+      playerTrackEl.innerHTML = chBadge + escHtml(data.track || data.show || 'Live stream');
+
+      if (data.timestamp && data.duration) {
+        const newStarted = new Date(data.timestamp).getTime();
+        if (newStarted !== npStartedAt || npTotal !== data.duration) {
+          npStartedAt = newStarted; npTotal = data.duration;
         }
-        themeBtn.addEventListener('click', () => {
-            if (document.body.getAttribute('data-theme') === 'dark') {
-                document.body.removeAttribute('data-theme');
-                localStorage.setItem('theme', 'light');
-                themeBtn.textContent = 'DARK MODE';
-            } else {
-                document.body.setAttribute('data-theme', 'dark');
-                localStorage.setItem('theme', 'dark');
-                themeBtn.textContent = 'LIGHT MODE';
-            }
-        });
+      } else {
+        npStartedAt = null; npTotal = null;
+      }
+    } catch (err) {
+      setOnline(false);
+    }
+  }
+  setInterval(fetchNowPlaying, 5000);
+  fetchNowPlaying();
 
-        // ── Clock + Progress Ticker ────────────────────────────────────────────
-        const progressEl = document.getElementById('live-progress');
-        const progressFill = document.getElementById('live-progress-fill');
-        const elapsedEl = document.getElementById('live-elapsed');
-        const totalEl = document.getElementById('live-total');
+  // ── Schedule (aside + accordion) ─────────────────────────────────────────
+  function _fmtTime(isoStr) {
+    if (!isoStr) return '--:--';
+    const d = new Date(isoStr);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+  function _fmtDuration(startIso, endIso) {
+    if (!startIso || !endIso) return '';
+    const mins = Math.round((new Date(endIso) - new Date(startIso)) / 60000);
+    if (mins < 60) return `${mins}m`;
+    const h = Math.floor(mins / 60), m = mins % 60;
+    return m ? `${h}h ${m}m` : `${h}h`;
+  }
 
-        setInterval(() => {
-            const now = new Date();
-            clockEl.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  async function refreshSchedule() {
+    try {
+      const [qRes, upRes] = await Promise.all([
+        fetch(`${API_BASE}/queue`),
+        fetch(`${API_BASE}/upcoming?hours=24`)
+      ]);
+      const qData = qRes.ok ? await qRes.json() : {};
+      const upData = upRes.ok ? await upRes.json() : {};
 
-            if (npStartedAt !== null && npTotal !== null && npTotal > 0) {
-                const elapsed = Math.max(0, (Date.now() - npStartedAt) / 1000);
-                const pct = Math.min(100, (elapsed / npTotal) * 100);
-                progressFill.style.width = pct + '%';
-                elapsedEl.textContent = fmtTime(Math.min(elapsed, npTotal));
-                totalEl.textContent = fmtTime(npTotal);
-                progressEl.style.display = 'block';
-            } else {
-                progressEl.style.display = 'none';
-            }
-        }, 1000);
+      const now = new Date();
+      const cutoff = new Date(now.getTime() + 90 * 60 * 1000);
+      const currentShowId = qData.show_id || null;
+      const segments = (qData.upcoming || [])
+        .filter(s => s.started_at && new Date(s.started_at) <= cutoff)
+        .slice(0, 4);
+      // Exclude the currently-playing show — filter by show_id (reliable) AND start in future
+      // (timestamp-only filtering is unreliable because the server's "now" can be fractionally
+      // ahead of the client's, causing the current show block to slip through)
+      const shows = (upData.upcoming || []).filter(s =>
+        s.start && new Date(s.start) > now && s.show_id !== currentShowId
+      );
 
-        // ── Mode Tabs ──────────────────────────────────────────────────────────
-        const tabLive = document.getElementById('tab-live');
-        const tabOD = document.getElementById('tab-ondemand');
-        const liveView = document.getElementById('live-view');
-        const odView = document.getElementById('ondemand-view');
+      // Render segment title with optional [Channel] badge in accent colour
+      function _segTitle(s) {
+        const ch = s.source_channel || '';
+        const label = s.short_title || s.topic || s.name || s.segment_type || '';
+        if (!ch) return escHtml(label);
+        return `<span style="color:var(--accent);font-weight:600;">[${escHtml(ch)}]</span> ${escHtml(label)}`;
+      }
 
-        function switchMode(mode) {
-            if (mode === currentMode) return;
-            // Pause whatever is playing
-            if (!audio.paused) {
-                audio.pause();
-                if (currentMode === 'live') {
-                    audio.src = '';
-                    audio.load();
-                    isPlaying = false;
-                    playIcon.className = 'play-icon';
-                    playIcon.innerHTML = '';
-                } else {
-                    odSavePosition();
-                    odIsPlaying = false;
-                    updateOdPlayBtn();
-                }
-            }
-            currentMode = mode;
-            if (mode === 'live') {
-                tabLive.classList.add('active');
-                tabOD.classList.remove('active');
-                liveView.style.display = '';
-                odView.style.display = 'none';
-            } else {
-                tabOD.classList.add('active');
-                tabLive.classList.remove('active');
-                liveView.style.display = 'none';
-                odView.style.display = '';
-                odLoadSources();
-            }
+      // Build aside HTML: upcoming segments → next show → upcoming shows
+      const upcomingShows = shows.slice(0, 4);
+      let asideHtml = '';
+      if (segments.length > 0) {
+        asideHtml += '<div class="schedule-section-label">Upcoming Segments</div>';
+        asideHtml += segments.map(s => `
+          <div class="schedule-row is-segment">
+            <div class="schedule-time">${escHtml(_fmtTime(s.started_at))}</div>
+            <div><div class="schedule-name">${_segTitle(s)}</div></div>
+            <div class="schedule-duration">${escHtml(_fmtDuration(s.started_at, s.estimated_end_at))}</div>
+          </div>`).join('');
+      }
+      if (upcomingShows.length > 0) {
+        asideHtml += '<div class="schedule-section-label">Upcoming Shows</div>';
+        asideHtml += upcomingShows.map(s => `
+          <div class="schedule-row">
+            <div class="schedule-time">${escHtml(_fmtTime(s.start))}</div>
+            <div><div class="schedule-name">${escHtml(s.name)}</div></div>
+            <div class="schedule-duration">${escHtml(_fmtDuration(s.start, s.end))}</div>
+          </div>`).join('');
+      }
+      if (!asideHtml) {
+        asideHtml = '<div class="schedule-row"><div class="schedule-time">--:--</div><div><div class="schedule-name">No schedule available.</div></div></div>';
+      }
+      scheduleList.innerHTML = asideHtml;
+
+    } catch (err) {
+      scheduleList.innerHTML = '<div class="schedule-row"><div class="schedule-time">--:--</div><div><div class="schedule-name">Schedule offline.</div></div></div>';
+    }
+  }
+  refreshSchedule();
+  _scheduleTimer = setInterval(refreshSchedule, 30000);
+
+  // ── On-Demand ────────────────────────────────────────────────────────────
+  let odSources = [];
+  let odItems = [];
+  let odCurrentSource = null;
+  let odCurrentItem = null;
+  let odIsPlaying = false;
+  let odSaveTimer = null;
+  let odScrubbing = false;
+
+  const odSourcesEl = document.getElementById('od-sources');
+  const odListEl = document.getElementById('od-list');
+  const odPlayerEl = document.getElementById('od-player');
+  const odPlayerTitle = document.getElementById('od-player-title');
+  const odTimeCurrent = document.getElementById('od-time-current');
+  const odTimeTotal = document.getElementById('od-time-total');
+  const odScrub = document.getElementById('od-scrub');
+  const odPlayBtn = document.getElementById('od-play-btn');
+  const odPlayIcon = document.getElementById('od-play-icon');
+  const odRR = document.getElementById('od-rr');
+  const odFF = document.getElementById('od-ff');
+  const odHideListened = document.getElementById('od-hide-listened');
+  const odLoading = document.getElementById('od-loading');
+
+  odHideListened.checked = localStorage.getItem('od_hide_listened') === '1';
+  odHideListened.addEventListener('change', () => {
+    localStorage.setItem('od_hide_listened', odHideListened.checked ? '1' : '0');
+    renderOdList();
+  });
+
+  function fmtTime(s) {
+    if (!s || isNaN(s)) return '0:00';
+    const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+    return `${m}:${String(sec).padStart(2, '0')}`;
+  }
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function fmtItemDate(isoStr) {
+    if (!isoStr) return '';
+    const d = new Date(isoStr);
+    if (isNaN(d)) return '';
+    const days   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]}`;
+  }
+
+  async function odLoadSources() {
+    try {
+      const data = await fetch(`${API_BASE}/api/ondemand/sources`).then(r => r.json());
+      // Server already excludes abs:* and show:briefing_*, but guard client-side too
+      odSources = (data.sources || []).filter(s => !s.id.startsWith('abs:') && !s.id.startsWith('show:briefing_'));
+      renderOdSources();
+      if (odSources.length > 0 && !odCurrentSource) {
+        odSelectSource(odSources[0].id);
+      } else if (odCurrentSource) {
+        odSelectSource(odCurrentSource);
+      }
+    } catch (e) {}
+  }
+
+  function renderOdSources() {
+    odSourcesEl.innerHTML = '';
+    odSources.forEach(src => {
+      const btn = document.createElement('button');
+      btn.className = 'pill' + (src.id === odCurrentSource ? ' active' : '');
+      btn.textContent = src.name;
+      btn.addEventListener('click', () => odSelectSource(src.id));
+      odSourcesEl.appendChild(btn);
+    });
+  }
+
+  async function odSelectSource(sourceId) {
+    odCurrentSource = sourceId;
+    renderOdSources();
+    odLoading.style.display = '';
+    try {
+      const url = `${API_BASE}/api/ondemand/items?source=${encodeURIComponent(sourceId)}`;
+      const data = await fetch(url).then(r => r.json());
+      odItems = data.items || [];
+    } catch (e) { odItems = []; }
+    odLoading.style.display = 'none';
+    renderOdList();
+  }
+
+  function renderOdList() {
+    const hideListened = odHideListened.checked;
+    let visible = odItems.filter(i => !hideListened || !i.listened);
+    odListEl.innerHTML = '';
+    if (visible.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'od-empty';
+      empty.textContent = odItems.length === 0
+        ? 'No items in this source.'
+        : 'All items listened. Uncheck "hide listened" to show them.';
+      odListEl.appendChild(empty);
+      return;
+    }
+    visible.forEach(item => {
+      const row = document.createElement('div');
+      const isPlaying = odCurrentItem && odCurrentItem.id === item.id;
+      row.className = 'od-row' + (isPlaying ? ' playing' : '');
+
+      const dur = item.duration_seconds || 0;
+      const pos = item.position_s || 0;
+      const pct = (dur && pos > 5) ? Math.min(100, (pos / dur) * 100) : 0;
+      const progressBar = (!item.listened && pct > 0)
+        ? `<div class="od-row-progress"><div class="od-row-progress-fill" style="width:${pct}%;"></div></div>` : '';
+      const status = item.listened
+        ? `<div class="od-row-status listened">✓ LISTENED</div>`
+        : (pos > 5
+          ? `<div class="od-row-status">▶ ${fmtTime(pos)}</div>`
+          : `<div class="od-row-status">NEW</div>`);
+
+      const dateStr = fmtItemDate(item.created_at);
+      const meta = [item.subtitle, dateStr].filter(Boolean).join(' · ');
+      row.innerHTML = `
+        <div>
+          <div class="od-row-title">${escHtml(item.title)}</div>
+          ${meta ? `<div class="od-row-meta">${escHtml(meta)}</div>` : ''}
+          ${progressBar}
+        </div>
+        <div class="od-row-duration">${dur ? fmtTime(dur) : '—'}</div>
+        ${status}`;
+      row.addEventListener('click', () => odPlayItem(item));
+      odListEl.appendChild(row);
+    });
+  }
+
+  function setOdPlayIcon(playing) {
+    odPlayIcon.innerHTML = playing ? PAUSE_SVG : PLAY_SVG;
+  }
+
+  function odPlayItem(item) {
+    if (odCurrentItem && odCurrentItem.id !== item.id) odSavePosition();
+    odCurrentItem = item;
+    renderOdList();
+    const audioUrl = `${API_BASE}/api/ondemand/audio/${encodeURIComponent(item.id)}`;
+    audio.src = audioUrl;
+    audio.load();
+    odPlayerTitle.textContent = item.title + (item.subtitle ? ` — ${item.subtitle}` : '');
+    odPlayerEl.style.display = '';
+    odScrub.value = 0;
+    odTimeCurrent.textContent = '0:00';
+    odTimeTotal.textContent = fmtTime(item.duration_seconds);
+
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: item.title,
+        artist: item.subtitle || `${_stationName} On-Demand`,
+      });
+      navigator.mediaSession.setActionHandler('play', () => odResume());
+      navigator.mediaSession.setActionHandler('pause', () => odPause());
+      navigator.mediaSession.setActionHandler('seekbackward', () => { audio.currentTime = Math.max(0, audio.currentTime - 15); });
+      navigator.mediaSession.setActionHandler('seekforward', () => { audio.currentTime = audio.currentTime + 30; });
+    }
+
+    audio.addEventListener('loadedmetadata', function onMeta() {
+      audio.removeEventListener('loadedmetadata', onMeta);
+      const resumeAt = item.position_s || 0;
+      if (resumeAt > 5 && resumeAt < (audio.duration || Infinity) - 5) {
+        audio.currentTime = resumeAt;
+      }
+      if (item.duration_seconds) {
+        odScrub.max = item.duration_seconds;
+      } else if (audio.duration && isFinite(audio.duration)) {
+        odScrub.max = audio.duration;
+        odTimeTotal.textContent = fmtTime(audio.duration);
+      }
+      odResume();
+    }, { once: true });
+  }
+
+  function odResume() {
+    audio.play().then(() => {
+      odIsPlaying = true; updateOdPlayBtn(); startOdSaveTimer();
+    }).catch(e => console.error('OD play error:', e));
+  }
+  function odPause() {
+    audio.pause();
+    odIsPlaying = false; updateOdPlayBtn(); odSavePosition();
+  }
+  function updateOdPlayBtn() { setOdPlayIcon(odIsPlaying); }
+
+  function startOdSaveTimer() {
+    clearInterval(odSaveTimer);
+    odSaveTimer = setInterval(() => {
+      if (odIsPlaying && !odScrubbing) odSavePosition();
+    }, 5000);
+  }
+
+  function odSavePosition() {
+    if (!odCurrentItem) return;
+    const pos = audio.currentTime || 0;
+    const dur = audio.duration && isFinite(audio.duration) ? audio.duration : (odCurrentItem.duration_seconds || null);
+    fetch(`${API_BASE}/api/ondemand/state`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ item_id: odCurrentItem.id, position_s: pos, duration_s: dur })
+    }).catch(() => {});
+  }
+
+  audio.addEventListener('timeupdate', () => {
+    if (currentMode !== 'ondemand' || !odCurrentItem || odScrubbing) return;
+    const t = audio.currentTime || 0;
+    const dur = audio.duration && isFinite(audio.duration) ? audio.duration : (odCurrentItem.duration_seconds || 0);
+    odTimeCurrent.textContent = fmtTime(t);
+    if (dur) {
+      odScrub.max = dur;
+      odScrub.value = t;
+      odTimeTotal.textContent = fmtTime(dur);
+    }
+  });
+
+  audio.addEventListener('ended', () => {
+    if (currentMode !== 'ondemand' || !odCurrentItem) return;
+    odIsPlaying = false; updateOdPlayBtn();
+    clearInterval(odSaveTimer);
+    const id = odCurrentItem.id;
+    fetch(`${API_BASE}/api/ondemand/state`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ item_id: id, listened: true, position_s: 0 })
+    }).then(() => {
+      const idx = odItems.findIndex(i => i.id === id);
+      if (idx >= 0) { odItems[idx].listened = true; odItems[idx].position_s = 0; }
+      renderOdList();
+    }).catch(() => {});
+  });
+
+  audio.addEventListener('pause', () => {
+    if (currentMode !== 'ondemand') return;
+    odIsPlaying = false; updateOdPlayBtn();
+  });
+  audio.addEventListener('play', () => {
+    if (currentMode !== 'ondemand') return;
+    odIsPlaying = true; updateOdPlayBtn();
+  });
+
+  odScrub.addEventListener('mousedown', () => { odScrubbing = true; });
+  odScrub.addEventListener('touchstart', () => { odScrubbing = true; });
+  odScrub.addEventListener('input', () => {
+    odTimeCurrent.textContent = fmtTime(parseFloat(odScrub.value));
+  });
+  odScrub.addEventListener('change', () => {
+    audio.currentTime = parseFloat(odScrub.value);
+    odScrubbing = false; odSavePosition();
+  });
+  odScrub.addEventListener('mouseup', () => { odScrubbing = false; });
+  odScrub.addEventListener('touchend', () => { odScrubbing = false; });
+
+  odPlayBtn.addEventListener('click', () => {
+    if (!odCurrentItem) return;
+    if (odIsPlaying) odPause(); else odResume();
+  });
+
+  odRR.addEventListener('click', () => { if (audio.src) audio.currentTime = Math.max(0, audio.currentTime - 15); });
+  odFF.addEventListener('click', () => { if (audio.src) audio.currentTime = audio.currentTime + 30; });
+
+  // ── Library (ABS) ────────────────────────────────────────────────────────
+  let libSources = [];
+  let libItems = [];
+  let libCurrentSource = null;
+  let libCurrentItem = null;
+  let libIsPlaying = false;
+  let libSaveTimer = null;
+  let libScrubbing = false;
+
+  const libSourcesEl  = document.getElementById('lib-sources');
+  const libListEl     = document.getElementById('lib-list');
+  const libPlayerEl   = document.getElementById('lib-player');
+  const libPlayerTitle= document.getElementById('lib-player-title');
+  const libTimeCurrent= document.getElementById('lib-time-current');
+  const libTimeTotal  = document.getElementById('lib-time-total');
+  const libScrub      = document.getElementById('lib-scrub');
+  const libPlayBtn    = document.getElementById('lib-play-btn');
+  const libPlayIcon   = document.getElementById('lib-play-icon');
+  const libRR         = document.getElementById('lib-rr');
+  const libFF         = document.getElementById('lib-ff');
+  const libHideListened = document.getElementById('lib-hide-listened');
+
+  libHideListened.checked = localStorage.getItem('lib_hide_listened') === '1';
+  libHideListened.addEventListener('change', () => {
+    localStorage.setItem('lib_hide_listened', libHideListened.checked ? '1' : '0');
+    renderLibList();
+  });
+
+  async function libLoadSources() {
+    if (libSources.length > 0) return;
+    try {
+      const data = await fetch(`${API_BASE}/api/abs/sources`).then(r => r.json());
+      libSources = data.sources || [];
+      renderLibSources();
+      if (libSources.length > 0 && !libCurrentSource) {
+        libSelectSource(libSources[0].id);
+      } else if (libCurrentSource) {
+        libSelectSource(libCurrentSource);
+      }
+    } catch (_) {}
+  }
+
+  function renderLibSources() {
+    libSourcesEl.innerHTML = '';
+    libSources.forEach(src => {
+      const btn = document.createElement('button');
+      btn.className = 'pill' + (src.id === libCurrentSource ? ' active' : '');
+      btn.textContent = src.name;
+      btn.addEventListener('click', () => libSelectSource(src.id));
+      libSourcesEl.appendChild(btn);
+    });
+  }
+
+  let libFetchError = false;
+
+  async function libSelectSource(sourceId) {
+    libCurrentSource = sourceId;
+    libFetchError = false;
+    renderLibSources();
+    libListEl.innerHTML = `
+      <div class="lib-fetch-state">
+        <div class="lib-spinner"></div>
+        <div class="lib-fetch-label">LOADING FROM LIBRARY…</div>
+      </div>`;
+    try {
+      const url = `${API_BASE}/api/ondemand/items?source=${encodeURIComponent(sourceId)}`;
+      const data = await fetch(url).then(r => r.json());
+      if (data.error) { libFetchError = true; libItems = []; }
+      else libItems = data.items || [];
+    } catch (_) { libFetchError = true; libItems = []; }
+    renderLibList();
+  }
+
+  function renderLibList() {
+    const hide = libHideListened.checked;
+    const visible = libItems.filter(i => !hide || !i.listened);
+    libListEl.innerHTML = '';
+    if (libFetchError) {
+      libListEl.innerHTML = `
+        <div class="lib-error-state">
+          <p>Could not reach the library server.</p>
+          <button class="lib-retry-btn" id="lib-retry">RETRY</button>
+        </div>`;
+      document.getElementById('lib-retry').addEventListener('click', () => {
+        if (libCurrentSource) libSelectSource(libCurrentSource);
+      });
+      return;
+    }
+    if (visible.length === 0) {
+      const el = document.createElement('div');
+      el.className = 'od-empty';
+      el.textContent = libItems.length === 0
+        ? 'No items in this library.'
+        : 'All items listened. Uncheck "hide listened" to show them.';
+      libListEl.appendChild(el);
+      return;
+    }
+    visible.forEach(item => {
+      const row = document.createElement('div');
+      const isActive = libCurrentItem && libCurrentItem.id === item.id;
+      row.className = 'od-row' + (isActive ? ' playing' : '');
+      const dur = item.duration_seconds || 0;
+      const pos = item.position_s || 0;
+      const pct = (dur && pos > 5) ? Math.min(100, (pos / dur) * 100) : 0;
+      const progressBar = (!item.listened && pct > 0)
+        ? `<div class="od-row-progress"><div class="od-row-progress-fill" style="width:${pct}%;"></div></div>` : '';
+      const status = item.listened
+        ? `<div class="od-row-status listened">✓ LISTENED</div>`
+        : (pos > 5 ? `<div class="od-row-status">▶ ${fmtTime(pos)}</div>` : `<div class="od-row-status">NEW</div>`);
+      const libDateStr = fmtItemDate(item.created_at);
+      const libMeta = [item.subtitle, libDateStr].filter(Boolean).join(' · ');
+      row.innerHTML = `
+        <div>
+          <div class="od-row-title">${escHtml(item.title)}</div>
+          ${libMeta ? `<div class="od-row-meta">${escHtml(libMeta)}</div>` : ''}
+          ${progressBar}
+        </div>
+        <div class="od-row-duration">${dur ? fmtTime(dur) : '—'}</div>
+        ${status}`;
+      row.addEventListener('click', () => libPlayItem(item));
+      libListEl.appendChild(row);
+    });
+  }
+
+  function libUpdatePlayBtn() { libPlayIcon.innerHTML = libIsPlaying ? PAUSE_SVG : PLAY_SVG; }
+
+  function libPlayItem(item) {
+    if (libCurrentItem && libCurrentItem.id !== item.id) libSavePosition();
+    libCurrentItem = item;
+    renderLibList();
+    audio.src = `${API_BASE}/api/ondemand/audio/${encodeURIComponent(item.id)}`;
+    audio.load();
+    libPlayerTitle.textContent = item.title + (item.subtitle ? ` — ${item.subtitle}` : '');
+    libPlayerEl.style.display = '';
+    libScrub.value = 0;
+    libTimeCurrent.textContent = '0:00';
+    libTimeTotal.textContent = fmtTime(item.duration_seconds);
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({ title: item.title, artist: item.subtitle || `${_stationName} Library` });
+      navigator.mediaSession.setActionHandler('play',  () => libResume());
+      navigator.mediaSession.setActionHandler('pause', () => libPause());
+      navigator.mediaSession.setActionHandler('seekbackward', () => { audio.currentTime = Math.max(0, audio.currentTime - 15); });
+      navigator.mediaSession.setActionHandler('seekforward',  () => { audio.currentTime = audio.currentTime + 30; });
+    }
+    audio.addEventListener('loadedmetadata', function onMeta() {
+      audio.removeEventListener('loadedmetadata', onMeta);
+      const resumeAt = item.position_s || 0;
+      if (resumeAt > 5 && resumeAt < (audio.duration || Infinity) - 5) audio.currentTime = resumeAt;
+      if (item.duration_seconds) libScrub.max = item.duration_seconds;
+      if (audio.duration && isFinite(audio.duration)) { libScrub.max = audio.duration; libTimeTotal.textContent = fmtTime(audio.duration); }
+      libResume();
+    }, { once: true });
+  }
+
+  function libResume() {
+    audio.play().then(() => {
+      libIsPlaying = true; libUpdatePlayBtn();
+      clearInterval(libSaveTimer);
+      libSaveTimer = setInterval(() => { if (libIsPlaying && !libScrubbing) libSavePosition(); }, 5000);
+    }).catch(e => console.error('Lib play error:', e));
+  }
+  function libPause() { audio.pause(); libIsPlaying = false; libUpdatePlayBtn(); libSavePosition(); }
+
+  function libSavePosition() {
+    if (!libCurrentItem) return;
+    const pos = audio.currentTime || 0;
+    const dur = audio.duration && isFinite(audio.duration) ? audio.duration : (libCurrentItem.duration_seconds || null);
+    fetch(`${API_BASE}/api/ondemand/state`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ item_id: libCurrentItem.id, position_s: pos, duration_s: dur })
+    }).catch(() => {});
+  }
+
+  audio.addEventListener('timeupdate', function libTimeUpdate() {
+    if (currentMode !== 'library' || !libCurrentItem || libScrubbing) return;
+    const t = audio.currentTime || 0;
+    const dur = audio.duration && isFinite(audio.duration) ? audio.duration : (libCurrentItem.duration_seconds || 0);
+    libTimeCurrent.textContent = fmtTime(t);
+    if (dur) { libScrub.max = dur; libScrub.value = t; libTimeTotal.textContent = fmtTime(dur); }
+  });
+
+  audio.addEventListener('ended', function libEnded() {
+    if (currentMode !== 'library' || !libCurrentItem) return;
+    libIsPlaying = false; libUpdatePlayBtn(); clearInterval(libSaveTimer);
+    const id = libCurrentItem.id;
+    fetch(`${API_BASE}/api/ondemand/state`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ item_id: id, listened: true, position_s: 0 })
+    }).then(() => {
+      const idx = libItems.findIndex(i => i.id === id);
+      if (idx >= 0) { libItems[idx].listened = true; libItems[idx].position_s = 0; }
+      renderLibList();
+    }).catch(() => {});
+  });
+
+  audio.addEventListener('pause', () => { if (currentMode === 'library') { libIsPlaying = false; libUpdatePlayBtn(); } });
+  audio.addEventListener('play',  () => { if (currentMode === 'library') { libIsPlaying = true;  libUpdatePlayBtn(); } });
+
+  libScrub.addEventListener('mousedown',  () => { libScrubbing = true; });
+  libScrub.addEventListener('touchstart', () => { libScrubbing = true; });
+  libScrub.addEventListener('input',  () => { libTimeCurrent.textContent = fmtTime(parseFloat(libScrub.value)); });
+  libScrub.addEventListener('change', () => { audio.currentTime = parseFloat(libScrub.value); libScrubbing = false; libSavePosition(); });
+  libScrub.addEventListener('mouseup',  () => { libScrubbing = false; });
+  libScrub.addEventListener('touchend', () => { libScrubbing = false; });
+
+  libPlayBtn.addEventListener('click', () => { if (!libCurrentItem) return; if (libIsPlaying) libPause(); else libResume(); });
+  libRR.addEventListener('click', () => { if (audio.src) audio.currentTime = Math.max(0, audio.currentTime - 15); });
+  libFF.addEventListener('click', () => { if (audio.src) audio.currentTime = audio.currentTime + 30; });
+
+  // ── Daily Briefings ──────────────────────────────────────────────────────
+  let bfCategories = [];
+  let bfCurrentItem = null;
+  let bfIsPlaying = false;
+  let bfScrubbing = false;
+  let bfSaveTimer = null;
+  let bfLoaded = false;
+
+  const bfPlayerEl     = document.getElementById('bf-player');
+  const bfPlayerTitle  = document.getElementById('bf-player-title');
+  const bfTimeCurrent  = document.getElementById('bf-time-current');
+  const bfTimeTotal    = document.getElementById('bf-time-total');
+  const bfScrub        = document.getElementById('bf-scrub');
+  const bfPlayBtn      = document.getElementById('bf-play-btn');
+  const bfPlayIcon     = document.getElementById('bf-play-icon');
+  const bfRR           = document.getElementById('bf-rr');
+  const bfFF           = document.getElementById('bf-ff');
+  const bfCatsEl       = document.getElementById('bf-cats');
+  const bfArchiveEl    = document.getElementById('bf-archive');
+  const bfArchiveList  = document.getElementById('bf-archive-list');
+
+  function _bfFmtDate(isoStr) { return fmtItemDate(isoStr) || '—'; }
+
+  async function bfLoad() {
+    if (bfLoaded) { bfRenderCats(); return; }
+    try {
+      const data = await fetch(`${API_BASE}/api/briefings`).then(r => r.json());
+      bfCategories = data.categories || [];
+      bfLoaded = true;
+    } catch (_) { bfCategories = []; }
+    bfRenderCats();
+    bfRenderArchive();
+  }
+
+  function bfRenderCats() {
+    if (bfCategories.length === 0) {
+      bfCatsEl.innerHTML = '<div style="color:var(--ink-4);font-family:var(--font-mono);font-size:11px;letter-spacing:1.5px;">No briefings available.</div>';
+      return;
+    }
+    bfCatsEl.innerHTML = bfCategories.map(cat => {
+      const latest = cat.items[0];
+      if (!latest) return '';
+      const dateStr = _bfFmtDate(latest.created_at);
+      const dur = latest.duration_seconds ? ' · ' + fmtTime(latest.duration_seconds) : '';
+      const isPlaying = bfCurrentItem && bfCurrentItem.id === latest.id && bfIsPlaying;
+      const pos = latest.position_s || 0;
+      const isNew = !latest.listened && pos < 5;
+      const isResume = !latest.listened && pos >= 5;
+      let stClass = isNew ? '' : (isResume ? 'st-resume' : 'st-listened');
+      let stLabel = isPlaying ? '▶ PLAYING' : (isNew ? '● NEW' : (isResume ? `▶ ${fmtTime(pos)}` : '✓ LISTENED'));
+      if (isPlaying) stClass = 'st-playing';
+      return `<div class="bf-cat-card ${isNew ? 'is-new' : ''} ${isPlaying ? 'is-playing' : ''}" data-cat="${escHtml(cat.source_id)}">
+        <div class="bf-cat-name">${escHtml(cat.name)}</div>
+        <div class="bf-cat-date">${escHtml(dateStr)}${escHtml(dur)}</div>
+        <div class="bf-cat-status ${stClass}">${stLabel}</div>
+      </div>`;
+    }).join('');
+    bfCatsEl.querySelectorAll('.bf-cat-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const sourceId = card.getAttribute('data-cat');
+        const cat = bfCategories.find(c => c.source_id === sourceId);
+        if (!cat || !cat.items[0]) return;
+        if (bfCurrentItem && bfCurrentItem.id === cat.items[0].id) {
+          if (bfIsPlaying) bfPause(); else bfResume();
+        } else {
+          bfPlayItem(cat.items[0], cat.name);
         }
-        tabLive.addEventListener('click', () => switchMode('live'));
-        tabOD.addEventListener('click', () => switchMode('ondemand'));
+      });
+    });
+  }
 
-        // ── Live Audio Player ──────────────────────────────────────────────────
-        audio.src = STREAM_URL;
-        audio.volume = volumeSlider.value;
+  function bfRenderArchive() {
+    // Build archive: show categories that have >1 item
+    const archiveCats = bfCategories.filter(c => c.items.length > 1);
+    if (archiveCats.length === 0) { bfArchiveEl.style.display = 'none'; return; }
+    bfArchiveEl.style.display = '';
+    bfArchiveList.innerHTML = archiveCats.map(cat => {
+      const older = cat.items.slice(1);
+      const rows = older.map(item => {
+        const pos = item.position_s || 0;
+        const stLabel = item.listened ? '✓' : (pos >= 5 ? fmtTime(pos) : 'NEW');
+        const stClass = item.listened ? 'listened' : (pos >= 5 ? 'in-progress' : '');
+        const dur = item.duration_seconds ? fmtTime(item.duration_seconds) : '—';
+        return `<div class="bf-arc-row" data-id="${escHtml(item.id)}" data-cat="${escHtml(cat.source_id)}">
+          <span class="bf-arc-date">${escHtml(_bfFmtDate(item.created_at))}</span>
+          <span class="bf-arc-dur">${escHtml(dur)}</span>
+          <span class="bf-arc-title">${escHtml(item.title || cat.name)}</span>
+          <span class="bf-arc-st ${stClass}">${stLabel}</span>
+        </div>`;
+      }).join('');
+      return `<div class="bf-arc-item" data-cat="${escHtml(cat.source_id)}">
+        <button class="bf-arc-header">
+          <span>${escHtml(cat.name)} <span style="color:var(--ink-4);font-weight:400;font-size:12px;">(${older.length} older)</span></span>
+          <span class="glyph">+</span>
+        </button>
+        <div class="bf-arc-content">${rows}</div>
+      </div>`;
+    }).join('');
 
-        playBtn.addEventListener('click', () => {
-            if (currentMode !== 'live') return;
-            if (isPlaying) {
-                audio.pause();
-                audio.src = '';
-                audio.load();
-                isPlaying = false;
-                playIcon.className = 'play-icon';
-                playIcon.innerHTML = '';
-            } else {
-                audio.src = STREAM_URL;
-                audio.play().then(() => {
-                    isPlaying = true;
-                    playIcon.className = 'pause-icon';
-                    playIcon.innerHTML = '<div></div><div></div>';
-                }).catch(err => console.error('Error playing audio:', err));
-            }
-        });
-        volumeSlider.addEventListener('input', (e) => { audio.volume = e.target.value; });
+    // Accordion toggle
+    bfArchiveList.querySelectorAll('.bf-arc-item').forEach(item => {
+      item.querySelector('.bf-arc-header').addEventListener('click', () => {
+        const isOpen = item.classList.contains('open');
+        bfArchiveList.querySelectorAll('.bf-arc-item').forEach(i => i.classList.remove('open'));
+        if (!isOpen) item.classList.add('open');
+      });
+    });
+    // Row play
+    bfArchiveList.querySelectorAll('.bf-arc-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const itemId = row.getAttribute('data-id');
+        const sourceId = row.getAttribute('data-cat');
+        const cat = bfCategories.find(c => c.source_id === sourceId);
+        if (!cat) return;
+        const item = cat.items.find(i => i.id === itemId);
+        if (item) bfPlayItem(item, cat.name);
+      });
+    });
+  }
 
-        // ── Live API Polling ───────────────────────────────────────────────────
-        async function fetchNowPlaying() {
-            try {
-                const res = await fetch(`${API_BASE}/now-playing`);
-                if (!res.ok) throw new Error('Not OK');
-                const data = await res.json();
-                if (!isOnline) {
-                    isOnline = true;
-                    statusDot.classList.add('online');
-                    statusText.textContent = 'ONLINE';
-                }
-                listenerCountEl.textContent = data.listeners || 0;
-                hostNameEl.textContent = data.host || 'unknown';
-                showTitleEl.textContent = data.show || 'Automated Broadcast';
-                trackTitleEl.textContent = data.track ? `Now Playing: ${data.track}` : '';
+  function bfPlayItem(item, catName) {
+    if (bfCurrentItem && bfCurrentItem.id !== item.id) bfSavePosition();
+    bfCurrentItem = item;
+    bfRenderCats();
+    const audioUrl = `${API_BASE}/api/ondemand/audio/${encodeURIComponent(item.id)}`;
+    audio.src = audioUrl;
+    audio.load();
+    bfPlayerTitle.textContent = `${catName || item.source_name} — ${_bfFmtDate(item.created_at)}`;
+    bfPlayerEl.style.display = '';
+    bfScrub.value = 0;
+    bfTimeCurrent.textContent = '0:00';
+    bfTimeTotal.textContent = fmtTime(item.duration_seconds);
 
-                if (data.timestamp && data.duration) {
-                    const newStarted = new Date(data.timestamp).getTime();
-                    if (newStarted !== npStartedAt || npTotal !== data.duration) {
-                        npStartedAt = newStarted;
-                        npTotal = data.duration;
-                    }
-                } else {
-                    npStartedAt = null;
-                    npTotal = null;
-                }
-            } catch (err) {
-                if (isOnline) {
-                    isOnline = false;
-                    statusDot.classList.remove('online');
-                    statusText.textContent = 'OFFLINE';
-                    listenerCountEl.textContent = 0;
-                }
-            }
-        }
-        setInterval(fetchNowPlaying, 5000);
-        fetchNowPlaying();
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: catName || item.source_name,
+        artist: `${_stationName} Daily Briefings`,
+      });
+      navigator.mediaSession.setActionHandler('play',  () => bfResume());
+      navigator.mediaSession.setActionHandler('pause', () => bfPause());
+      navigator.mediaSession.setActionHandler('seekbackward', () => { audio.currentTime = Math.max(0, audio.currentTime - 15); });
+      navigator.mediaSession.setActionHandler('seekforward',  () => { audio.currentTime = audio.currentTime + 30; });
+    }
 
-        // ── Accordions ─────────────────────────────────────────────────────────
-        document.querySelectorAll('.accordion-header').forEach(button => {
-            button.addEventListener('click', () => {
-                const content = button.nextElementSibling;
-                const span = button.querySelector('span');
-                if (content.classList.contains('open')) {
-                    content.classList.remove('open');
-                    span.textContent = '+';
-                } else {
-                    document.querySelectorAll('.accordion-content').forEach(c => c.classList.remove('open'));
-                    document.querySelectorAll('.accordion-header span').forEach(s => s.textContent = '+');
-                    content.classList.add('open');
-                    span.textContent = '-';
-                }
-            });
-        });
+    audio.addEventListener('loadedmetadata', function onMeta() {
+      audio.removeEventListener('loadedmetadata', onMeta);
+      const resumeAt = item.position_s || 0;
+      if (resumeAt > 5 && resumeAt < (audio.duration || Infinity) - 5) {
+        audio.currentTime = resumeAt;
+      }
+      bfScrub.max = (item.duration_seconds || audio.duration) || 100;
+      if (audio.duration && isFinite(audio.duration)) {
+        bfScrub.max = audio.duration;
+        bfTimeTotal.textContent = fmtTime(audio.duration);
+      }
+      bfResume();
+    }, { once: true });
+  }
 
-        // ── Schedule ───────────────────────────────────────────────────────────
-        document.getElementById('schedule-btn').addEventListener('click', async () => {
-            if (scheduleContent.textContent.includes('Loading')) {
-                try {
-                    const res = await fetch(`${API_BASE}/schedule`);
-                    const data = await res.json();
-                    if (data.upcoming && data.upcoming.length > 0) {
-                        scheduleContent.innerHTML = data.upcoming.map(s =>
-                            `<strong>${s.starts_around}</strong> - ${s.name}<br><span style="color:var(--text-muted);font-size:0.8em">${s.topic_focus}</span>`
-                        ).join('<br><br>');
-                    } else {
-                        scheduleContent.textContent = "No upcoming schedule available.";
-                    }
-                } catch (err) {
-                    scheduleContent.textContent = "Failed to load schedule.";
-                }
-            }
-        });
+  function bfResume() {
+    audio.play().then(() => {
+      bfIsPlaying = true; bfUpdatePlayBtn();
+      clearInterval(bfSaveTimer);
+      bfSaveTimer = setInterval(() => { if (bfIsPlaying && !bfScrubbing) bfSavePosition(); }, 5000);
+    }).catch(e => console.error('BF play error:', e));
+  }
+  function bfPause() {
+    audio.pause(); bfIsPlaying = false; bfUpdatePlayBtn(); bfSavePosition();
+  }
+  function bfUpdatePlayBtn() {
+    bfPlayIcon.innerHTML = bfIsPlaying ? PAUSE_SVG : PLAY_SVG;
+    bfRenderCats();
+  }
 
-        // ── Message Form ───────────────────────────────────────────────────────
-        document.getElementById('message-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const msgEl = document.getElementById('msg-text');
-            const statusEl = document.getElementById('msg-status');
-            const text = msgEl.value.trim();
-            if (!text) return;
-            try {
-                statusEl.textContent = 'Sending...';
-                statusEl.style.color = 'var(--text-muted)';
-                const res = await fetch(`${API_BASE}/message`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: text })
-                });
-                if (res.ok) {
-                    msgEl.value = '';
-                    statusEl.textContent = 'Message transmitted into the dark.';
-                    statusEl.style.color = '#4CAF50';
-                } else {
-                    const err = await res.json();
-                    statusEl.textContent = err.error || 'Transmission failed.';
-                    statusEl.style.color = 'red';
-                }
-            } catch (err) {
-                statusEl.textContent = 'Transmission failed. Are we offline?';
-                statusEl.style.color = 'red';
-            }
-        });
+  function bfSavePosition() {
+    if (!bfCurrentItem) return;
+    const pos = audio.currentTime || 0;
+    const dur = audio.duration && isFinite(audio.duration) ? audio.duration : (bfCurrentItem.duration_seconds || null);
+    // Update local state so re-renders show correct position
+    const cat = bfCategories.find(c => c.items.some(i => i.id === bfCurrentItem.id));
+    if (cat) {
+      const local = cat.items.find(i => i.id === bfCurrentItem.id);
+      if (local) local.position_s = pos;
+    }
+    fetch(`${API_BASE}/api/ondemand/state`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ item_id: bfCurrentItem.id, position_s: pos, duration_s: dur })
+    }).catch(() => {});
+  }
 
-        // ── On-Demand ──────────────────────────────────────────────────────────
-        let odSources = [];
-        let odItems = [];
-        let odCurrentSource = null;
-        let odCurrentItem = null;
-        let odIsPlaying = false;
-        let odSaveTimer = null;
-        let odScrubbing = false;
+  // Scrub bar
+  bfScrub.addEventListener('mousedown',  () => { bfScrubbing = true; });
+  bfScrub.addEventListener('touchstart', () => { bfScrubbing = true; });
+  bfScrub.addEventListener('input', () => { bfTimeCurrent.textContent = fmtTime(parseFloat(bfScrub.value)); });
+  bfScrub.addEventListener('change', () => { audio.currentTime = parseFloat(bfScrub.value); bfScrubbing = false; bfSavePosition(); });
+  bfScrub.addEventListener('mouseup',  () => { bfScrubbing = false; });
+  bfScrub.addEventListener('touchend', () => { bfScrubbing = false; });
 
-        const odSourcesEl = document.getElementById('od-sources');
-        const odListEl = document.getElementById('od-list');
-        const odPlayerEl = document.getElementById('od-player');
-        const odPlayerTitle = document.getElementById('od-player-title');
-        const odTimeCurrent = document.getElementById('od-time-current');
-        const odTimeTotal = document.getElementById('od-time-total');
-        const odScrub = document.getElementById('od-scrub');
-        const odPlayBtn = document.getElementById('od-play-btn');
-        const odPlayIcon = document.getElementById('od-play-icon');
-        const odRR = document.getElementById('od-rr');
-        const odFF = document.getElementById('od-ff');
-        const odHideListened = document.getElementById('od-hide-listened');
-        const odLoading = document.getElementById('od-loading');
+  // Time update (shared audio element — only update when in briefings mode)
+  audio.addEventListener('timeupdate', function bfTimeUpdate() {
+    if (currentMode !== 'briefings' || !bfCurrentItem || bfScrubbing) return;
+    const t = audio.currentTime || 0;
+    const dur = audio.duration && isFinite(audio.duration) ? audio.duration : (bfCurrentItem.duration_seconds || 0);
+    bfTimeCurrent.textContent = fmtTime(t);
+    if (dur) { bfScrub.max = dur; bfScrub.value = t; bfTimeTotal.textContent = fmtTime(dur); }
+  });
 
-        // Restore hide-listened preference
-        odHideListened.checked = localStorage.getItem('od_hide_listened') === '1';
-        odHideListened.addEventListener('change', () => {
-            localStorage.setItem('od_hide_listened', odHideListened.checked ? '1' : '0');
-            renderOdList();
-        });
+  // Ended
+  audio.addEventListener('ended', function bfEnded() {
+    if (currentMode !== 'briefings' || !bfCurrentItem) return;
+    bfIsPlaying = false; bfUpdatePlayBtn(); clearInterval(bfSaveTimer);
+    const id = bfCurrentItem.id;
+    const cat = bfCategories.find(c => c.items.some(i => i.id === id));
+    if (cat) {
+      const local = cat.items.find(i => i.id === id);
+      if (local) { local.listened = true; local.position_s = 0; }
+    }
+    fetch(`${API_BASE}/api/ondemand/state`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ item_id: id, listened: true, position_s: 0 })
+    }).catch(() => {});
+    bfRenderCats(); bfRenderArchive();
+  });
 
-        function fmtTime(s) {
-            if (!s || isNaN(s)) return '0:00';
-            const m = Math.floor(s / 60), sec = Math.floor(s % 60);
-            return `${m}:${String(sec).padStart(2, '0')}`;
-        }
+  bfPlayBtn.addEventListener('click', () => {
+    if (!bfCurrentItem) return;
+    if (bfIsPlaying) bfPause(); else bfResume();
+  });
+  bfRR.addEventListener('click', () => { if (audio.src) audio.currentTime = Math.max(0, audio.currentTime - 15); });
+  bfFF.addEventListener('click', () => { if (audio.src) audio.currentTime = audio.currentTime + 30; });
 
-        async function odLoadSources() {
-            try {
-                const data = await fetch(`${API_BASE}/api/ondemand/sources`).then(r => r.json());
-                odSources = data.sources || [];
-                renderOdSources();
-                if (odSources.length > 0 && !odCurrentSource) {
-                    odSelectSource(odSources[0].id);
-                } else if (odCurrentSource) {
-                    odSelectSource(odCurrentSource);
-                }
-            } catch(e) {}
-        }
-
-        function renderOdSources() {
-            odSourcesEl.innerHTML = '';
-            odSources.forEach(src => {
-                const btn = document.createElement('button');
-                btn.className = 'od-source-pill' + (src.id === odCurrentSource ? ' active' : '');
-                btn.textContent = src.name;
-                btn.addEventListener('click', () => odSelectSource(src.id));
-                odSourcesEl.appendChild(btn);
-            });
-        }
-
-        async function odSelectSource(sourceId) {
-            odCurrentSource = sourceId;
-            renderOdSources();
-            odLoading.style.display = '';
-            try {
-                const url = `${API_BASE}/api/ondemand/items?source=${encodeURIComponent(sourceId)}`;
-                const data = await fetch(url).then(r => r.json());
-                odItems = data.items || [];
-            } catch(e) { odItems = []; }
-            odLoading.style.display = 'none';
-            renderOdList();
-        }
-
-        function renderOdList() {
-            const hideListened = odHideListened.checked;
-            let visible = odItems.filter(i => !hideListened || !i.listened);
-            odListEl.innerHTML = '';
-            if (visible.length === 0) {
-                const li = document.createElement('li');
-                li.className = 'od-empty';
-                li.textContent = odItems.length === 0 ? 'No items in this source.' : 'All items listened. Uncheck "hide listened" to show them.';
-                odListEl.appendChild(li);
-                return;
-            }
-            visible.forEach(item => {
-                const li = document.createElement('li');
-                li.className = 'od-item' + (odCurrentItem && odCurrentItem.id === item.id ? ' playing' : '');
-                li.innerHTML = `
-                    <div class="od-item-info">
-                        <div class="od-item-title">${escHtml(item.title)}</div>
-                        <div class="od-item-meta">${escHtml(item.subtitle || '')}${item.subtitle && item.duration_seconds ? ' · ' : ''}${item.duration_seconds ? fmtTime(item.duration_seconds) : ''}</div>
-                    </div>
-                    <div class="od-item-badges">
-                        ${item.listened ? '<span class="od-badge-listened" title="Listened">✓</span>' : ''}
-                        ${!item.listened && item.position_s > 5 ? `<span class="od-badge-resume">▶ ${fmtTime(item.position_s)}</span>` : ''}
-                    </div>`;
-                li.addEventListener('click', () => odPlayItem(item));
-                odListEl.appendChild(li);
-            });
-        }
-
-        function escHtml(s) {
-            return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-        }
-
-        function odPlayItem(item) {
-            // Save position for previously playing item
-            if (odCurrentItem && odCurrentItem.id !== item.id) {
-                odSavePosition();
-            }
-            odCurrentItem = item;
-            renderOdList();
-            const audioUrl = `${API_BASE}/api/ondemand/audio/${encodeURIComponent(item.id)}`;
-            audio.src = audioUrl;
-            audio.load();
-            odPlayerTitle.textContent = item.title + (item.subtitle ? ` — ${item.subtitle}` : '');
-            odPlayerEl.style.display = '';
-            odScrub.value = 0;
-            odTimeCurrent.textContent = '0:00';
-            odTimeTotal.textContent = fmtTime(item.duration_seconds);
-
-            // Register MediaSession
-            if ('mediaSession' in navigator) {
-                navigator.mediaSession.metadata = new MediaMetadata({
-                    title: item.title,
-                    artist: item.subtitle || 'WRIT-FM On-Demand',
-                });
-                navigator.mediaSession.setActionHandler('play', () => odResume());
-                navigator.mediaSession.setActionHandler('pause', () => odPause());
-                navigator.mediaSession.setActionHandler('seekbackward', () => { audio.currentTime = Math.max(0, audio.currentTime - 15); });
-                navigator.mediaSession.setActionHandler('seekforward', () => { audio.currentTime = audio.currentTime + 30; });
-            }
-
-            audio.addEventListener('loadedmetadata', function onMeta() {
-                audio.removeEventListener('loadedmetadata', onMeta);
-                const resumeAt = item.position_s || 0;
-                if (resumeAt > 5 && resumeAt < (audio.duration || Infinity) - 5) {
-                    audio.currentTime = resumeAt;
-                }
-                if (item.duration_seconds) {
-                    odScrub.max = item.duration_seconds;
-                } else if (audio.duration && isFinite(audio.duration)) {
-                    odScrub.max = audio.duration;
-                    odTimeTotal.textContent = fmtTime(audio.duration);
-                }
-                odResume();
-            }, { once: true });
-        }
-
-        function odResume() {
-            audio.play().then(() => {
-                odIsPlaying = true;
-                updateOdPlayBtn();
-                startOdSaveTimer();
-            }).catch(e => console.error('OD play error:', e));
-        }
-
-        function odPause() {
-            audio.pause();
-            odIsPlaying = false;
-            updateOdPlayBtn();
-            odSavePosition();
-        }
-
-        function updateOdPlayBtn() {
-            odPlayIcon.textContent = odIsPlaying ? '⏸' : '▶';
-        }
-
-        function startOdSaveTimer() {
-            clearInterval(odSaveTimer);
-            odSaveTimer = setInterval(() => {
-                if (odIsPlaying && !odScrubbing) odSavePosition();
-            }, 5000);
-        }
-
-        function odSavePosition() {
-            if (!odCurrentItem) return;
-            const pos = audio.currentTime || 0;
-            const dur = audio.duration && isFinite(audio.duration) ? audio.duration : (odCurrentItem.duration_seconds || null);
-            fetch(`${API_BASE}/api/ondemand/state`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ item_id: odCurrentItem.id, position_s: pos, duration_s: dur })
-            }).catch(() => {});
-        }
-
-        // Audio time update
-        audio.addEventListener('timeupdate', () => {
-            if (currentMode !== 'ondemand' || !odCurrentItem || odScrubbing) return;
-            const t = audio.currentTime || 0;
-            const dur = audio.duration && isFinite(audio.duration) ? audio.duration : (odCurrentItem.duration_seconds || 0);
-            odTimeCurrent.textContent = fmtTime(t);
-            if (dur) {
-                odScrub.max = dur;
-                odScrub.value = t;
-                odTimeTotal.textContent = fmtTime(dur);
-            }
-        });
-
-        audio.addEventListener('ended', () => {
-            if (currentMode !== 'ondemand' || !odCurrentItem) return;
-            odIsPlaying = false;
-            updateOdPlayBtn();
-            clearInterval(odSaveTimer);
-            // Mark as listened
-            const id = odCurrentItem.id;
-            fetch(`${API_BASE}/api/ondemand/state`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ item_id: id, listened: true, position_s: 0 })
-            }).then(() => {
-                const idx = odItems.findIndex(i => i.id === id);
-                if (idx >= 0) { odItems[idx].listened = true; odItems[idx].position_s = 0; }
-                renderOdList();
-            }).catch(() => {});
-        });
-
-        audio.addEventListener('pause', () => {
-            if (currentMode !== 'ondemand') return;
-            odIsPlaying = false;
-            updateOdPlayBtn();
-        });
-        audio.addEventListener('play', () => {
-            if (currentMode !== 'ondemand') return;
-            odIsPlaying = true;
-            updateOdPlayBtn();
-        });
-
-        // Scrub bar
-        odScrub.addEventListener('mousedown', () => { odScrubbing = true; });
-        odScrub.addEventListener('touchstart', () => { odScrubbing = true; });
-        odScrub.addEventListener('input', () => {
-            odTimeCurrent.textContent = fmtTime(parseFloat(odScrub.value));
-        });
-        odScrub.addEventListener('change', () => {
-            audio.currentTime = parseFloat(odScrub.value);
-            odScrubbing = false;
-            odSavePosition();
-        });
-        odScrub.addEventListener('mouseup', () => { odScrubbing = false; });
-        odScrub.addEventListener('touchend', () => { odScrubbing = false; });
-
-        // Play/pause button
-        odPlayBtn.addEventListener('click', () => {
-            if (!odCurrentItem) return;
-            if (odIsPlaying) { odPause(); } else { odResume(); }
-        });
-
-        // RR / FF
-        odRR.addEventListener('click', () => { if (audio.src) audio.currentTime = Math.max(0, audio.currentTime - 15); });
-        odFF.addEventListener('click', () => { if (audio.src) audio.currentTime = audio.currentTime + 30; });
-    </script>
+  // ── Initial play icon
+  setLivePlayIcon(false);
+  setOdPlayIcon(false);
+</script>
 </body>
 </html>

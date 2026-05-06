@@ -313,8 +313,8 @@ segment_types:
     name: Daily Briefing
     description: Consolidated two-host briefing covering all topic areas — AI, Crypto,
       Tech, and Australian News.
-    word_count_min: 3500
-    word_count_max: 5000
+    word_count_min: 1200
+    word_count_max: 2200
     multi_voice: true
     prompt_template: 'Two hosts — HOST_A and HOST_B — co-present this consolidated
       daily briefing.

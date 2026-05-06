@@ -46,7 +46,7 @@ TALK_SEGMENTS_DIR = PROJECT_ROOT / "output" / "talk_segments"
 AI_BUMPERS_DIR = PROJECT_ROOT / "output" / "music_bumpers"
 
 # Weekly schedule
-DEFAULT_SCHEDULE_PATH = PROJECT_ROOT / "config" / "schedule.yaml"
+DEFAULT_SCHEDULE_PATH = PROJECT_ROOT / "config"
 SCHEDULE_PATH = Path(os.environ.get("WRIT_SCHEDULE_PATH", str(DEFAULT_SCHEDULE_PATH))).expanduser()
 
 # Icecast config
@@ -223,13 +223,12 @@ def _retire(audio_path: Path):
 
 
 def _load_lifecycle(show_id: str, content_type: str) -> ContentLifecycle:
-    """Load lifecycle config for a show/content-type from schedule.yaml."""
+    """Load lifecycle config for a show/content-type from config/shows.yaml."""
     try:
-        import yaml
-        with open(SCHEDULE_PATH) as f:
-            data = yaml.safe_load(f)
-        show = data.get("shows", {}).get(show_id, {})
-        lc = show.get("content_lifecycle", {}).get(content_type, {})
+        from shared.config_loader import load_shows
+        config_dir = SCHEDULE_PATH if SCHEDULE_PATH.is_dir() else SCHEDULE_PATH.parent
+        shows = load_shows(config_dir)
+        lc = shows.get(show_id, {}).get("content_lifecycle", {}).get(content_type, {})
         return ContentLifecycle.from_dict(lc)
     except Exception:
         return ContentLifecycle()
@@ -244,6 +243,7 @@ class ProgramContext:
     topic_focus: str
     segment_types: list[str]
     bumper_style: str
+    hosts: list[dict] = field(default_factory=list)
     voices: dict[str, str] = field(default_factory=dict)
     playback_sequence: dict[str, object] = field(default_factory=dict)
     talk_lifecycle: ContentLifecycle = field(default_factory=ContentLifecycle)
@@ -258,6 +258,7 @@ def _build_program_context_for_show(station_schedule, show_id: str) -> ProgramCo
         show_name=show.name,
         show_description=show.description,
         host=show.host,
+        hosts=list(show.hosts),
         topic_focus=show.topic_focus,
         segment_types=list(show.segment_types),
         bumper_style=show.bumper_style,
@@ -295,6 +296,7 @@ def get_program_context(station_schedule=None) -> ProgramContext:
         show_name=resolved.name,
         show_description=resolved.description,
         host=resolved.host,
+        hosts=list(resolved.hosts),
         topic_focus=resolved.topic_focus,
         segment_types=resolved.segment_types,
         bumper_style=resolved.bumper_style,
@@ -378,18 +380,27 @@ def update_now_playing(
     show_id: str | None = None,
     show_name: str | None = None,
     host: str | None = None,
+    hosts: list[dict] | None = None,
     segment_type: str | None = None,
     caption: str | None = None,
     duration: float | None = None,
+    source_channel: str | None = None,
 ):
     """Update current track info in-memory and write to disk for external sync."""
+    host_labels = []
+    for h in (hosts or []):
+        label = h.get("display_name") or h.get("id", "")
+        if label:
+            host_labels.append(label)
     new_info = {
         "track": track,
         "type": track_type,
         "host": host,
+        "hosts": host_labels,
         "segment_type": segment_type,
         "show_id": show_id,
         "show": show_name,
+        "source_channel": source_channel or "",
         "timestamp": station_iso_now(),
         "listeners": get_listener_count(),
         "duration": round(duration + ICECAST_LISTENER_LATENCY, 2) if duration else None,
@@ -470,6 +481,23 @@ def _queue_item_snapshot(
         "segment_type": segment_type_override if segment_type_override is not None else (_extract_segment_type(filepath) if filepath is not None else kind),
         "duration_seconds": round(duration, 2) if duration else None,
     }
+    if filepath is not None:
+        try:
+            import json as _json
+            sidecar = filepath.with_suffix(".json")
+            if sidecar.exists():
+                meta = _json.loads(sidecar.read_text())
+                topic = meta.get("topic", "")
+                if topic:
+                    snapshot["topic"] = topic
+                short_title = meta.get("short_title", "")
+                if short_title:
+                    snapshot["short_title"] = short_title
+                source_channel = meta.get("source_channel", "")
+                if source_channel:
+                    snapshot["source_channel"] = source_channel
+        except Exception:
+            pass
     if started_at is not None:
         snapshot["started_at"] = started_at.isoformat()
         if duration:
@@ -711,7 +739,7 @@ def _publish_live_queue_state(
     if current_index is not None and 0 <= current_index < total:
         current_start = current_started_at or station_now()
         current_item = _queue_item_snapshot(talk_queue[current_index], current_index, total, current_start)
-        cursor = current_start
+        cursor = current_start + timedelta(seconds=(current_item.get("duration_seconds") or 0))
         for idx, item in enumerate(talk_queue[current_index + 1:current_index + 11], start=current_index + 1):
             upcoming.append(_queue_item_snapshot(item, idx, total, cursor))
             cursor = cursor + timedelta(seconds=_queue_item_duration(item))
@@ -1194,6 +1222,16 @@ def pipe_track(
 # MAIN LOOP - TALK FIRST
 # =============================================================================
 
+def _config_stamp(path: Path) -> float:
+    """Return the max mtime across all config files under path (or path itself)."""
+    if path.is_dir():
+        return max(
+            (p.stat().st_mtime for p in path.glob("*.yaml") if p.is_file()),
+            default=0.0,
+        )
+    return path.stat().st_mtime if path.exists() else 0.0
+
+
 def _kill_encoder(proc: subprocess.Popen | None) -> None:
     """Terminate an encoder process and close its stdin to release the Icecast mount."""
     if proc is None:
@@ -1328,13 +1366,16 @@ def run():
     if not SCHEDULE_ENABLED:
         raise RuntimeError("Schedule module is unavailable")
     if not SCHEDULE_PATH.exists():
-        raise FileNotFoundError(f"Schedule file not found: {SCHEDULE_PATH}")
+        raise FileNotFoundError(f"Config path not found: {SCHEDULE_PATH}")
 
     station_schedule = load_schedule(SCHEDULE_PATH)
     log(f"Loaded schedule with {len(station_schedule.shows)} shows")
+    _config_mtime = _config_stamp(SCHEDULE_PATH)
 
-    # Start embedded API server
-    from api_server import start_api_thread
+    # Start embedded API server — must use the same module instance imported above as live_api
+    # (importing "api_server" without package prefix would create a second module object with
+    # separate globals, so set_live_override/enqueue_live_command would be invisible here)
+    from station.api_server import start_api_thread
     start_api_thread(current_track_info, lambda: encoder_proc, get_listener_count, queue_getter=get_live_queue_state)
     log("API server started on port 8001")
 
@@ -1381,6 +1422,16 @@ def run():
         log("Encoder connected to Icecast")
 
         while running and encoder_proc.poll() is None:
+            # Reload config between segments if any file has changed on disk
+            stamp = _config_stamp(SCHEDULE_PATH)
+            if stamp != _config_mtime:
+                try:
+                    station_schedule = load_schedule(SCHEDULE_PATH)
+                    _config_mtime = stamp
+                    log(f"Config reloaded ({len(station_schedule.shows)} shows)")
+                except Exception as exc:
+                    log(f"Config reload failed, keeping old schedule: {exc}")
+
             # Get current program context
             ctx = get_program_context(station_schedule)
 
@@ -1429,6 +1480,18 @@ def run():
 
                 def _play_speech_item(track: Path, item_type: str, *, label: str) -> bool:
                     seg_name = clean_name(track, is_speech=True)
+                    _seg_channel = ""
+                    try:
+                        import json as _json
+                        sidecar = track.with_suffix(".json")
+                        if sidecar.exists():
+                            _meta = _json.loads(sidecar.read_text())
+                            _display = _meta.get("short_title") or _meta.get("topic", "")
+                            if _display:
+                                seg_name = _display
+                            _seg_channel = _meta.get("source_channel", "")
+                    except Exception:
+                        pass
                     log(f"  {label}: {seg_name}")
                     update_now_playing(
                         seg_name,
@@ -1436,8 +1499,10 @@ def run():
                         show_id=ctx.show_id,
                         show_name=ctx.show_name,
                         host=ctx.host,
+                        hosts=ctx.hosts,
                         segment_type=item_type,
                         duration=get_track_duration(track),
+                        source_channel=_seg_channel,
                     )
                     status = pipe_track(
                         track,

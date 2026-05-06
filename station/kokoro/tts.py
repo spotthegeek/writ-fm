@@ -25,6 +25,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import httpx
+
 # Get the kokoro directory (where this file lives)
 KOKORO_DIR = Path(__file__).parent
 VENV_PYTHON = KOKORO_DIR / ".venv" / "bin" / "python"
@@ -67,6 +69,22 @@ def render_speech(
     Returns:
         True if successful, False otherwise
     """
+    from shared.settings import kokoro_service_url
+    service_url = kokoro_service_url()
+    if service_url:
+        try:
+            resp = httpx.post(
+                f"{service_url}/v1/audio/speech",
+                json={"model": "kokoro", "input": text, "voice": voice, "speed": speed, "response_format": "wav"},
+                timeout=120.0,
+            )
+            resp.raise_for_status()
+            Path(output_path).write_bytes(resp.content)
+            return True
+        except Exception as e:
+            print(f"Kokoro remote TTS error: {e}")
+            return False
+
     if not VENV_PYTHON.exists():
         if not setup_venv():
             print("Failed to set up Kokoro venv")

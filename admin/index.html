@@ -76,6 +76,7 @@ const NAV = [
   { id: "library", label: "Library", icon: "M3 2h2v12H3zM7 2h2v12H7zM11 2l2 12" },
   { id: "ondemand", label: "On-Demand", icon: "M8 1a7 7 0 100 14A7 7 0 008 1zM6 5.5l5 2.5-5 2.5V5.5z" },
   { id: "settings", label: "Settings", icon: "M8 5a3 3 0 100 6 3 3 0 000-6zM8 1v2M8 13v2M1 8h2M13 8h2" },
+  { id: "access", label: "Access", icon: "M10 1H6a1 1 0 00-1 1v2H3a1 1 0 00-1 1v9a1 1 0 001 1h10a1 1 0 001-1V5a1 1 0 00-1-1h-2V2a1 1 0 00-1-1zM7 2h2v2H7V2zM8 8a1.5 1.5 0 100 3 1.5 1.5 0 000-3z" },
 ];
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -305,13 +306,67 @@ const WaveBar = ({ t }) => (
   </div>
 );
 
-const LibRow = ({ item, t, shows, onDelete }) => {
+const LibRow = ({ item, t, shows, onDelete, opts, onRegen }) => {
   const [expanded, setExpanded] = useState(false);
   const [hov, setHov] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
+  const [regenOpen, setRegenOpen] = useState(false);
+  const [regenBackend, setRegenBackend] = useState("");
+  const [regenVoice, setRegenVoice] = useState("");
+  const [regenRunning, setRegenRunning] = useState(false);
+  const [regenLog, setRegenLog] = useState("");
   const audioRef = useRef(null);
+  const regenPollRef = useRef(null);
+
+  useEffect(() => () => clearInterval(regenPollRef.current), []);
+
+  const regenVoiceOpts = React.useMemo(() => {
+    if (!regenBackend || !opts) return [];
+    return (opts[`${regenBackend}_voice_defs`] || []).map(v => ({ value: v.voice, label: v.label }));
+  }, [regenBackend, opts]);
+
+  const handleRegen = async (e) => {
+    e.stopPropagation();
+    setRegenRunning(true);
+    setRegenLog("Starting…");
+    clearInterval(regenPollRef.current);
+    try {
+      const res = await api("POST", "/api/generate", {
+        show_id: item.show_id,
+        content_type: item.type === "talk" ? "talk" : "music",
+        segment_type: item.type === "talk" ? (item.segment_type || "random") : "random",
+        source_type: item.source_type || "",
+        source_value: item.source_value || "",
+        count: 1,
+        tts_backend: regenBackend,
+        host_voice: regenVoice,
+        regenerate_from_name: item.name,
+      });
+      regenPollRef.current = setInterval(async () => {
+        try {
+          const job = await api("GET", `/api/generate/jobs/${res.job_id}`);
+          const lines = job.log || [];
+          setRegenLog(lines[lines.length - 1] || "Running…");
+          if (job.status === "completed" || job.status === "failed") {
+            clearInterval(regenPollRef.current);
+            setRegenRunning(false);
+            if (job.status === "completed") {
+              setRegenLog("Done — new segment generated.");
+              setRegenOpen(false);
+              onRegen && onRegen(item);
+            } else {
+              setRegenLog("Generation failed.");
+            }
+          }
+        } catch { clearInterval(regenPollRef.current); setRegenRunning(false); }
+      }, 2000);
+    } catch (err) {
+      setRegenLog("Error: " + err.message);
+      setRegenRunning(false);
+    }
+  };
 
   const audioUrl = `/api/library/audio/${item.show_id}/${encodeURIComponent(item.name)}?type=${item.type === "talk" ? "segment" : "bumper"}`;
   const showName = shows && shows[item.show_id] ? shows[item.show_id].name : item.show_id;
@@ -351,8 +406,9 @@ const LibRow = ({ item, t, shows, onDelete }) => {
             : "M6 3v7M6 3a2 2 0 014 0M6 10a2 2 0 104 0M10 3v7"} size={14} />
         </div>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 500, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {item.display_name || item.name.replace(/\.[^.]+$/, "")}
+          <div style={{ fontSize: 13.5, fontWeight: 500, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.display_name || item.name.replace(/\.[^.]+$/, "")}</span>
+            {item.regenerated_from && <span title={`Regenerated from: ${item.regenerated_from}`} style={{ flexShrink: 0, fontSize: 10, fontWeight: 600, padding: "1px 5px", borderRadius: 4, background: "oklch(0.92 0.08 270)", color: "oklch(0.42 0.18 270)", letterSpacing: "0.04em" }}>↺ regen</span>}
           </div>
           <div style={{ fontSize: 11.5, color: t.textMuted, marginTop: 1 }}>{showName} · {item.segment_type || "Music"}</div>
         </div>
@@ -363,6 +419,10 @@ const LibRow = ({ item, t, shows, onDelete }) => {
         <div style={{ opacity: hov || expanded ? 1 : 0, transition: "opacity 0.15s", display: "flex", gap: 2, alignItems: "center" }}>
           <button onClick={togglePlay} title="Preview" style={{ width: 26, height: 26, borderRadius: 6, border: "none", cursor: "pointer", background: playing ? t.navActiveBg : "transparent", color: playing ? t.accent : t.textFaint, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <Ico d={playing ? "M4 2h3v12H4zM9 2h3v12H9z" : "M4 2l10 6-10 6z"} size={12} />
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); setRegenOpen(o => !o); setExpanded(true); }} title="Regenerate segment"
+            style={{ width: 26, height: 26, borderRadius: 6, border: "none", cursor: "pointer", background: regenOpen ? t.navActiveBg : "transparent", color: regenOpen ? t.accent : t.textFaint, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Ico d="M13 3a7 7 0 00-7 7M1 3l2 2-2 2M6 10a4 4 0 004 4M15 13l-2-2 2-2" size={12} />
           </button>
           {confirmDel ? (
             <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
@@ -381,8 +441,8 @@ const LibRow = ({ item, t, shows, onDelete }) => {
           <Ico d={expanded ? "M4 10l4-4 4 4" : "M4 6l4 4 4-4"} size={12} />
         </div>
       </div>
-      <audio ref={audioRef} src={audioUrl} onEnded={() => setPlaying(false)} style={{ display: "none" }} />
-      <div style={{ overflow: "hidden", maxHeight: expanded ? 180 : 0, transition: "max-height 0.25s ease" }}>
+      <audio ref={audioRef} src={audioUrl} preload="none" onEnded={() => setPlaying(false)} style={{ display: "none" }} />
+      <div style={{ overflow: "hidden", maxHeight: expanded ? (regenOpen ? 340 : 180) : 0, transition: "max-height 0.3s ease" }}>
         <div style={{ padding: "0 16px 14px 36px", display: "grid", gridTemplateColumns: "1fr 200px", gap: 14 }}>
           <div>
             <p style={{ fontSize: 12.5, color: t.textMuted, lineHeight: 1.6, marginBottom: 10 }}>
@@ -393,6 +453,7 @@ const LibRow = ({ item, t, shows, onDelete }) => {
               {item.segment_type && <span>Type: <b style={{ color: t.textMuted }}>{item.segment_type}</b></span>}
               <span>Backend: <b style={{ color: t.textMuted }}>{item.backend_label || item.tts_backend || "—"}</b></span>
               {item.word_count > 0 && <span>Words: <b style={{ color: t.textMuted }}>{item.word_count}</b></span>}
+              {item.regenerated_from && <span style={{ color: "oklch(0.52 0.18 270)" }}>↺ Regenerated from: <b>{item.regenerated_from.replace(/\.[^.]+$/, "")}</b></span>}
             </div>
           </div>
           <div>
@@ -404,6 +465,46 @@ const LibRow = ({ item, t, shows, onDelete }) => {
             </div>
           </div>
         </div>
+        {regenOpen && (
+          <div style={{ margin: "0 16px 14px 36px", borderTop: `1px solid ${t.border}`, paddingTop: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: t.textFaint, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 8 }}>Regenerate</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              {item.type === "talk" && (
+                <>
+                  <select value={regenBackend} onChange={e => { setRegenBackend(e.target.value); setRegenVoice(""); }}
+                    style={{ height: 28, padding: "0 8px", borderRadius: 6, border: `1px solid ${t.inputBorder}`, background: t.inputBg, color: t.text, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans',sans-serif", outline: "none" }}>
+                    <option value="">Show default TTS</option>
+                    <option value="kokoro">Kokoro (local)</option>
+                    <option value="minimax">MiniMax</option>
+                    <option value="google">Google</option>
+                  </select>
+                  {regenBackend && regenVoiceOpts.length > 0 && (
+                    <select value={regenVoice} onChange={e => setRegenVoice(e.target.value)}
+                      style={{ height: 28, padding: "0 8px", borderRadius: 6, border: `1px solid ${t.inputBorder}`, background: t.inputBg, color: t.text, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans',sans-serif", outline: "none", maxWidth: 240 }}>
+                      <option value="">Default voice</option>
+                      {regenVoiceOpts.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
+                    </select>
+                  )}
+                </>
+              )}
+              <button onClick={handleRegen} disabled={regenRunning}
+                style={{ height: 28, padding: "0 14px", borderRadius: 6, border: "none", background: t.accent, color: "#fff", fontSize: 12, fontWeight: 500, cursor: regenRunning ? "not-allowed" : "pointer", opacity: regenRunning ? 0.7 : 1, fontFamily: "'DM Sans',sans-serif", display: "flex", alignItems: "center", gap: 5 }}>
+                {regenRunning ? <><Spinner size={11} color="#fff" />Running…</> : "↺ Generate new"}
+              </button>
+              {!regenRunning && (
+                <button onClick={(e) => { e.stopPropagation(); setRegenOpen(false); setRegenLog(""); }}
+                  style={{ height: 28, padding: "0 10px", borderRadius: 6, border: `1px solid ${t.border}`, background: "transparent", color: t.textMuted, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans',sans-serif" }}>
+                  Cancel
+                </button>
+              )}
+            </div>
+            {regenLog && (
+              <div style={{ marginTop: 7, fontSize: 11.5, color: regenLog.startsWith("Done") ? "#4caf50" : (regenLog.startsWith("Error") || regenLog.startsWith("Generation")) ? t.dangerText : t.textFaint, fontFamily: "'DM Mono',monospace" }}>
+                {regenLog}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -420,11 +521,43 @@ const LibColHead = ({ t }) => (
 );
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-const DashboardScreen = ({ t, onNav, npTopic, npTitle: npTitleProp, npShow: npShowProp, npType, elapsed, npTotal }) => {
+const SEG_TYPE_LABEL = { reddit_storytelling: "Storytelling", reddit_post: "Reddit", news_briefing: "Briefing", daily_briefing: "Daily Briefing", youtube: "YouTube", deep_dive: "Deep Dive", panel: "Panel", interview: "Interview", story: "Story", news_analysis: "Analysis", listener_mailbag: "Mailbag", show_intro: "Intro", show_outro: "Outro", station_id: "Station ID", music_bumper: "Music" };
+const TTS_LABEL = { kokoro: "Kokoro", kokoro_fallback: "Kokoro", google: "Google TTS", minimax: "MiniMax", youtube_ingest: "YouTube", "music-gen": "MusicGen", "ace-step": "MusicGen" };
+const TTS_COLOR = { kokoro: "#3b82f6", kokoro_fallback: "#3b82f6", google: "#22c55e", minimax: "#a855f7", youtube_ingest: "#ef4444", "music-gen": "#f97316", "ace-step": "#f97316" };
+
+const fmtActivityDate = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return iso.slice(0, 16).replace("T", " ");
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const pad = n => String(n).padStart(2, "0");
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (sameDay) return `Today ${time}`;
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${months[d.getMonth()]} ${d.getDate()}, ${time}`;
+};
+
+const DashboardScreen = ({ t, onNav, npTopic, npChannel, npTitle: npTitleProp, npShow: npShowProp, npType, elapsed, npTotal }) => {
   const [status, , , reloadStatus] = useApi("/api/status");
   const [shows] = useApi("/api/shows");
-  const [activity] = useApi("/api/activity/log?limit=6");
+  const [activity, , , reloadActivity] = useApi("/api/activity/segments?limit=20");
+  const actAudioRef = React.useRef(null);
+  const [playingUrl, setPlayingUrl] = React.useState(null);
   useInterval(reloadStatus, 15000);
+
+  const toggleActPlay = React.useCallback((url) => {
+    const el = actAudioRef.current;
+    if (!el) return;
+    if (playingUrl === url) {
+      el.pause();
+      setPlayingUrl(null);
+    } else {
+      el.src = url;
+      el.play().catch(() => {});
+      setPlayingUrl(url);
+    }
+  }, [playingUrl]);
 
   const np = status?.now_playing || {};
   const npTitle = npTitleProp || np.track || np.title || "Nothing playing";
@@ -435,8 +568,8 @@ const DashboardScreen = ({ t, onNav, npTopic, npTitle: npTitleProp, npShow: npSh
   const invRows = shows ? Object.entries(shows).map(([id, s]) => ({
     show: s.name || id,
     talk: status?.segments_per_show?.[id] || 0,
-    bumpers: 0,
-  })) : [];
+    bumpers: status?.bumpers_per_show?.[id] || 0,
+  })).sort((a, b) => (b.talk + b.bumpers) - (a.talk + a.bumpers)) : [];
 
   return (
     <div style={{ padding: 24, overflowY: "auto", height: "100%" }}>
@@ -465,7 +598,9 @@ const DashboardScreen = ({ t, onNav, npTopic, npTitle: npTitleProp, npShow: npSh
           <div style={{ fontSize: 10.5, color: t.textFaint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>Now Playing</div>
           <div style={{ fontSize: 12, fontWeight: 600, color: t.textMuted, marginBottom: 3 }}>{npShow || "—"}</div>
           <div style={{ fontSize: 13, fontWeight: 500, color: t.text, marginBottom: 14, lineHeight: 1.4 }}>
-            {isTalk ? (npTopic || npTitle) : (npTitle || "Music Bumper")}
+            {isTalk
+              ? <>{npChannel && <span style={{ color: t.accent, fontWeight: 700, marginRight: 5 }}>[{npChannel}]</span>}{npTopic || npTitle}</>
+              : (npTitle || "Music Bumper")}
           </div>
           <div style={{ height: 3, background: t.border, borderRadius: 99, overflow: "hidden", marginBottom: 6 }}>
             <div style={{ height: "100%", width: `${progPct}%`, background: t.accent, borderRadius: 99, transition: "width 1s linear" }} />
@@ -478,32 +613,58 @@ const DashboardScreen = ({ t, onNav, npTopic, npTitle: npTitleProp, npShow: npSh
         </Card>
         <Card t={t} style={{ padding: "16px 18px" }}>
           <div style={{ fontSize: 10.5, color: t.textFaint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>Segment Inventory</div>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-            <thead>
-              <tr>{["Show", "Talk", "Bumpers"].map(h => <th key={h} style={{ textAlign: h === "Show" ? "left" : "right", color: t.textFaint, fontWeight: 500, paddingBottom: 8, fontSize: 11 }}>{h}</th>)}</tr>
-            </thead>
-            <tbody>
-              {invRows.slice(0, 5).map((r, i) => (
-                <tr key={i} style={{ borderTop: `1px solid ${t.border}` }}>
-                  <td style={{ padding: "8px 0", color: t.text }}>{r.show}</td>
-                  <td style={{ textAlign: "right", color: t.textMuted, fontFamily: "'DM Mono',monospace" }}>{r.talk}</td>
-                  <td style={{ textAlign: "right", color: t.textMuted, fontFamily: "'DM Mono',monospace" }}>{r.bumpers}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div style={{ overflowY: "auto", maxHeight: 260 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead>
+                <tr>{["Show", "Talk", "Bumpers"].map(h => <th key={h} style={{ textAlign: h === "Show" ? "left" : "right", color: t.textFaint, fontWeight: 500, paddingBottom: 8, fontSize: 11, position: "sticky", top: 0, background: t.card }}>{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {invRows.map((r, i) => (
+                  <tr key={i} style={{ borderTop: `1px solid ${t.border}` }}>
+                    <td style={{ padding: "7px 0", color: t.text }}>{r.show}</td>
+                    <td style={{ textAlign: "right", color: r.talk > 0 ? t.textMuted : t.textFaint, fontFamily: "'DM Mono',monospace" }}>{r.talk}</td>
+                    <td style={{ textAlign: "right", color: r.bumpers > 0 ? t.textMuted : t.textFaint, fontFamily: "'DM Mono',monospace" }}>{r.bumpers}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       </div>
 
+      <audio ref={actAudioRef} onEnded={() => setPlayingUrl(null)} style={{ display: "none" }} />
       <Card t={t} style={{ padding: "14px 18px" }}>
-        <div style={{ fontSize: 10.5, color: t.textFaint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Recent Activity</div>
-        {(activity || []).slice(0, 6).map((r, i) => (
-          <div key={i} style={{ display: "flex", gap: 12, padding: "6px 0", borderTop: i > 0 ? `1px solid ${t.border}` : "none" }}>
-            <span style={{ fontSize: 11.5, color: t.textFaint, fontFamily: "'DM Mono',monospace", flexShrink: 0, minWidth: 52 }}>{(r.ts || "").slice(11, 16) || r.ts?.slice(0, 10)}</span>
-            <span style={{ fontSize: 12.5, color: t.textMuted }}>{r.show_id} · {r.msg}</span>
-          </div>
-        ))}
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ fontSize: 10.5, color: t.textFaint, textTransform: "uppercase", letterSpacing: "0.06em", flex: 1 }}>Recent Activity</div>
+          <button onClick={reloadActivity} style={{ background: "none", border: "none", color: t.textFaint, cursor: "pointer", fontSize: 13, padding: "0 2px" }} title="Refresh">↻</button>
+        </div>
         {!activity && <div style={{ fontSize: 13, color: t.textFaint }}>Loading…</div>}
+        {activity && activity.length === 0 && <div style={{ fontSize: 13, color: t.textFaint }}>No segments yet.</div>}
+        {(activity || []).map((r, i) => {
+          const showName = (shows && shows[r.show_id]?.name) || r.show_name || r.show_id;
+          const typeLabel = SEG_TYPE_LABEL[r.segment_type] || r.segment_type;
+          const ttsLabel = TTS_LABEL[r.tts] || r.tts;
+          const ttsColor = TTS_COLOR[r.tts] || t.textFaint;
+          const isPlaying = playingUrl === r.audio_url;
+          const isMusic = r.content_type === "music";
+          return (
+            <div key={r.filename || i} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 0", borderTop: i > 0 ? `1px solid ${t.border}` : "none" }}>
+              <button onClick={() => toggleActPlay(r.audio_url)} title={isPlaying ? "Stop" : "Preview"} style={{ flexShrink: 0, marginTop: 2, width: 26, height: 26, borderRadius: "50%", border: `1.5px solid ${isPlaying ? t.accent : t.border}`, background: isPlaying ? t.accent : "transparent", color: isPlaying ? "#fff" : t.textMuted, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9 }}>
+                {isPlaying ? "■" : "▶"}
+              </button>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", marginBottom: 3 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: t.text }}>{showName}</span>
+                  <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: isMusic ? "rgba(249,115,22,0.12)" : "rgba(99,102,241,0.12)", color: isMusic ? "#f97316" : "#818cf8", fontWeight: 500 }}>{typeLabel}</span>
+                  <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: `${ttsColor}18`, color: ttsColor, fontWeight: 500 }}>{ttsLabel}</span>
+                  <span style={{ marginLeft: "auto", fontSize: 10.5, color: t.textFaint, fontFamily: "'DM Mono',monospace", flexShrink: 0, whiteSpace: "nowrap" }}>{fmtActivityDate(r.generated_at)}</span>
+                </div>
+                <div style={{ fontSize: 12.5, color: t.textMuted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.3 }}>{r.title || typeLabel}</div>
+                {r.host_display && !isMusic && <div style={{ fontSize: 11, color: t.textFaint, marginTop: 2 }}>{r.host_display}</div>}
+              </div>
+            </div>
+          );
+        })}
       </Card>
     </div>
   );
@@ -513,8 +674,14 @@ const DashboardScreen = ({ t, onNav, npTopic, npTitle: npTitleProp, npShow: npSh
 const OTHER_SEGMENT_TYPES = new Set(["show_intro", "show_outro", "station_id"]);
 
 const LibraryScreen = ({ t, shows }) => {
-  const [segData, , , reloadSegs] = useApi("/api/library/segments");
-  const [bumperData, , , reloadBumpers] = useApi("/api/library/bumpers");
+  const [segData, segLoading, , reloadSegs] = useApi("/api/library/segments");
+  const [bumperData, bumperLoading, , reloadBumpers] = useApi("/api/library/bumpers");
+  const [opts] = useApi("/api/generate/options");
+
+  const handleRegen = useCallback((item) => {
+    if (item.type === "talk") reloadSegs(); else reloadBumpers();
+  }, [reloadSegs, reloadBumpers]);
+  const isLoading = segLoading || bumperLoading;
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [showFilter, setShowFilter] = useState("");
@@ -613,7 +780,12 @@ const LibraryScreen = ({ t, shows }) => {
       </div>
       <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
         <LibColHead t={t} />
-        {visible.length === 0 ? (
+        {isLoading ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "60px 24px", color: t.textFaint }}>
+            <Spinner size={18} color={t.accent} />
+            <span style={{ fontSize: 13, color: t.textMuted }}>Loading library…</span>
+          </div>
+        ) : visible.length === 0 ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: "60px 24px", color: t.textFaint }}>
             <Ico d="M3 2h2v12H3zM7 2h2v12H7zM11 2l2 12" size={28} />
             <div style={{ fontSize: 14, fontWeight: 500, color: t.textMuted }}>No {emptyLabel} yet</div>
@@ -628,11 +800,11 @@ const LibraryScreen = ({ t, shows }) => {
                   <span style={{ color: t.textMuted }}>{showName}</span>
                   <span style={{ fontWeight: 400 }}>{items.length} item{items.length !== 1 ? "s" : ""}</span>
                 </div>
-                {items.map(item => <LibRow key={`${item.show_id}/${item.name}`} item={item} t={t} shows={shows} onDelete={handleDelete} />)}
+                {items.map(item => <LibRow key={`${item.show_id}/${item.name}`} item={item} t={t} shows={shows} onDelete={handleDelete} opts={opts} onRegen={handleRegen} />)}
               </div>
             );
           })
-        ) : visible.map(item => <LibRow key={`${item.show_id}/${item.name}`} item={item} t={t} shows={shows} onDelete={handleDelete} />)}
+        ) : visible.map(item => <LibRow key={`${item.show_id}/${item.name}`} item={item} t={t} shows={shows} onDelete={handleDelete} opts={opts} onRegen={handleRegen} />)}
       </div>
     </div>
   );
@@ -749,7 +921,106 @@ const GenerateScreen = ({ t, setStatus, shows }) => {
     triggerPollRefs.current[jid] = poll;
   }, [shows]);
 
-  const tabs = [{ id: "manual", label: "Manual Generate" }, { id: "schedules", label: "Auto-Generate" }, { id: "activity", label: "Activity Log" }];
+  const tabs = [{ id: "manual", label: "Manual Generate" }, { id: "schedules", label: "Auto-Generate" }, { id: "briefings", label: "Briefings" }, { id: "activity", label: "Activity Log" }];
+
+  const BRIEFING_SHOWS = [
+    { id: "briefing_ai",       label: "AI Briefing" },
+    { id: "briefing_crypto",   label: "Crypto Briefing" },
+    { id: "briefing_tech",     label: "Tech Briefing" },
+    { id: "briefing_news_aus", label: "Australian News" },
+    { id: "briefing_daily",    label: "Daily Briefing" },
+  ];
+  const [bfJobs, setBfJobs] = useState({});      // show_id → jobId
+  const [bfLogs, setBfLogs] = useState({});      // jobId → log text
+  const [bfStatuses, setBfStatuses] = useState({}); // jobId → status
+  const [bfLastGen, setBfLastGen] = useState({}); // show_id → {last_generated_at, count}
+  const bfPollRefs = useRef({});
+  useEffect(() => () => Object.values(bfPollRefs.current).forEach(clearInterval), []);
+
+  const fetchBriefingStatuses = useCallback(async () => {
+    try {
+      const data = await api("GET", "/api/briefings/status");
+      const map = {};
+      (data.briefings || []).forEach(b => { map[b.show_id] = b; });
+      setBfLastGen(map);
+    } catch {}
+  }, []);
+
+  const fmtBriefingDate = (iso) => {
+    if (!iso) return null;
+    const d = new Date(iso);
+    const datePart = d.toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" });
+    const timePart = d.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", hour12: false });
+    return `${datePart} · ${timePart}`;
+  };
+
+  const regenerateBriefing = useCallback(async (showId) => {
+    if (bfJobs[showId]) return;
+    setStatus(`Regenerating ${shows?.[showId]?.name || showId}…`, "running");
+    let res;
+    try {
+      res = await api("POST", `/api/briefings/regenerate/${showId}`);
+    } catch (e) {
+      setStatus("Regenerate failed: " + e.message, "error");
+      return;
+    }
+    const jid = res.job_id;
+    if (!jid) { setStatus("No job returned", "error"); return; }
+    setBfJobs(j => ({ ...j, [showId]: jid }));
+    setBfLogs(l => ({ ...l, [jid]: `Deleted ${res.deleted ?? 0} existing file(s). Starting…` }));
+    setBfStatuses(s => ({ ...s, [jid]: "running" }));
+    const poll = setInterval(async () => {
+      try {
+        const job = await api("GET", `/api/generate/jobs/${jid}`);
+        setBfLogs(l => ({ ...l, [jid]: (job.log || []).join("\n") || "Starting…" }));
+        setBfStatuses(s => ({ ...s, [jid]: job.status }));
+        if (job.status === "completed" || job.status === "failed") {
+          clearInterval(poll);
+          delete bfPollRefs.current[jid];
+          setBfJobs(j => { const n = {...j}; delete n[showId]; return n; });
+          setStatus(job.status === "completed" ? `${shows?.[showId]?.name || showId} regenerated` : "Regeneration failed", job.status === "completed" ? "done" : "error");
+          reloadSched();
+          if (job.status === "completed") fetchBriefingStatuses();
+        }
+      } catch { clearInterval(poll); delete bfPollRefs.current[jid]; }
+    }, 2000);
+    bfPollRefs.current[jid] = poll;
+  }, [shows, fetchBriefingStatuses]);
+
+  // When the briefings tab becomes active, get a fresh scheduler status and last-gen times
+  useEffect(() => {
+    if (tab === "briefings") { reloadSched(); fetchBriefingStatuses(); }
+  }, [tab]);
+
+  // Re-attach polling for any briefing jobs still running in the backend
+  // (handles navigating away mid-generation and then coming back)
+  useEffect(() => {
+    if (tab !== "briefings" || !schedStatus?.active_jobs) return;
+    const briefingIds = new Set(BRIEFING_SHOWS.map(b => b.id));
+    Object.entries(schedStatus.active_jobs).forEach(([jid, info]) => {
+      if (!briefingIds.has(info.show_id) || info.type !== "talk") return;
+      if (bfPollRefs.current[jid]) return; // already polling
+      setBfJobs(j => ({ ...j, [info.show_id]: jid }));
+      setBfStatuses(s => ({ ...s, [jid]: "running" }));
+      setBfLogs(l => ({ ...l, [jid]: l[jid] || "Reconnecting…" }));
+      const poll = setInterval(async () => {
+        try {
+          const job = await api("GET", `/api/generate/jobs/${jid}`);
+          setBfLogs(l => ({ ...l, [jid]: (job.log || []).join("\n") || "Running…" }));
+          setBfStatuses(s => ({ ...s, [jid]: job.status }));
+          if (job.status === "completed" || job.status === "failed") {
+            clearInterval(poll);
+            delete bfPollRefs.current[jid];
+            setBfJobs(j => { const n = {...j}; delete n[info.show_id]; return n; });
+            setStatus(job.status === "completed" ? `${shows?.[info.show_id]?.name || info.show_id} regenerated` : "Regeneration failed", job.status === "completed" ? "done" : "error");
+            reloadSched();
+            if (job.status === "completed") fetchBriefingStatuses();
+          }
+        } catch { clearInterval(poll); delete bfPollRefs.current[jid]; }
+      }, 2000);
+      bfPollRefs.current[jid] = poll;
+    });
+  }, [tab, schedStatus, fetchBriefingStatuses]);
 
   const backendVoices = (backend) => {
     if (!opts) return [];
@@ -975,6 +1246,59 @@ const GenerateScreen = ({ t, setStatus, shows }) => {
         </div>
       )}
 
+      {tab === "briefings" && (
+        <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+          <p style={{ fontSize: 13, color: t.textMuted, marginBottom: 20 }}>
+            Regenerate deletes today's existing briefing and generates a fresh one from current sources.
+            Category briefings (AI, Crypto, Tech, Australian News) must exist before regenerating the Daily Briefing.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {BRIEFING_SHOWS.map(({ id: showId, label }) => {
+              const jid = bfJobs[showId];
+              const isRunning = !!jid;
+              const status = jid ? (bfStatuses[jid] || "running") : null;
+              const logText = jid ? (bfLogs[jid] || "Starting…") : null;
+              return (
+                <Card t={t} key={showId} style={{ padding: "16px 20px", borderColor: isRunning ? t.accent : t.cardBorder }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: logText ? 12 : 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: t.text }}>{label}</div>
+                        {bfLastGen[showId]?.last_generated_at
+                          ? <div style={{ fontSize: 11.5, color: t.textFaint, marginTop: 2 }}>Last: {fmtBriefingDate(bfLastGen[showId].last_generated_at)}</div>
+                          : <div style={{ fontSize: 11.5, color: t.textFaint, marginTop: 2 }}>Not generated today</div>
+                        }
+                      </div>
+                      {status === "running" && <><Spinner size={12} color={t.accent} /><Pill label="Generating" bg={t.pillQueued} color={t.pillQueuedText} /></>}
+                      {status === "completed" && <Pill label="Done" bg={t.pillReady} color={t.pillReadyText} />}
+                      {status === "failed" && <Pill label="Failed" bg={t.pillLive} color={t.pillLiveText} />}
+                    </div>
+                    <button
+                      onClick={() => regenerateBriefing(showId)}
+                      disabled={isRunning}
+                      style={{ padding: "6px 14px", borderRadius: 7, border: "none",
+                        background: isRunning ? t.border : t.accent,
+                        color: isRunning ? t.textMuted : "#fff",
+                        fontSize: 12, fontWeight: 600, cursor: isRunning ? "default" : "pointer",
+                        fontFamily: "'DM Sans',sans-serif", display: "flex", alignItems: "center", gap: 6, transition: "all 0.15s" }}>
+                      {isRunning ? <><Spinner size={11} color={t.textMuted} /> Generating…</> : "↻ Regenerate Today's"}
+                    </button>
+                  </div>
+                  {logText && (
+                    <div ref={el => el && (el.scrollTop = el.scrollHeight)}
+                      style={{ background: t.logBg, borderRadius: 6, padding: "10px 12px",
+                        fontSize: 11.5, fontFamily: "'DM Mono',monospace", color: t.logText,
+                        whiteSpace: "pre-wrap", lineHeight: 1.7, maxHeight: 220, overflowY: "auto" }}>
+                      {logText}
+                    </div>
+                  )}
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {tab === "activity" && (
         <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
           <div style={{ padding: "16px 24px 12px", flexShrink: 0, display: "flex", gap: 8, alignItems: "center", borderBottom: `1px solid ${t.border}` }}>
@@ -1061,6 +1385,14 @@ const ShowModal = ({ show, t, onClose, onSaved, segmentTypes, hosts }) => {
     generation: show?.generation || { talk: { enabled: true, min_inventory: 6, target_inventory: 12, cadence: "continuous" }, music: { enabled: true, min_inventory: 4, target_inventory: 8, cadence: "weekly" } },
     content_lifecycle: show?.content_lifecycle || {},
     hosts: show?.hosts || [],
+    research_sources: (show?.research_sources || show?.source_rules || []).map(s => ({
+      type: s.type || "youtube_channel",
+      value: s.value || "",
+      lookback_days: s.lookback_days ?? 7,
+      selection_strategy: s.selection_strategy || "latest",
+      segment_type: s.segment_type || "",
+      favourite: s.favourite || false,
+    })),
   });
 
   const toggleSegType = (id) => {
@@ -1074,7 +1406,7 @@ const ShowModal = ({ show, t, onClose, onSaved, segmentTypes, hosts }) => {
         name: form.name, description: form.description, tts_backend: form.tts_backend,
         bumper_style: form.bumper_style, segment_types: form.segment_types,
         hosts: form.hosts.length ? form.hosts : [{ id: "liminal_operator", role: "primary" }],
-        research_sources: show?.research_sources || [], source_rules: show?.source_rules || [],
+        research_sources: form.research_sources, source_rules: form.research_sources,
         guests: [], playback_sequence: {}, content_lifecycle: form.content_lifecycle,
         generation: form.generation,
       };
@@ -1100,7 +1432,7 @@ const ShowModal = ({ show, t, onClose, onSaved, segmentTypes, hosts }) => {
 
   return (
     <Modal t={t} title={isNew ? "New Show" : `Edit · ${show.name}`} subtitle="Use tabs to keep metadata and automation settings separate."
-      onClose={onClose} tabs={[["basics", "Basics"], ["content", "Content & Hosts"], ["automation", "Automation"]]}
+      onClose={onClose} tabs={[["basics", "Basics"], ["content", "Content & Hosts"], ["sources", "Sources"], ["automation", "Automation"]]}
       activeTab={tab} onTabChange={setTab}
       footer={<ModalFooter t={t} onClose={onClose} onDelete={isNew ? null : del} saveLabel={isNew ? "Create Show" : "Save Show"} onSave={save} saving={saving} />}
       width="min(680px,94vw)">
@@ -1165,6 +1497,87 @@ const ShowModal = ({ show, t, onClose, onSaved, segmentTypes, hosts }) => {
               </Select>
             </div>
           </div>
+        </div>
+      )}
+      {tab === "sources" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <p style={{ fontSize: 12.5, color: t.textFaint, margin: 0 }}>
+              Research sources are fetched when generating content for this show.
+            </p>
+            <button onClick={() => setForm(f => ({ ...f, research_sources: [...f.research_sources, { type: "youtube_channel", value: "", lookback_days: 7, selection_strategy: "latest", segment_type: "" }] }))}
+              style={{ flexShrink: 0, padding: "5px 12px", borderRadius: 7, border: "none", background: t.accent, color: "#fff", fontSize: 12.5, fontWeight: 500, cursor: "pointer", fontFamily: "'DM Sans',sans-serif" }}>
+              + Add Source
+            </button>
+          </div>
+          {form.research_sources.length === 0 && (
+            <div style={{ padding: "24px", textAlign: "center", fontSize: 13, color: t.textFaint, border: `1px dashed ${t.border}`, borderRadius: 8 }}>
+              No sources configured. Add a YouTube channel, Reddit subreddit, or URL.
+            </div>
+          )}
+          {form.research_sources.map((src, i) => {
+            const set = (key, val) => setForm(f => {
+              const updated = f.research_sources.map((s, j) => j === i ? { ...s, [key]: val } : s);
+              return { ...f, research_sources: updated };
+            });
+            const remove = () => setForm(f => ({ ...f, research_sources: f.research_sources.filter((_, j) => j !== i) }));
+            return (
+              <div key={i} style={{ padding: "12px 14px", borderRadius: 8, border: `1px solid ${t.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "160px 1fr auto 28px", gap: 8, alignItems: "start" }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: t.textFaint, marginBottom: 4 }}>Type</div>
+                    <Select t={t} value={src.type} onChange={e => set("type", e.target.value)}>
+                      <option value="youtube_channel">YouTube Channel</option>
+                      <option value="reddit_subreddit">Reddit Subreddit</option>
+                      <option value="reddit_thread">Reddit Thread</option>
+                      <option value="url">URL</option>
+                    </Select>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: t.textFaint, marginBottom: 4 }}>
+                      {src.type === "reddit_subreddit" ? "Subreddit (e.g. /r/sysadmin/)" : src.type === "reddit_thread" ? "Thread URL" : "URL"}
+                    </div>
+                    <Input t={t} value={src.value} onChange={e => set("value", e.target.value)}
+                      placeholder={src.type === "reddit_subreddit" ? "/r/subreddit/" : "https://…"} />
+                  </div>
+                  <div style={{ marginTop: 18 }}>
+                    <button onClick={() => set("favourite", !src.favourite)} title="Favourite: fetches full transcript for YouTube, more items for Reddit"
+                      style={{ height: 32, padding: "0 10px", borderRadius: 7, border: `1px solid ${src.favourite ? "#f59e0b" : t.border}`,
+                        background: src.favourite ? "rgba(245,158,11,0.12)" : "transparent",
+                        color: src.favourite ? "#f59e0b" : t.textFaint,
+                        fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans',sans-serif", whiteSpace: "nowrap" }}>
+                      ★ Fav
+                    </button>
+                  </div>
+                  <button onClick={remove} title="Remove source"
+                    style={{ marginTop: 20, width: 28, height: 32, borderRadius: 6, border: "none", background: "transparent", color: t.textFaint, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Ico d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5M3 4l1 10h8l1-10" size={13} />
+                  </button>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: t.textFaint, marginBottom: 4 }}>Lookback days</div>
+                    <Input t={t} type="number" value={src.lookback_days} onChange={e => set("lookback_days", parseInt(e.target.value) || 7)} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: t.textFaint, marginBottom: 4 }}>Selection strategy</div>
+                    <Select t={t} value={src.selection_strategy} onChange={e => set("selection_strategy", e.target.value)}>
+                      <option value="latest">Latest</option>
+                      <option value="top">Top</option>
+                      <option value="random">Random</option>
+                    </Select>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: t.textFaint, marginBottom: 4 }}>Segment type (optional)</div>
+                    <Select t={t} value={src.segment_type} onChange={e => set("segment_type", e.target.value)}>
+                      <option value="">— any —</option>
+                      {Object.entries(segmentTypes || {}).map(([id, st]) => <option key={id} value={id}>{st.name || id}</option>)}
+                    </Select>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
       {tab === "automation" && (
@@ -1401,7 +1814,7 @@ const KIND_META = {
   station_id: { label: "Station ID", micD: "M8 8m-1 0a1 1 0 102 0 1 1 0 10-2 0M5 5a4 4 0 006 0M3 3a7 7 0 0010 0M5 11a4 4 0 006 0M3 13a7 7 0 0010 0" },
 };
 
-const LiveScreen = ({ t, dark, npTitle, npShow, npTopic, npType, elapsed, npTotal }) => {
+const LiveScreen = ({ t, dark, npTitle, npShow, npTopic, npChannel, npType, elapsed, npTotal }) => {
   const [liveStatus, , , reloadLive] = useApi("/api/live/status");
   useInterval(reloadLive, 5000);
   const [skipping, setSkipping] = useState(false);
@@ -1488,7 +1901,9 @@ const LiveScreen = ({ t, dark, npTitle, npShow, npTopic, npType, elapsed, npTota
           <div style={{ fontSize: 10.5, color: t.textFaint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Now Playing</div>
           <div style={{ fontSize: 12, fontWeight: 600, color: t.textMuted, marginBottom: 3 }}>{npShow || "—"}</div>
           <div style={{ fontSize: 13, fontWeight: 500, color: t.text, marginBottom: 14, lineHeight: 1.4 }}>
-            {isTalk ? (npTopic || npTitle) : (npTitle || "Music Bumper")}
+            {isTalk
+              ? <>{npChannel && <span style={{ color: t.accent, fontWeight: 700, marginRight: 5 }}>[{npChannel}]</span>}{npTopic || npTitle}</>
+              : (npTitle || "Music Bumper")}
           </div>
           <div style={{ height: 3, background: t.border, borderRadius: 99, overflow: "hidden", marginBottom: 6 }}>
             <div style={{ height: "100%", width: `${progPct}%`, background: t.accent, borderRadius: 99, transition: "width 1s linear" }} />
@@ -1513,7 +1928,8 @@ const LiveScreen = ({ t, dark, npTitle, npShow, npTopic, npType, elapsed, npTota
             const isDraggable = item.kind === "speech" && item.actionable && !isNowPlaying;
             const isDropTarget = dropFile === item.filename && dragFile !== item.filename;
             const isSmall = item.kind !== "speech";
-            const title = item.topic || (item.kind === "bumper_slot" ? "Music Bumper" : item.name || item.label);
+            const titleText = item.short_title || item.topic || (item.kind === "bumper_slot" ? "Music Bumper" : item.name || item.label);
+            const channel = item.source_channel || "";
             const dur = item.duration_seconds ? fmtDuration(item.duration_seconds) : "";
 
             return (
@@ -1543,7 +1959,7 @@ const LiveScreen = ({ t, dark, npTitle, npShow, npTopic, npType, elapsed, npTota
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: isSmall ? 11.5 : 13, fontWeight: isSmall ? 400 : 500, color: isNowPlaying ? t.accent : t.text,
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {title}
+                    {channel && <span style={{ color: t.accent, fontWeight: 600, marginRight: 5 }}>[{channel}]</span>}{titleText}
                   </div>
                   {!isSmall && <div style={{ fontSize: 11, color: t.textMuted }}>{km.label}{item.segment_type && item.segment_type !== "bumper" ? ` · ${item.segment_type}` : ""}</div>}
                 </div>
@@ -2148,16 +2564,16 @@ const SettingsScreen = ({ t }) => {
   const [taxonomy, , , reloadTaxonomy] = useApi("/api/show-taxonomy");
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ station_name: "", timezone: "" });
+  const [form, setForm] = useState({ station_name: "", tagline: "", timezone: "" });
   const [bumperStyles, setBumperStyles] = useState([]);
 
-  useEffect(() => { if (settingsData) setForm({ station_name: settingsData.station_name || "", timezone: settingsData.timezone || "" }); }, [settingsData]);
+  useEffect(() => { if (settingsData) setForm({ station_name: settingsData.station_name || "", tagline: settingsData.tagline || "", timezone: settingsData.timezone || "" }); }, [settingsData]);
   useEffect(() => { if (taxonomy) setBumperStyles(taxonomy.bumper_styles || []); }, [taxonomy]);
 
   const save = async () => {
     setSaving(true);
     try {
-      await api("PUT", "/api/settings", { station_name: form.station_name, timezone: form.timezone });
+      await api("PUT", "/api/settings", { station_name: form.station_name, tagline: form.tagline, timezone: form.timezone });
       await api("PUT", "/api/show-taxonomy", { bumper_styles: bumperStyles });
       reloadTaxonomy();
       setSaved(true); setTimeout(() => setSaved(false), 2500);
@@ -2175,6 +2591,9 @@ const SettingsScreen = ({ t }) => {
         <Card t={t} style={{ padding: "18px 20px" }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: t.textFaint, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 14 }}>Station Identity</div>
           <div style={{ marginBottom: 12 }}><Label t={t}>Station Name</Label><Input t={t} value={form.station_name} onChange={e => setForm(f => ({ ...f, station_name: e.target.value }))} /></div>
+          <div style={{ marginBottom: 12 }}><Label t={t}>Station Tagline</Label><Input t={t} value={form.tagline} onChange={e => setForm(f => ({ ...f, tagline: e.target.value }))} placeholder="AI generated radio" />
+            <div style={{ fontSize: 11.5, color: t.textFaint, marginTop: 6 }}>Shown in the listener app header and footer.</div>
+          </div>
           <div><Label t={t}>Station Timezone</Label>
             <Input t={t} value={form.timezone} onChange={e => setForm(f => ({ ...f, timezone: e.target.value }))} placeholder="Australia/Adelaide" />
             <div style={{ fontSize: 11.5, color: t.textFaint, marginTop: 6 }}>IANA timezone identifier — e.g. <code style={{ fontFamily: "'DM Mono',monospace", background: t.border, padding: "1px 5px", borderRadius: 4 }}>Australia/Adelaide</code></div>
@@ -2187,6 +2606,113 @@ const SettingsScreen = ({ t }) => {
         </Card>
         {saved && <div style={{ fontSize: 13, color: t.pillReadyText, background: t.pillReady, padding: "8px 14px", borderRadius: 8 }}>Settings saved successfully.</div>}
       </div>
+    </div>
+  );
+};
+
+// ─── ACCESS (LISTENER TOKENS) ─────────────────────────────────────────────────
+const AccessScreen = ({ t }) => {
+  const [tokens, setTokens] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [label, setLabel] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [newToken, setNewToken] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  const reload = useCallback(() => {
+    setLoading(true);
+    fetch("/api/listener-tokens").then(r => r.json())
+      .then(d => { setTokens(d.tokens || []); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const create = async () => {
+    if (creating) return;
+    setCreating(true);
+    setNewToken(null);
+    setCopied(false);
+    try {
+      const r = await fetch("/api/listener-tokens", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label }),
+      });
+      const entry = await r.json();
+      setNewToken(entry.token);
+      setLabel("");
+      reload();
+    } catch(e) { alert("Failed: " + e.message); }
+    finally { setCreating(false); }
+  };
+
+  const revoke = async (token, lbl) => {
+    if (!confirm(`Revoke token${lbl ? ` for "${lbl}"` : ""}? The listener will need a new token.`)) return;
+    try {
+      await fetch(`/api/listener-tokens/${encodeURIComponent(token)}`, { method: "DELETE" });
+      reload();
+    } catch(e) { alert("Failed: " + e.message); }
+  };
+
+  return (
+    <div style={{ padding: 24, overflowY: "auto", height: "100%" }}>
+      <ScreenHeader t={t} title="Listener Access" subtitle="Manage invite tokens for the listener app" />
+      <Card t={t} style={{ padding: 18, marginBottom: 20 }}>
+        <Label t={t}>Generate New Token</Label>
+        <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+          <Input t={t} placeholder="Label (e.g. Alice's iPhone)" value={label}
+            onChange={e => setLabel(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && create()}
+            style={{ flex: 1 }} />
+          <Btn primary onClick={create} disabled={creating}>
+            {creating ? "Creating…" : "Create"}
+          </Btn>
+        </div>
+        {newToken && (
+          <div style={{ marginTop: 12, padding: "10px 14px", background: t.logBg, borderRadius: 7,
+            border: `1px solid ${t.border}` }}>
+            <div style={{ fontSize: 11, color: t.textFaint, marginBottom: 6 }}>
+              Copy this token now — it won't be shown again:
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <code style={{ flex: 1, fontSize: 12, fontFamily: "'DM Mono',monospace", color: t.text,
+                wordBreak: "break-all", lineHeight: 1.5 }}>{newToken}</code>
+              <button onClick={() => { navigator.clipboard.writeText(newToken); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+                style={{ flexShrink: 0, fontSize: 11, cursor: "pointer", background: "transparent",
+                  border: `1px solid ${t.border}`, borderRadius: 5, padding: "3px 10px",
+                  color: copied ? "#22c55e" : t.textMuted, fontFamily: "inherit" }}>
+                {copied ? "Copied!" : "Copy"}
+              </button>
+            </div>
+          </div>
+        )}
+      </Card>
+      <Card t={t} style={{ overflow: "hidden" }}>
+        {loading ? (
+          <div style={{ padding: 24, color: t.textFaint, textAlign: "center", fontSize: 13 }}>Loading…</div>
+        ) : tokens.length === 0 ? (
+          <div style={{ padding: 24, color: t.textFaint, textAlign: "center", fontSize: 13 }}>
+            No tokens yet. Create one above to grant listener access.
+          </div>
+        ) : tokens.map((tok, i) => (
+          <div key={tok.token} style={{ padding: "12px 16px",
+            borderBottom: i < tokens.length - 1 ? `1px solid ${t.border}` : "none",
+            display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 500, fontSize: 13, color: t.text }}>
+                {tok.label || <em style={{ color: t.textFaint, fontWeight: 400 }}>Unlabeled</em>}
+              </div>
+              <div style={{ fontSize: 11, color: t.textFaint, marginTop: 2, fontFamily: "'DM Mono',monospace" }}>
+                {tok.token.slice(0, 8)}…
+                {" · "}Created {tok.created_at ? new Date(tok.created_at).toLocaleDateString() : "unknown"}
+                {tok.last_used ? ` · Last used ${new Date(tok.last_used).toLocaleDateString()}` : " · Never used"}
+              </div>
+            </div>
+            <Btn danger onClick={() => revoke(tok.token, tok.label)}>Revoke</Btn>
+          </div>
+        ))}
+      </Card>
     </div>
   );
 };
@@ -2224,6 +2750,7 @@ const AdminShell = () => {
   const [npTitle, setNpTitle] = useState("—");
   const [npShow, setNpShow] = useState("");
   const [npTopic, setNpTopic] = useState("");
+  const [npChannel, setNpChannel] = useState("");
   const [npType, setNpType] = useState("talk");
   const [npTotal, setNpTotal] = useState(0);
   const [npStartedAt, setNpStartedAt] = useState(null);
@@ -2235,7 +2762,7 @@ const AdminShell = () => {
   const [listening, setListening] = useState(false);
   const audioRef = useRef(null);
 
-  const streamUrl = `http://${window.location.hostname}:8000/stream`;
+  const streamUrl = `${window.location.origin}/stream`;
 
   const toggleListen = () => {
     if (!audioRef.current) return;
@@ -2274,9 +2801,10 @@ const AdminShell = () => {
       else setNpTotal(0);
       if (np.timestamp) setNpStartedAt(new Date(np.timestamp).getTime());
       else setNpStartedAt(null);
-      // topic comes from the sidecar on the current talk item
+      // topic + channel come from the sidecar on the current talk item
       const ci = live?.queue?.current_item || {};
-      setNpTopic(type === "talk" ? (ci.topic || "") : "");
+      setNpTopic(type === "talk" ? (ci.short_title || ci.topic || "") : "");
+      setNpChannel(type === "talk" ? (ci.source_channel || "") : "");
     }).catch(() => {});
   }, []);
 
@@ -2296,8 +2824,8 @@ const AdminShell = () => {
   const fmt = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
   const screens = {
-    dashboard: <DashboardScreen t={t} onNav={setNav} npTopic={npTopic} npTitle={npTitle} npShow={npShow} npType={npType} elapsed={elapsed} npTotal={npTotal} />,
-    live: <LiveScreen t={t} dark={dark} npTitle={npTitle} npShow={npShow} npTopic={npTopic} npType={npType} elapsed={elapsed} npTotal={npTotal} />,
+    dashboard: <DashboardScreen t={t} onNav={setNav} npTopic={npTopic} npChannel={npChannel} npTitle={npTitle} npShow={npShow} npType={npType} elapsed={elapsed} npTotal={npTotal} />,
+    live: <LiveScreen t={t} dark={dark} npTitle={npTitle} npShow={npShow} npTopic={npTopic} npChannel={npChannel} npType={npType} elapsed={elapsed} npTotal={npTotal} />,
     shows: <ShowsScreen t={t} shows={shows} reloadShows={reloadShows} />,
     hosts: <HostsScreen t={t} />,
     segments: <SegmentsScreen t={t} />,
@@ -2306,6 +2834,7 @@ const AdminShell = () => {
     library: <LibraryScreen t={t} shows={shows} />,
     ondemand: <OnDemandScreen t={t} />,
     settings: <SettingsScreen t={t} />,
+    access: <AccessScreen t={t} />,
   };
 
   const stationName = shows ? (Object.keys(shows).length > 0 ? "Admin Console" : "Admin Console") : "Admin Console";
@@ -2334,7 +2863,7 @@ const AdminShell = () => {
                 {npType === "bumper" ? "Music" : "On Air"}
               </div>
               <div style={{ fontSize: 11.5, color: t.onAirTrack, marginTop: 2, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{npShow || "—"}</div>
-              <ScrollText text={npType === "bumper" ? npTitle : (npTopic || npTitle)} style={{ fontSize: 11, color: t.textMuted, marginTop: 1 }} />
+              <ScrollText text={npType === "bumper" ? npTitle : ((npChannel ? `[${npChannel}] ` : "") + (npTopic || npTitle))} style={{ fontSize: 11, color: t.textMuted, marginTop: 1 }} />
               {npTotal > 0 && <>
                 <div style={{ height: 2, background: t.onAirBorder, borderRadius: 99, overflow: "hidden", marginTop: 5, marginBottom: 3 }}>
                   <div style={{ height: "100%", width: `${Math.min(100, Math.round((elapsed / npTotal) * 100))}%`, background: t.accent, borderRadius: 99, transition: "width 1s linear" }} />
@@ -2367,10 +2896,16 @@ const AdminShell = () => {
               <span style={{ width: 6, height: 6, borderRadius: "50%", background: icecastOk ? "#22c55e" : "#ef4444", display: "inline-block" }} />
               Icecast {icecastOk ? "online" : "offline"}
             </div>
-            <button onClick={() => setDark(d => !d)} title={dark ? "Light mode" : "Dark mode"}
-              style={{ width: 30, height: 30, borderRadius: 7, border: `1px solid ${t.border}`, background: "transparent", color: t.textMuted, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Ico d={dark ? "M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4M8 5a3 3 0 100 6 3 3 0 000-6z" : "M8 3a5 5 0 000 10 6 6 0 01-1-11z"} size={14} />
-            </button>
+            <div style={{ display: "flex", gap: 5 }}>
+              <a href="/logout" title="Sign out"
+                style={{ width: 30, height: 30, borderRadius: 7, border: `1px solid ${t.border}`, background: "transparent", color: t.textMuted, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}>
+                <Ico d="M10 3H6a1 1 0 00-1 1v8a1 1 0 001 1h4M13 8H7M10 5l3 3-3 3" size={13} />
+              </a>
+              <button onClick={() => setDark(d => !d)} title={dark ? "Light mode" : "Dark mode"}
+                style={{ width: 30, height: 30, borderRadius: 7, border: `1px solid ${t.border}`, background: "transparent", color: t.textMuted, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Ico d={dark ? "M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4M8 5a3 3 0 100 6 3 3 0 000-6z" : "M8 3a5 5 0 000 10 6 6 0 01-1-11z"} size={14} />
+              </button>
+            </div>
           </div>
         </div>
 

@@ -6,16 +6,21 @@ HTTP server that exposes current track info, schedule, history, and more.
 Runs as a daemon thread inside the streamer process.
 """
 
+import hashlib
+import hmac
 import http.server
+import ipaddress
 import json
 import os
+import secrets
 import socketserver
 import subprocess
 import threading
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from http.cookies import SimpleCookie
 import sys
 from pathlib import Path
 
@@ -89,6 +94,142 @@ last_message_times: dict[str, float] = {}
 PORT = int(os.environ.get("WRIT_NOW_PLAYING_PORT", "8001"))
 ICECAST_STATUS_URL = icecast_status_url()
 
+# ---------------------------------------------------------------------------
+# Listener auth
+# ---------------------------------------------------------------------------
+_LISTENER_AUTH = os.environ.get("WRIT_LISTENER_AUTH", "").strip() == "1"
+_LISTENER_COOKIE = "writ_listener_token"
+_LISTENER_TOKENS_FILE = PROJECT_ROOT / "output" / "listener_tokens.json"
+_LISTENER_TOKENS_LOCK = threading.Lock()
+_LISTENER_EXEMPT = {"/stream", "/health", "/auth", "/logout", "/favicon.svg", "/favicon.ico"}
+
+# Parse LAN bypass ranges at startup
+_LAN_NETS: list = []
+for _cidr in os.environ.get("WRIT_LISTENER_LAN_RANGES", "10.0.0.0/23").split(","):
+    _cidr = _cidr.strip()
+    if _cidr:
+        try:
+            _LAN_NETS.append(ipaddress.ip_network(_cidr, strict=False))
+        except ValueError:
+            pass
+
+_AUTH_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WRIT-FM – Access Required</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#111;color:#f0f0f0;display:flex;align-items:center;justify-content:center;height:100vh}
+.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:36px 40px;width:340px}
+h1{font-size:20px;font-weight:700;margin-bottom:4px;letter-spacing:-.02em}
+.sub{font-size:13px;color:#9ca3af;margin-bottom:22px}
+input{width:100%;padding:9px 12px;border-radius:7px;border:1px solid #2a2a2a;background:#111;color:#f0f0f0;font-size:14px;outline:none;margin-bottom:14px;font-family:inherit;letter-spacing:.05em}
+button{width:100%;padding:10px;border-radius:7px;border:none;background:oklch(0.52 0.21 16);color:#fff;font-size:14px;font-weight:500;cursor:pointer;font-family:inherit}
+.err{color:#f87171;font-size:13px;margin-bottom:12px;display:none}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>WRIT&#8209;FM</h1>
+  <p class="sub">Enter your invite token to listen.</p>
+  <div class="err" id="err">Invalid token — please try again.</div>
+  <form method="POST" action="/auth">
+    <input type="text" name="token" placeholder="Invite token" autofocus autocomplete="off" spellcheck="false">
+    <button type="submit">Access</button>
+  </form>
+</div>
+<script>if(new URLSearchParams(location.search).get('error'))document.getElementById('err').style.display='block';</script>
+</body>
+</html>"""
+
+
+def _load_listener_tokens() -> list[dict]:
+    if not _LISTENER_TOKENS_FILE.exists():
+        return []
+    try:
+        return json.loads(_LISTENER_TOKENS_FILE.read_text()) or []
+    except Exception:
+        return []
+
+
+def _is_valid_token(token: str) -> bool:
+    if not token:
+        return False
+    for entry in _load_listener_tokens():
+        stored = entry.get("token", "")
+        if stored and hmac.compare_digest(stored, token):
+            return True
+    return False
+
+
+def _touch_last_used(token: str) -> None:
+    try:
+        with _LISTENER_TOKENS_LOCK:
+            tokens = _load_listener_tokens()
+            now = datetime.now(timezone.utc).isoformat()
+            for entry in tokens:
+                if entry.get("token") == token:
+                    entry["last_used"] = now
+                    break
+            _LISTENER_TOKENS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            _LISTENER_TOKENS_FILE.write_text(json.dumps(tokens, indent=2))
+    except Exception:
+        pass
+
+
+def _is_lan_ip(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+        return addr.is_loopback or any(addr in net for net in _LAN_NETS)
+    except ValueError:
+        return False
+
+
+def _get_cookies(handler) -> dict[str, str]:
+    raw = handler.headers.get("Cookie", "")
+    if not raw:
+        return {}
+    c = SimpleCookie()
+    try:
+        c.load(raw)
+    except Exception:
+        return {}
+    return {k: v.value for k, v in c.items()}
+
+
+def _check_listener_auth(handler) -> bool:
+    if not _LISTENER_AUTH:
+        return True
+    path = urllib.parse.urlparse(handler.path).path.rstrip("/") or "/"
+    if path in _LISTENER_EXEMPT:
+        return True
+    if _is_lan_ip(handler.client_address[0]):
+        return True
+    return _is_valid_token(_get_cookies(handler).get(_LISTENER_COOKIE, ""))
+
+
+def _deny(handler) -> None:
+    path = urllib.parse.urlparse(handler.path).path.rstrip("/") or "/"
+    if path.startswith("/api/"):
+        body = json.dumps({"error": "Authentication required"}).encode()
+        handler.send_response(401)
+        handler.send_header("Content-Type", "application/json")
+        handler.send_header("Access-Control-Allow-Origin", "*")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.end_headers()
+        try:
+            handler.wfile.write(body)
+        except BrokenPipeError:
+            pass
+    else:
+        handler.send_response(302)
+        handler.send_header("Location", "/auth")
+        handler.send_header("Content-Length", "0")
+        handler.end_headers()
+
+
 # Shared state — set by start_api_thread()
 _track_info: dict = {}
 _encoder_getter = None
@@ -116,6 +257,35 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path.rstrip("/") or "/"
+
+        # Listener auth guard
+        if not _check_listener_auth(self):
+            return _deny(self)
+
+        # GET /auth — serve token entry page
+        if path == "/auth":
+            body = _AUTH_HTML.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except BrokenPipeError:
+                pass
+            return
+
+        # GET /logout — clear cookie, redirect to /auth
+        if path == "/logout":
+            self.send_response(302)
+            self.send_header(
+                "Set-Cookie",
+                f"{_LISTENER_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax",
+            )
+            self.send_header("Location", "/auth")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
 
         if path == "/now-playing":
             data = get_now_playing()
@@ -186,6 +356,10 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
                     self.wfile.write(json.dumps({"error": "No Discogs info available"}).encode())
                 except BrokenPipeError:
                     pass
+        elif path == "/api/briefings":
+            self._send_json(get_briefings())
+        elif path == "/api/abs/sources":
+            self._send_json(get_abs_sources())
         elif path == "/api/ondemand/sources":
             self._send_json(get_ondemand_sources())
         elif path.startswith("/api/ondemand/items"):
@@ -200,9 +374,43 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
             item_id = urllib.parse.unquote(item_id)
             range_header = self.headers.get("Range")
             self._serve_ondemand_audio(item_id, range_header)
+        elif path == "/stream":
+            self._proxy_stream()
         else:
             self.send_response(404)
             self.end_headers()
+
+    def _proxy_stream(self):
+        """Proxy the Icecast stream so HTTPS frontends don't need direct port 8000 access."""
+        import socket as _socket
+        icecast_host = os.environ.get("ICECAST_HOST", "localhost")
+        icecast_port = int(os.environ.get("ICECAST_PORT", "8000"))
+        icecast_path = os.environ.get("ICECAST_MOUNT", "/stream")
+        try:
+            upstream = urllib.request.urlopen(
+                f"http://{icecast_host}:{icecast_port}{icecast_path}",
+                timeout=10,
+            )
+        except Exception as e:
+            self._send_error(502, f"Stream unavailable: {e}")
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", upstream.headers.get("Content-Type", "audio/mpeg"))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-cache, no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        try:
+            while True:
+                chunk = upstream.read(4096)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, _socket.error):
+            pass
+        finally:
+            upstream.close()
 
     def _send_error(self, code, msg):
         self.send_response(code)
@@ -309,6 +517,37 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path.rstrip("/")
+
+        # POST /auth — validate token, set cookie, redirect
+        if path == "/auth":
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(content_length).decode("utf-8")
+                params = urllib.parse.parse_qs(raw)
+                token = params.get("token", [""])[0].strip()
+            except Exception:
+                token = ""
+            if _is_valid_token(token):
+                _touch_last_used(token)
+                self.send_response(302)
+                self.send_header(
+                    "Set-Cookie",
+                    f"{_LISTENER_COOKIE}={token}; Path=/; Max-Age={30 * 86400}; HttpOnly; SameSite=Lax",
+                )
+                self.send_header("Location", "/")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            else:
+                self.send_response(302)
+                self.send_header("Location", "/auth?error=1")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            return
+
+        # Auth guard for all other POST endpoints
+        if not _check_listener_auth(self):
+            return _deny(self)
+
         if path == "/api/ondemand/state":
             try:
                 content_length = int(self.headers.get("Content-Length", 0))
@@ -337,7 +576,7 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
                 data = json.loads(self.rfile.read(content_length).decode("utf-8") or "{}")
                 show_id = data.get("show_id")  # None → skip to next scheduled show
                 from schedule import load_schedule as _load_sched
-                sched = _load_sched(PROJECT_ROOT / "config" / "schedule.yaml")
+                sched = _load_sched(PROJECT_ROOT / "config")
                 now = station_now()
                 current_show_id = sched.resolve(now).show_id
                 if show_id is None:
@@ -359,6 +598,8 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
                         return self._send_error(400, "Could not determine current show end time")
                     target_id, end_at = show_id, current_end
                 set_live_override(target_id, end_at.isoformat())
+                # Also skip the current segment so playback cuts over immediately
+                enqueue_live_command({"action": "skip"})
                 self._send_json({"ok": True, "show_id": target_id, "end_at": end_at.isoformat()})
             except Exception as e:
                 self._send_error(500, str(e))
@@ -635,7 +876,7 @@ def get_upcoming_shows(hours: int = 12) -> list[dict]:
     """Return upcoming show blocks for the next N hours, respecting any active override."""
     try:
         from schedule import load_schedule as _load_sched
-        sched = _load_sched(PROJECT_ROOT / "config" / "schedule.yaml")
+        sched = _load_sched(PROJECT_ROOT / "config")
         now = station_now()
         tz = now.tzinfo
         horizon = now + timedelta(hours=hours)
@@ -706,8 +947,7 @@ def get_schedule_info() -> dict:
     """Get current and upcoming show schedule."""
     try:
         from schedule import load_schedule
-        schedule_path = PROJECT_ROOT / "config" / "schedule.yaml"
-        schedule = load_schedule(schedule_path)
+        schedule = load_schedule(PROJECT_ROOT / "config")
         now = station_now()
         current = schedule.resolve(now)
 
@@ -729,6 +969,8 @@ def get_schedule_info() -> dict:
                 pass
 
         return {
+            "station_name": schedule.station_name if hasattr(schedule, "station_name") else "",
+            "tagline": schedule.tagline if hasattr(schedule, "tagline") else "AI generated radio",
             "current": {
                 "show_id": current.show_id,
                 "name": current.name,
@@ -855,27 +1097,88 @@ def get_qr_code() -> bytes | None:
     return generate_qr_png(discogs_data["url"])
 
 
+def get_briefings() -> dict:
+    """Return briefing categories (show:briefing_*) with all items, newest first, merged with playback state."""
+    try:
+        from collections import defaultdict
+        od = _od()
+        items = od.get_show_segment_items(show_prefix="briefing_")
+        store = od.get_store()
+        states = store.get_all_states()
+
+        by_source: dict[str, list] = defaultdict(list)
+        for item in items:
+            by_source[item.source].append(item)
+
+        categories = []
+        for source_id in sorted(by_source.keys()):
+            items_list = sorted(by_source[source_id], key=lambda i: i.created_at or "", reverse=True)
+            if not items_list:
+                continue
+            cat_items = []
+            for item in items_list:
+                state = states.get(item.id, {})
+                d = item.to_dict()
+                d["position_s"] = state.get("position_s", 0.0)
+                d["listened"] = bool(state.get("listened", 0))
+                cat_items.append(d)
+            categories.append({
+                "source_id": source_id,
+                "show_id": source_id[5:],
+                "name": items_list[0].source_name,
+                "items": cat_items,
+            })
+        return {"categories": categories}
+    except Exception as e:
+        return {"categories": [], "error": str(e)}
+
+
 def get_ondemand_sources() -> dict:
-    """Return list of on-demand sources: shows + ABS libraries + upload buckets."""
+    """Return on-demand sources: non-briefing show segments + upload buckets (no ABS)."""
     try:
         od = _od()
         cfg = od.load_config()
         sources = []
-        sources.extend(od.get_show_sources())
-        for lib in cfg.get("abs", {}).get("libraries", []):
-            sources.append({"id": f"abs:{lib['id']}", "name": lib["name"], "type": "abs"})
+        for s in od.get_show_sources():
+            if not s["id"].startswith("show:briefing_"):
+                sources.append(s)
         for src in cfg.get("upload_sources", []):
-            sources.append({"id": f"upload:{src['id']}", "name": src["name"], "type": "upload"})
+            src_dir = od.UPLOADS_DIR / src["id"]
+            if src_dir.exists() and any(
+                f.suffix.lower() in od.AUDIO_EXTS for f in src_dir.iterdir() if f.is_file()
+            ):
+                sources.append({"id": f"upload:{src['id']}", "name": src["name"], "type": "upload"})
+        return {"sources": sources}
+    except Exception as e:
+        return {"sources": [], "error": str(e)}
+
+
+def get_abs_sources() -> dict:
+    """Return ABS library sources from config (no network call)."""
+    try:
+        od = _od()
+        cfg = od.load_config()
+        sources = [
+            {"id": f"abs:{lib['id']}", "name": lib["name"], "type": "abs"}
+            for lib in cfg.get("abs", {}).get("libraries", [])
+        ]
         return {"sources": sources}
     except Exception as e:
         return {"sources": [], "error": str(e)}
 
 
 def get_ondemand_items(source: str | None = None) -> dict:
-    """Return inventory items, optionally filtered by source, merged with playback state."""
+    """Return inventory items merged with playback state.
+
+    ABS sources go through the full cached inventory (network calls).
+    Local sources (show segments + uploads) use a fast filesystem-only path.
+    """
     try:
         od = _od()
-        items = od.get_inventory()
+        if source and source.startswith("abs:"):
+            items = od.get_inventory()
+        else:
+            items = od.get_show_segment_items() + od.get_upload_items()
         if source:
             items = [i for i in items if i.source == source]
         store = od.get_store()
@@ -901,8 +1204,9 @@ def get_ondemand_state() -> dict:
         return {"state": {}, "error": str(e)}
 
 
-class ReusableTCPServer(socketserver.TCPServer):
+class ReusableTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
+    daemon_threads = True
 
 
 def start_api_thread(track_info: dict, encoder_getter, listener_fn, queue_getter=None) -> threading.Thread:
@@ -920,6 +1224,18 @@ def start_api_thread(track_info: dict, encoder_getter, listener_fn, queue_getter
     _listener_fn = listener_fn
     _live_queue_getter = queue_getter
     SERVER_START_TIME = time.time()
+
+    def _warm_and_refresh():
+        """Pre-populate the show segment cache at startup, then keep it warm."""
+        import ondemand as _od_mod
+        while True:
+            try:
+                _od_mod.get_show_segment_items()
+            except Exception:
+                pass
+            time.sleep(50)  # Refresh 10s before the 60s TTL expires
+
+    threading.Thread(target=_warm_and_refresh, daemon=True).start()
 
     def _serve():
         try:

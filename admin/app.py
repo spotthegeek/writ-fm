@@ -11,8 +11,11 @@ Port: 8080
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -27,10 +30,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form, Header
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form, Header, Request
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 
 import scheduler as _sched
 from station.schedule import (
@@ -39,8 +43,11 @@ from station.schedule import (
     merge_playback_sequence,
     playback_sequence_overrides,
 )
+from shared.config_loader import load_station_config, save_station_config, CONFIG_DIR as _LOADER_CONFIG_DIR
 from shared.hosts import primary_host_assignment
 from shared.settings import (
+    admin_password,
+    admin_session_days,
     default_voice_for_backend,
     google_tts_model,
     icecast_status_url,
@@ -57,7 +64,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 CONFIG_DIR = PROJECT_ROOT / "config"
-SCHEDULE_PATH = CONFIG_DIR / "schedule.yaml"
 HOSTS_PATH = CONFIG_DIR / "hosts.yaml"
 SEGMENT_TYPES_PATH = CONFIG_DIR / "segment_types.yaml"
 SHOW_TAXONOMY_PATH = CONFIG_DIR / "show_taxonomy.yaml"
@@ -132,6 +138,115 @@ async def _lifespan(app: FastAPI):
 
 app = FastAPI(title="Station Admin", version="1.0", lifespan=_lifespan)
 
+# ---------------------------------------------------------------------------
+# Admin auth
+# ---------------------------------------------------------------------------
+_ADMIN_PASSWORD = admin_password()
+_ADMIN_AUTH_ENABLED = bool(_ADMIN_PASSWORD)
+_ADMIN_SESSION_DAYS = admin_session_days()
+_ADMIN_COOKIE = "writ_admin_session"
+_ADMIN_SECRET = secrets.token_bytes(32)  # random per-process; restarts invalidate all sessions
+
+_LOGIN_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Login</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#0f0f0f;color:#f0f0f0;display:flex;align-items:center;justify-content:center;height:100vh}
+.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:36px 40px;width:340px}
+h1{font-size:17px;font-weight:600;margin-bottom:24px;color:#f0f0f0;letter-spacing:-.01em}
+.accent{color:oklch(0.52 0.21 16)}
+input{width:100%;padding:9px 12px;border-radius:7px;border:1px solid #2a2a2a;background:#111;color:#f0f0f0;font-size:14px;outline:none;margin-bottom:14px;font-family:inherit}
+button{width:100%;padding:10px;border-radius:7px;border:none;background:oklch(0.52 0.21 16);color:#fff;font-size:14px;font-weight:500;cursor:pointer;font-family:inherit}
+.err{color:#f87171;font-size:13px;margin-bottom:12px;display:none}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1><span class="accent">Crouch</span><span style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin-left:4px;opacity:.7">FM</span> &nbsp;Admin</h1>
+  <div class="err" id="err">Incorrect password.</div>
+  <form method="POST" action="/login">
+    <input type="password" name="password" placeholder="Password" autofocus autocomplete="current-password">
+    <button type="submit">Sign in</button>
+  </form>
+</div>
+<script>if(new URLSearchParams(location.search).get('error'))document.getElementById('err').style.display='block';</script>
+</body>
+</html>"""
+
+
+def _make_admin_token() -> str:
+    payload = f"admin:{int(time.time())}"
+    sig = hmac.new(_ADMIN_SECRET, payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}.{sig}"
+
+
+def _verify_admin_token(token: str) -> bool:
+    try:
+        body, sig = token.rsplit(".", 1)
+        expected = hmac.new(_ADMIN_SECRET, body.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return False
+        ts = int(body.split(":")[1])
+        return (time.time() - ts) / 86400 <= _ADMIN_SESSION_DAYS
+    except Exception:
+        return False
+
+
+class AdminAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if not _ADMIN_AUTH_ENABLED:
+            return await call_next(request)
+        path = request.url.path
+        if path in ("/login", "/logout", "/favicon.ico") or path.startswith("/static/"):
+            return await call_next(request)
+        # Allow automated ingest scripts through via bearer token
+        auth = request.headers.get("authorization", "")
+        if auth.startswith("Bearer ") and INGEST_API_KEY:
+            if hmac.compare_digest(auth[7:], INGEST_API_KEY):
+                return await call_next(request)
+        if _verify_admin_token(request.cookies.get(_ADMIN_COOKIE, "")):
+            return await call_next(request)
+        if path.startswith("/api/"):
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        return HTMLResponse(_LOGIN_HTML)
+
+
+app.add_middleware(AdminAuthMiddleware)
+
+
+@app.get("/login", response_class=HTMLResponse)
+def admin_login_page():
+    return HTMLResponse(_LOGIN_HTML)
+
+
+@app.post("/login")
+async def admin_login(request: Request):
+    form = await request.form()
+    password = str(form.get("password", ""))
+    if _ADMIN_AUTH_ENABLED and hmac.compare_digest(password, _ADMIN_PASSWORD):
+        resp = RedirectResponse("/", status_code=303)
+        resp.set_cookie(
+            _ADMIN_COOKIE,
+            _make_admin_token(),
+            max_age=_ADMIN_SESSION_DAYS * 86400,
+            httponly=True,
+            samesite="lax",
+        )
+        return resp
+    return RedirectResponse("/login?error=1", status_code=303)
+
+
+@app.get("/logout")
+def admin_logout():
+    resp = RedirectResponse("/login", status_code=303)
+    resp.delete_cookie(_ADMIN_COOKIE)
+    return resp
+
+
 STATIC_DIR = Path(__file__).parent / "static"
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -142,13 +257,13 @@ if STATIC_DIR.exists():
 # ---------------------------------------------------------------------------
 
 def load_schedule() -> dict:
-    with open(SCHEDULE_PATH) as f:
-        return yaml.safe_load(f)
+    return load_station_config(CONFIG_DIR)
 
 
 def save_schedule(data: dict):
-    with open(SCHEDULE_PATH, "w") as f:
-        yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    global _station_tz_cached
+    _station_tz_cached = _TZ_UNSET
+    save_station_config(CONFIG_DIR, data)
 
 
 def _validate_schedule_config(data: dict) -> None:
@@ -168,15 +283,22 @@ def _validate_timezone_name(timezone_name: str) -> str:
     return tz
 
 
+_TZ_UNSET = object()
+_station_tz_cached: object = _TZ_UNSET
+
+
 def _station_tz():
+    global _station_tz_cached
+    if _station_tz_cached is not _TZ_UNSET:
+        return _station_tz_cached
     try:
-        schedule = load_schedule()
-        tz_name = _validate_timezone_name(schedule.get("timezone", "local"))
-        if tz_name in {"local", "system"}:
-            return None
-        return ZoneInfo(tz_name)
+        from shared.config_loader import load_station
+        tz_name = _validate_timezone_name(load_station(CONFIG_DIR).get("timezone", "local"))
+        result = None if tz_name in {"local", "system"} else ZoneInfo(tz_name)
     except Exception:
-        return None
+        result = None
+    _station_tz_cached = result
+    return result
 
 
 def _station_now() -> datetime:
@@ -202,6 +324,7 @@ def load_hosts_config() -> dict:
 
 
 def save_hosts_config(data: dict):
+    _invalidate_hosts_cache()
     with open(HOSTS_PATH, "w") as f:
         yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
@@ -270,9 +393,7 @@ def _hosts_yaml_to_api(hid: str, h: dict) -> dict:
 def get_hosts_from_persona() -> dict[str, dict]:
     """Read host definitions from persona.py."""
     try:
-        import importlib
         import station.content_generator.persona as _persona
-        importlib.reload(_persona)
         return {
             hid: {
                 "id": hid,
@@ -290,12 +411,24 @@ def get_hosts_from_persona() -> dict[str, dict]:
         return {}
 
 
+_hosts_cache: dict | None = None
+
+
+def _invalidate_hosts_cache() -> None:
+    global _hosts_cache
+    _hosts_cache = None
+
+
 def get_all_hosts() -> dict[str, dict]:
     """Return the merged host roster with YAML overrides taking precedence."""
+    global _hosts_cache
+    if _hosts_cache is not None:
+        return _hosts_cache
     hosts = get_hosts_from_persona()
     yaml_hosts = load_hosts_config().get("hosts", {})
     for hid, host in yaml_hosts.items():
         hosts[hid] = _hosts_yaml_to_api(hid, host)
+    _hosts_cache = hosts
     return hosts
 
 
@@ -598,6 +731,21 @@ def get_segment_types_api() -> dict[str, dict]:
     }
 
 
+def _count_audio_files_per_show(base_dir: Path) -> dict[str, int]:
+    """Fast file count per show — no metadata or ffprobe, safe to call on the hot path."""
+    counts: dict[str, int] = {}
+    if not base_dir.exists():
+        return counts
+    for show_dir in base_dir.iterdir():
+        if not show_dir.is_dir():
+            continue
+        counts[show_dir.name] = sum(
+            1 for f in show_dir.iterdir()
+            if f.is_file() and f.suffix.lower() in AUDIO_EXTS
+        )
+    return counts
+
+
 def _build_segment_inventory() -> dict[str, list[dict]]:
     """Return per-show segment inventory."""
     inv: dict[str, list[dict]] = {}
@@ -660,6 +808,9 @@ def _build_segment_inventory() -> dict[str, list[dict]]:
                     "segment_type": gen_meta.get("type", ""),
                     "word_count": gen_meta.get("word_count", 0),
                     "generated_at": gen_meta.get("generated_at", ""),
+                    "source_type": gen_meta.get("source_type", ""),
+                    "source_value": gen_meta.get("source_value", ""),
+                    "regenerated_from": gen_meta.get("regenerated_from", ""),
                 })
         inv[show_dir.name] = files
     return inv
@@ -1002,6 +1153,37 @@ def _streamer_request(path: str, method: str = "GET", payload: dict | None = Non
 
 
 # ---------------------------------------------------------------------------
+# Stream proxy (for HTTPS reverse-proxy deployments)
+# ---------------------------------------------------------------------------
+
+@app.get("/stream")
+def proxy_stream():
+    """Proxy the Icecast stream so HTTPS frontends don't need direct port 8000 access."""
+    import os as _os
+    import urllib.request as _req
+    icecast_host = _os.environ.get("ICECAST_HOST", "localhost")
+    icecast_port = int(_os.environ.get("ICECAST_PORT", "8000"))
+    icecast_path = _os.environ.get("ICECAST_MOUNT", "/stream")
+    try:
+        upstream = _req.urlopen(f"http://{icecast_host}:{icecast_port}{icecast_path}", timeout=10)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Stream unavailable: {e}")
+    content_type = upstream.headers.get("Content-Type", "audio/mpeg")
+    def _iter():
+        try:
+            while True:
+                chunk = upstream.read(4096)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            upstream.close()
+    return StreamingResponse(_iter(), media_type=content_type, headers={
+        "Cache-Control": "no-cache, no-store",
+        "X-Accel-Buffering": "no",
+    })
+
+
 # API: Status
 # ---------------------------------------------------------------------------
 
@@ -1024,19 +1206,17 @@ def get_status():
     except Exception:
         pass
 
-    segments = _cached_inventory("segments")
-    total_segments = sum(len(v) for v in segments.values())
-
-    bumpers = _cached_inventory("bumpers")
-    total_bumpers = sum(len(v) for v in bumpers.values())
+    segments_per_show = _count_audio_files_per_show(TALK_SEGMENTS_DIR)
+    bumpers_per_show = _count_audio_files_per_show(BUMPERS_DIR)
 
     return {
         "icecast": icecast_ok,
         "streamer": streamer_ok,
         "now_playing": now_playing,
-        "total_segments": total_segments,
-        "total_bumpers": total_bumpers,
-        "segments_per_show": {k: len(v) for k, v in segments.items()},
+        "total_segments": sum(segments_per_show.values()),
+        "total_bumpers": sum(bumpers_per_show.values()),
+        "segments_per_show": segments_per_show,
+        "bumpers_per_show": bumpers_per_show,
         "timestamp": _station_iso_now(),
     }
 
@@ -1049,16 +1229,20 @@ def get_live_status():
     except HTTPException as e:
         queue = {"error": e.detail}
 
-    # Enrich current_item and display_queue speech items with sidecar topic
+    # Enrich current_item and display_queue speech items with sidecar topic/short_title
     if isinstance(queue, dict):
         ci = queue.get("current_item")
         if ci and ci.get("path"):
             meta = _read_gen_meta(Path(ci["path"]))
             ci["topic"] = meta.get("topic") or meta.get("title") or ""
+            ci["short_title"] = meta.get("short_title") or ""
+            ci["source_channel"] = meta.get("source_channel") or ""
         for item in queue.get("display_queue") or []:
             if item.get("path") and item.get("kind") == "speech":
                 meta = _read_gen_meta(Path(item["path"]))
                 item["topic"] = meta.get("topic") or meta.get("title") or ""
+                item["short_title"] = meta.get("short_title") or ""
+                item["source_channel"] = meta.get("source_channel") or ""
 
     # Attach override + upcoming from streamer (non-fatal if unavailable)
     try:
@@ -1230,6 +1414,10 @@ def update_show(show_id: str, update: ShowUpdate):
             raise HTTPException(400, f"Unknown segment type '{segment_type_id}'")
     source_rules = _normalize_source_rules(update.source_rules or update.research_sources)
 
+    # Propagate show-level tts_backend to every host entry so the generator
+    # (which reads primary.tts_backend) picks up the change.
+    synced_hosts = [{**h, "tts_backend": update.tts_backend} for h in update.hosts]
+
     show = dict(shows[show_id])
     show["name"] = update.name
     show["description"] = update.description
@@ -1239,7 +1427,7 @@ def update_show(show_id: str, update: ShowUpdate):
     show["guests"] = update.guests
     show["segment_types"] = segment_types
     show["bumper_style"] = update.bumper_style
-    show["hosts"] = update.hosts
+    show["hosts"] = synced_hosts
     show["playback_sequence"] = playback_sequence_overrides(update.playback_sequence)
     show["content_lifecycle"] = update.content_lifecycle
     show["generation"] = update.generation
@@ -1274,6 +1462,8 @@ def create_show(show_id: str, update: ShowUpdate):
             raise HTTPException(400, f"Unknown segment type '{segment_type_id}'")
     source_rules = _normalize_source_rules(update.source_rules or update.research_sources)
 
+    synced_hosts = [{**h, "tts_backend": update.tts_backend} for h in update.hosts]
+
     show = {
         "name": update.name,
         "description": update.description,
@@ -1283,7 +1473,7 @@ def create_show(show_id: str, update: ShowUpdate):
         "guests": update.guests,
         "segment_types": segment_types,
         "bumper_style": update.bumper_style,
-        "hosts": update.hosts,
+        "hosts": synced_hosts,
         "playback_sequence": playback_sequence_overrides(update.playback_sequence),
         "content_lifecycle": update.content_lifecycle,
         "generation": update.generation,
@@ -1350,12 +1540,14 @@ def get_settings():
     return {
         "timezone": data.get("timezone", "local"),
         "station_name": data.get("station_name", "WRIT-FM"),
+        "tagline": data.get("tagline", "AI generated radio"),
     }
 
 
 class SettingsUpdate(BaseModel):
     timezone: str = "local"
     station_name: str = "WRIT-FM"
+    tagline: str = "AI generated radio"
 
 
 @app.put("/api/settings")
@@ -1363,8 +1555,9 @@ def update_settings(update: SettingsUpdate):
     data = load_schedule()
     data["timezone"] = _validate_timezone_name(update.timezone)
     data["station_name"] = (update.station_name or "WRIT-FM").strip() or "WRIT-FM"
+    data["tagline"] = update.tagline.strip()
     save_schedule(data)
-    return {"ok": True, "timezone": data["timezone"], "station_name": data["station_name"]}
+    return {"ok": True, "timezone": data["timezone"], "station_name": data["station_name"], "tagline": data["tagline"]}
 
 
 @app.post("/api/station/refresh")
@@ -1740,12 +1933,19 @@ def get_bumpers():
     return _cached_inventory("bumpers")
 
 
+def _delete_segment_files(path: Path) -> None:
+    """Delete an audio segment and its sidecars (.json and .plays.json)."""
+    for p in (path, path.with_suffix(".json"), path.parent / (path.name + ".plays.json")):
+        if p.exists():
+            p.unlink()
+
+
 @app.delete("/api/library/segments/{show_id}/{filename}")
 def delete_segment(show_id: str, filename: str):
     path = TALK_SEGMENTS_DIR / show_id / filename
     if not path.exists():
         raise HTTPException(404, "File not found")
-    path.unlink()
+    _delete_segment_files(path)
     _invalidate_inventory_cache("segments")
     return {"ok": True}
 
@@ -1755,7 +1955,7 @@ def delete_bumper(show_id: str, filename: str):
     path = BUMPERS_DIR / show_id / filename
     if not path.exists():
         raise HTTPException(404, "File not found")
-    path.unlink()
+    _delete_segment_files(path)
     _invalidate_inventory_cache("bumpers")
     return {"ok": True}
 
@@ -1898,6 +2098,8 @@ class GenerateRequest(BaseModel):
     guest_voice_minimax: str = default_voice_for_backend("minimax", "guest")
     guest_voice_google: str = default_voice_for_backend("google", "guest")
     guest_tts_backend: str = "kokoro"
+    # Regeneration: filename of the segment being replaced
+    regenerate_from_name: str = ""
 
 
 @app.post("/api/generate")
@@ -1938,6 +2140,41 @@ def _log_job(job_id: str, msg: str):
     print(line)  # also to systemd journal
 
 
+def _handle_post_regen(job_id: str, req: GenerateRequest, job_start_time: float) -> None:
+    """After a successful regeneration: tag new segments, delete the original."""
+    output_dir = (BUMPERS_DIR if req.content_type == "music" else TALK_SEGMENTS_DIR) / req.show_id
+    if not output_dir.exists():
+        return
+
+    # Find audio files created after job_start_time - 2s (allow slight clock skew)
+    cutoff = job_start_time - 2.0
+    new_audio: list[Path] = [
+        f for f in output_dir.iterdir()
+        if f.is_file() and f.suffix.lower() in AUDIO_EXTS and f.stat().st_mtime > cutoff
+    ]
+
+    # Tag new segment sidecars with regenerated_from
+    for audio in new_audio:
+        sidecar = audio.with_suffix(".json")
+        if sidecar.exists():
+            try:
+                meta = json.loads(sidecar.read_text()) or {}
+                meta["regenerated_from"] = req.regenerate_from_name
+                sidecar.write_text(json.dumps(meta, indent=2))
+            except Exception as e:
+                _log_job(job_id, f"Warning: could not tag sidecar {sidecar.name}: {e}")
+
+    # Delete the original segment (audio + sidecars)
+    orig_path = output_dir / req.regenerate_from_name
+    if orig_path.exists():
+        _delete_segment_files(orig_path)
+        _log_job(job_id, f"Deleted original: {req.regenerate_from_name}")
+    else:
+        _log_job(job_id, f"Original not found (already deleted?): {req.regenerate_from_name}")
+
+    _invalidate_inventory_cache("bumpers" if req.content_type == "music" else "segments")
+
+
 def _run_generation_job(job_id: str, req: GenerateRequest):
     """Run a generation job in a background thread."""
     _jobs[job_id]["status"] = "running"
@@ -1960,6 +2197,13 @@ def _run_generation_job(job_id: str, req: GenerateRequest):
         env["MINIMAX_MUSIC_MODEL"] = env.get("MINIMAX_MUSIC_MODEL", minimax_music_model())
         env["GOOGLE_TTS_API_KEY"] = env.get("GOOGLE_TTS_API_KEY", "") or env.get("GEMINI_API_KEY", "") or env.get("GOOGLE_API_KEY", "")
         env["GOOGLE_TTS_MODEL"] = env.get("GOOGLE_TTS_MODEL", google_tts_model())
+
+        # Ensure station/ is on PYTHONPATH so bare `from minimax_tts import` and
+        # `from google_tts import` resolve correctly (they live in station/, not
+        # station/content_generator/ which is the subprocess script dir).
+        station_dir = str(PROJECT_ROOT / "station")
+        existing_pp = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = f"{station_dir}:{existing_pp}" if existing_pp else station_dir
 
         # Determine TTS backend
         primary_host = _primary_host_assignment_from_show(req.show_id, show)
@@ -2037,6 +2281,7 @@ def _run_generation_job(job_id: str, req: GenerateRequest):
 
         _log_job(job_id, f"Running: {' '.join(cmd[-6:])}")
 
+        job_start_time = time.time()
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -2059,6 +2304,9 @@ def _run_generation_job(job_id: str, req: GenerateRequest):
                 _invalidate_inventory_cache("segments")
             _jobs[job_id]["status"] = "completed"
             _log_job(job_id, f"Generation complete.")
+
+            if req.regenerate_from_name:
+                _handle_post_regen(job_id, req, job_start_time)
         else:
             _jobs[job_id]["status"] = "failed"
             _log_job(job_id, f"Generation failed (exit {proc.returncode})")
@@ -2082,13 +2330,11 @@ def get_scheduler_status():
     if TALK_SEGMENTS_DIR.exists():
         for d in TALK_SEGMENTS_DIR.iterdir():
             if d.is_dir():
-                inv_talk[d.name] = sum(1 for f in d.iterdir()
-                                       if f.is_file() and f.suffix.lower() in AUDIO_EXTS)
+                inv_talk[d.name] = _sched._count_inventory(TALK_SEGMENTS_DIR, d.name)
     if BUMPERS_DIR.exists():
         for d in BUMPERS_DIR.iterdir():
             if d.is_dir():
-                inv_music[d.name] = sum(1 for f in d.iterdir()
-                                        if f.is_file() and f.suffix.lower() in AUDIO_EXTS)
+                inv_music[d.name] = _sched._count_inventory(BUMPERS_DIR, d.name)
 
     data = load_schedule()
     shows = data.get("shows", {})
@@ -2127,6 +2373,62 @@ def get_scheduler_status():
 @app.get("/api/scheduler/log")
 def get_scheduler_log(limit: int = 50):
     return _sched.state.get_log(limit)
+
+
+@app.get("/api/activity/segments")
+def get_activity_segments(limit: int = 20):
+    """Rich per-segment activity: talk segments + music bumpers, newest first."""
+    _audio_exts = {".wav", ".mp3", ".flac"}
+    candidates: list[tuple[float, str, str, Path, Path]] = []
+
+    for content_type, base_dir in [("talk", TALK_SEGMENTS_DIR), ("music", BUMPERS_DIR)]:
+        if not base_dir.exists():
+            continue
+        for show_dir in base_dir.iterdir():
+            if not show_dir.is_dir():
+                continue
+            for f in show_dir.iterdir():
+                if f.suffix.lower() not in _audio_exts:
+                    continue
+                sidecar = f.with_suffix(".json")
+                if sidecar.exists():
+                    candidates.append((f.stat().st_mtime, content_type, show_dir.name, f, sidecar))
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+
+    results = []
+    for _, content_type, show_dir_name, audio_file, sidecar in candidates[:limit]:
+        try:
+            meta = json.loads(sidecar.read_text())
+            gen_at = meta.get("generated_at", "")
+            if content_type == "talk":
+                host_display = (meta.get("speaker_labels") or {}).get("primary_host_name") or meta.get("host", "")
+                tts = meta.get("tts_backend") or meta.get("audio_backend", "")
+                title = meta.get("short_title") or (meta.get("topic") or "")[:80]
+                seg_type = meta.get("type", "talk")
+            else:
+                host_display = ""
+                tts = meta.get("generation_backend", "music-gen")
+                title = meta.get("display_name") or (meta.get("caption") or "")[:80]
+                seg_type = "music_bumper"
+            audio_url_type = "segment" if content_type == "talk" else "bumper"
+            results.append({
+                "content_type": content_type,
+                "show_id": meta.get("show_id", show_dir_name),
+                "show_name": meta.get("show_name", ""),
+                "host": meta.get("host", ""),
+                "host_display": host_display,
+                "tts": tts,
+                "segment_type": seg_type,
+                "title": title,
+                "generated_at": gen_at,
+                "filename": audio_file.name,
+                "audio_url": f"/api/library/audio/{show_dir_name}/{audio_file.name}?type={audio_url_type}",
+            })
+        except Exception:
+            pass
+
+    return results
 
 
 @app.get("/api/activity/log")
@@ -2199,6 +2501,116 @@ def trigger_generation_show(show_id: str):
 class GenerationConfig(BaseModel):
     talk: dict = {}
     music: dict = {}
+
+
+_BRIEFING_SHOW_IDS = {"briefing_ai", "briefing_crypto", "briefing_tech", "briefing_news_aus", "briefing_daily"}
+_BRIEFING_AUDIO_EXTS = {".wav", ".mp3", ".flac"}
+_BRIEFING_ORDER = ["briefing_ai", "briefing_crypto", "briefing_tech", "briefing_news_aus", "briefing_daily"]
+
+
+def _briefing_last_generated(show_id: str) -> str | None:
+    """Return the most recent generated_at ISO string for a briefing show, or None."""
+    show_dir = TALK_SEGMENTS_DIR / show_id
+    if not show_dir.exists():
+        return None
+    best: datetime | None = None
+    for f in show_dir.iterdir():
+        if not f.is_file() or f.suffix.lower() not in _BRIEFING_AUDIO_EXTS:
+            continue
+        sidecar = f.with_suffix(".json")
+        gen_dt: datetime | None = None
+        if sidecar.exists():
+            try:
+                meta = json.loads(sidecar.read_text())
+                gen_at = meta.get("generated_at")
+                if gen_at:
+                    gen_dt = datetime.fromisoformat(gen_at.replace("Z", "+00:00"))
+            except Exception:
+                pass
+        if gen_dt is None:
+            gen_dt = _station_from_timestamp(f.stat().st_mtime)
+        # normalise to UTC for comparison
+        if gen_dt.tzinfo is not None:
+            gen_dt_utc = gen_dt.astimezone(timezone.utc)
+        else:
+            gen_dt_utc = gen_dt.replace(tzinfo=timezone.utc)
+        if best is None or gen_dt_utc > best:
+            best = gen_dt_utc
+    if best is None:
+        return None
+    tz = _station_tz()
+    if tz:
+        best = best.astimezone(tz)
+    return best.isoformat()
+
+
+@app.get("/api/briefings/status")
+def get_briefings_status():
+    """Return last-generated timestamp and file count for each briefing show."""
+    result = []
+    for show_id in _BRIEFING_ORDER:
+        show_dir = TALK_SEGMENTS_DIR / show_id
+        count = sum(
+            1 for f in show_dir.iterdir()
+            if f.is_file() and f.suffix.lower() in _BRIEFING_AUDIO_EXTS
+        ) if show_dir.exists() else 0
+        result.append({
+            "show_id": show_id,
+            "last_generated_at": _briefing_last_generated(show_id),
+            "count": count,
+        })
+    return {"briefings": result}
+
+
+@app.post("/api/briefings/regenerate/{show_id}")
+def regenerate_briefing(show_id: str):
+    """Delete today's briefing for a show and trigger a fresh generation."""
+    if show_id not in _BRIEFING_SHOW_IDS:
+        raise HTTPException(400, f"'{show_id}' is not a briefing show")
+
+    today = _station_now().date()
+    show_dir = TALK_SEGMENTS_DIR / show_id
+    deleted = 0
+    if show_dir.exists():
+        for f in list(show_dir.iterdir()):
+            if not f.is_file() or f.suffix.lower() not in _BRIEFING_AUDIO_EXTS:
+                continue
+            sidecar = f.with_suffix(".json")
+            file_date = None
+            if sidecar.exists():
+                try:
+                    meta = json.loads(sidecar.read_text())
+                    gen_at = meta.get("generated_at")
+                    if gen_at:
+                        file_date = datetime.fromisoformat(
+                            gen_at.replace("Z", "+00:00").split("+")[0]
+                        ).date()
+                except Exception:
+                    pass
+            if file_date is None:
+                file_date = _station_from_timestamp(f.stat().st_mtime).date()
+            if file_date == today:
+                for path in (f, sidecar, f.with_suffix(".plays.json")):
+                    try:
+                        path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                deleted += 1
+
+    # Clear last_run so the cadence gate allows generation today
+    with _sched.state._lock:
+        _sched.state.last_run_per_show.get(show_id, {}).pop("talk", None)
+        _sched.state.last_failure_per_show.get(show_id, {}).pop("talk", None)
+
+    _invalidate_inventory_cache("segments")
+
+    result = _sched.trigger_now(show_id, "talk", _jobs)
+    return {
+        "ok": True,
+        "deleted": deleted,
+        "message": result.get("message", ""),
+        "job_id": result.get("job_id"),
+    }
 
 
 @app.put("/api/scheduler/config/{show_id}")
@@ -2396,6 +2808,66 @@ def od_stream_audio_admin(item_id: str):
                 if af.exists():
                     return FileResponse(str(af), media_type=_od_mime_for(af))
     raise HTTPException(404, "Audio file not found")
+
+
+# ---------------------------------------------------------------------------
+# API: Listener token management
+# ---------------------------------------------------------------------------
+
+_LISTENER_TOKENS_FILE = PROJECT_ROOT / "output" / "listener_tokens.json"
+_listener_tokens_lock = threading.Lock()
+
+
+def _load_listener_tokens() -> list[dict]:
+    if not _LISTENER_TOKENS_FILE.exists():
+        return []
+    try:
+        return json.loads(_LISTENER_TOKENS_FILE.read_text()) or []
+    except Exception:
+        return []
+
+
+def _save_listener_tokens(tokens: list[dict]) -> None:
+    _LISTENER_TOKENS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _LISTENER_TOKENS_FILE.write_text(json.dumps(tokens, indent=2))
+
+
+@app.get("/api/listener-tokens")
+def list_listener_tokens():
+    with _listener_tokens_lock:
+        return {"tokens": _load_listener_tokens()}
+
+
+class CreateTokenRequest(BaseModel):
+    label: str = ""
+
+
+@app.post("/api/listener-tokens")
+def create_listener_token(body: CreateTokenRequest):
+    token_value = secrets.token_urlsafe(24)
+    entry = {
+        "token": token_value,
+        "label": body.label.strip(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_used": None,
+    }
+    with _listener_tokens_lock:
+        tokens = _load_listener_tokens()
+        tokens.append(entry)
+        _save_listener_tokens(tokens)
+    return entry
+
+
+@app.delete("/api/listener-tokens/{token}")
+def revoke_listener_token(token: str):
+    with _listener_tokens_lock:
+        tokens = _load_listener_tokens()
+        before = len(tokens)
+        tokens = [t for t in tokens if t.get("token") != token]
+        if len(tokens) == before:
+            raise HTTPException(404, "Token not found")
+        _save_listener_tokens(tokens)
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

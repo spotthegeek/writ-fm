@@ -377,6 +377,9 @@ class _InventoryCache:
 _inventory_cache = _InventoryCache(value=[])
 _inventory_lock = threading.Lock()
 
+_show_segment_cache = _InventoryCache(value=[])
+_show_segment_lock = threading.Lock()
+
 
 def get_inventory(force: bool = False) -> list[Item]:
     """Return merged on-demand inventory (ABS + uploads), with TTL cache."""
@@ -479,14 +482,113 @@ def _mime_for(path: Path) -> str:
 
 
 def _get_show_names() -> dict[str, str]:
-    """Return show_id → name from schedule.yaml."""
+    """Return show_id → name from config."""
     try:
-        schedule_path = PROJECT_ROOT / "config" / "schedule.yaml"
-        with open(schedule_path) as f:
-            data = yaml.safe_load(f) or {}
-        return {sid: scfg.get("name", sid) for sid, scfg in data.get("shows", {}).items()}
+        from shared.config_loader import load_shows
+        data = load_shows(PROJECT_ROOT / "config")
+        return {sid: scfg.get("name", sid) for sid, scfg in data.items()}
     except Exception:
         return {}
+
+
+def _get_show_primary_hosts() -> dict[str, str]:
+    """Return show_id → primary host display name from config."""
+    try:
+        from shared.config_loader import load_shows
+        hosts_path = PROJECT_ROOT / "config" / "hosts.yaml"
+        sched_shows = load_shows(PROJECT_ROOT / "config")
+        host_names: dict[str, str] = {}
+        if hosts_path.exists():
+            with open(hosts_path) as f:
+                hdata = yaml.safe_load(f) or {}
+            for hid, hcfg in hdata.get("hosts", {}).items():
+                host_names[hid] = hcfg.get("name") or hid
+        result: dict[str, str] = {}
+        for sid, scfg in sched_shows.items():
+            for entry in scfg.get("hosts", []):
+                if entry.get("role") == "primary" or not result.get(sid):
+                    display = (
+                        entry.get("display_name")
+                        or host_names.get(entry.get("id", ""), "")
+                        or entry.get("id", "")
+                    )
+                    result[sid] = display
+                    if entry.get("role") == "primary":
+                        break
+        return result
+    except Exception:
+        return {}
+
+
+def get_upload_items() -> list[Item]:
+    """Load upload items directly from disk (fast, no ABS network calls)."""
+    return _load_uploads()
+
+
+def _scan_show_segments() -> list[Item]:
+    """Full disk scan of all talk segment directories. Call via get_show_segment_items()."""
+    if not SEGMENTS_DIR.exists():
+        return []
+    show_names = _get_show_names()
+    show_hosts = _get_show_primary_hosts()
+    items: list[Item] = []
+    for show_dir in sorted(SEGMENTS_DIR.iterdir()):
+        if not show_dir.is_dir():
+            continue
+        show_id = show_dir.name
+        show_name = show_names.get(show_id, show_id.replace("_", " ").title())
+        show_host = show_hosts.get(show_id, "")
+        for json_file in sorted(show_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            if json_file.name.endswith(".plays.json"):
+                continue
+            try:
+                meta = json.loads(json_file.read_text())
+            except Exception:
+                continue
+            audio: Path | None = None
+            for ext in SEGMENT_AUDIO_EXTS:
+                candidate = json_file.with_suffix(ext)
+                if candidate.exists():
+                    audio = candidate
+                    break
+            if audio is None:
+                continue
+            duration_s = 0.0
+            wc = meta.get("word_count")
+            wpm = (meta.get("voices") or {}).get("host_wpm")
+            if wc and wpm:
+                duration_s = float(wc) / float(wpm) * 60
+            # Use the show's current primary host display name rather than the
+            # sidecar's host ID field, which may be stale or a raw voice ID.
+            subtitle = show_host
+            items.append(Item(
+                id=f"show:{show_id}:{json_file.stem}",
+                source=f"show:{show_id}",
+                source_name=show_name,
+                title=meta.get("topic") or json_file.stem,
+                subtitle=subtitle,
+                duration_seconds=duration_s,
+                mime_type=_mime_for(audio),
+                created_at=meta.get("generated_at") or "",
+                extra={"segment_type": meta.get("type"), "show_id": show_id},
+            ))
+    return items
+
+
+def get_show_segment_items(show_prefix: str | None = None) -> list[Item]:
+    """Return cached show segment items, optionally filtered by show_id prefix.
+
+    Scans all talk segment directories once per TTL, then filters in memory.
+    Bypasses ABS/upload loading — safe to call from any fast-path handler.
+    """
+    with _show_segment_lock:
+        if (time.time() - _show_segment_cache.ts) >= INVENTORY_CACHE_TTL:
+            _show_segment_cache.value = _scan_show_segments()
+            _show_segment_cache.ts = time.time()
+        items = _show_segment_cache.value
+    if show_prefix:
+        items = [i for i in items if i.source.startswith(f"show:{show_prefix}")]
+    return items
 
 
 def get_show_sources() -> list[dict]:

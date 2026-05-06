@@ -26,10 +26,22 @@ def test_primary_host_assignment_uses_legacy_show_fields_with_backend_voice() ->
     assert primary["voice_google"] == "Charon"
 
 
-def test_primary_host_assignment_prefers_show_backend_over_host_backend() -> None:
+def test_primary_host_assignment_per_host_backend_wins_over_show_backend() -> None:
+    # Per-host tts_backend is canonical; show-level is only a fallback when host omits it.
     show = SimpleNamespace(
         tts_backend="google",
         hosts=[{"id": "charon_host", "role": "primary", "tts_backend": "kokoro"}],
+    )
+
+    primary = primary_host_assignment(show)
+
+    assert primary["tts_backend"] == "kokoro"
+
+
+def test_primary_host_assignment_falls_back_to_show_backend_when_host_omits_it() -> None:
+    show = SimpleNamespace(
+        tts_backend="google",
+        hosts=[{"id": "charon_host", "role": "primary"}],
     )
 
     primary = primary_host_assignment(show)

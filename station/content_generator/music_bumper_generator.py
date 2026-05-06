@@ -28,7 +28,7 @@ from station.content_generator.helpers import run_claude
 from station.content_generator.persona import get_host
 
 BUMPERS_DIR = PROJECT_ROOT / "output" / "music_bumpers"
-SCHEDULE_PATH = PROJECT_ROOT / "config" / "schedule.yaml"
+SCHEDULE_PATH = PROJECT_ROOT / "config"
 
 DEFAULT_MUSIC_POOL = [
     "cinematic radio bumper, warm synth bed, shortwave texture, polished and atmospheric",

@@ -1,0 +1,745 @@
+sources:
+  nosleep:
+  - type: reddit_subreddit
+    value: /r/nosleep
+    lookback_days: 7
+    selection_strategy: latest
+    segment_type: reddit_storytelling
+  alien_theory:
+  - type: reddit_subreddit
+    value: /r/Alien_Theory/
+    lookback_days: 7
+    selection_strategy: top
+    segment_type: reddit_post
+  - type: reddit_subreddit
+    value: /r/EBEs/
+    lookback_days: 7
+    selection_strategy: top
+    segment_type: reddit_post
+  - type: reddit_subreddit
+    value: /r/UFOs/
+    lookback_days: 7
+    selection_strategy: top
+    segment_type: reddit_post
+  sysadmin:
+  - type: reddit_subreddit
+    value: /r/sysadmin/
+    lookback_days: 7
+    selection_strategy: top
+    segment_type: reddit_post
+  youtube-ai:
+  - type: youtube_channel
+    value: https://www.youtube.com/@buildnpublic
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@BoxminingAI
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@TimCarambat
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@nateherk
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  briefing_ai:
+  - type: youtube_channel
+    value: https://www.youtube.com/@BoxminingAI
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@TechWithTim
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@buildnpublic
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@ColeMedin
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@DigitalSpaceport
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@NetworkChuck
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@theAIsearch
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@CrossTheRubicon
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@Clearmud
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@ai-foundations
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@AIPathwaysChannel
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@avtharai
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@AI2Play
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@AlexFinnOfficial
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@briancasel
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@CollaborationSimplified
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@thecraighewitt
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@DigitalBrainBase
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@nicksaraev
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@ostrisai
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@CreatorMagicAI
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@nateherk
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@DavidOndrej
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@aiadvantage
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@mreflow
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@MoeLueker
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@TimCarambat
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@DavesGarage
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@ShanesCows
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@AZisk
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@technovangelist
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/LocalLLaMA/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/openclaw/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/AI_Agents/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/ArtificialInteligence/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/LangChain/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/LocalLLM/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/ollama/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/OpenWebUI/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/PydanticAI/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: rss_feed
+    value: https://www.therundown.ai/feed
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://www.theneurondaily.com/feed
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://www.superhuman.ai/feed
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://techcrunch.com/category/artificial-intelligence/feed/
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://www.theverge.com/ai-artificial-intelligence/index.xml
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  briefing_crypto:
+  - type: youtube_channel
+    value: https://www.youtube.com/@CrossTheRubicon
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@AlexBeckersChannel
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@elliotrades_official
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@milesdeutscher1357
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@TheCryptoLark
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@CryptoBanterGroup
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@VortexBitcoin
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@CoinBureauTrading
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@jesseeckel2
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@KyleChasseCrypto
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@TheRubiconShow
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@DaviddTech
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@FriedDev
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@ItsRagnar
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@michaelionita
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@SajadAli
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/CryptoCurrency/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: rss_feed
+    value: https://cryptonews.com.au/feed/
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://www.theblock.co/rss.xml
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  briefing_tech:
+  - type: youtube_channel
+    value: https://www.youtube.com/@BeardedTinker
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@iPhonedo
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@JeffGeerling
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@NetworkChuck
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@TechnoTim
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@2GuysTek
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@BrandonButch
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@camshand
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@ChrisMaherDIY
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@Core-Electronics
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@CraigsTechTalk
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@DavesGarage
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@EverythingSmartHome
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@excessorizeme
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@FutureTechOfficial
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@HardwareHaven
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@home_assistant
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@HomeAutomationGuy
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@JerryRigEverything
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@JulianOShea
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@KasmWorkspaces
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@LAWRENCESYSTEMS
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@Level2Jeff
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@LinusTechTips
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@mkbhd
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@mbtech-yt
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@MichaelKlements
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@Microsoft365
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@MikeTholfsen
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@Mrwhosetheboss
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@My_Smart_Home
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@PlayfulTechnology
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@PortainerIO
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@randomfrankp
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@ServeTheHomeVideo
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@ShanesCows
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@ShortCircuit
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@SmartHomeJunkie
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@SmartHomeSolver
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@TechManPat
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@TheVerge
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@ThisWeekinIT
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: youtube_channel
+    value: https://www.youtube.com/@unboxtherapy
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/sysadmin/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/homelab/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/selfhosted/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/aussysadmin/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/homeassistant/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/homeautomation/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/jellyfin/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/kasmweb/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/Proxmox/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/talesfromtechsupport/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: rss_feed
+    value: https://selfh.st/feed/
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://www.wired.com/feed/rss
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://techcrunch.com/feed/
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://www.engadget.com/feed/
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://www.geekwire.com/feed/
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://www.itnews.com.au/rss/
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://www.theregister.com/security/headlines.atom
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://www.theverge.com/tech/index.xml
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://feeds.arstechnica.com/arstechnica/index
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://www.tomshardware.com/feeds/all
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://rss.slashdot.org/Slashdot/slashdotMain
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://www.404media.co/rss/
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://dbtechreviews.com/feed/
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  briefing_news_aus:
+  - type: reddit_subreddit
+    value: /r/australia/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/Adelaide/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/WaggaNSW/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: reddit_subreddit
+    value: /r/Riverina/
+    lookback_days: 1
+    selection_strategy: top
+    segment_type: ''
+  - type: rss_feed
+    value: https://www.abc.net.au/news/feed/2942460/rss.xml
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://regionriverina.com.au/feed/
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  - type: rss_feed
+    value: https://www.indailysa.com.au/feeds/all
+    lookback_days: 1
+    selection_strategy: latest
+    segment_type: ''
+  talesfromtechsupport:
+  - type: reddit_subreddit
+    value: /r/talesfromtechsupport/
+    lookback_days: 7
+    selection_strategy: latest
+    segment_type: ''

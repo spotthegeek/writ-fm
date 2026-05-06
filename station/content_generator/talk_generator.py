@@ -50,7 +50,7 @@ import urllib.error
 
 import yaml
 
-from station.content_generator.helpers import log, preprocess_for_tts, fetch_headlines, format_headlines, run_claude
+from station.content_generator.helpers import log, preprocess_for_tts, fetch_headlines, format_headlines, run_claude, make_short_title
 
 warnings.filterwarnings(
     "ignore",
@@ -64,7 +64,7 @@ warnings.filterwarnings(
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SCHEDULE_PATH = PROJECT_ROOT / "config" / "schedule.yaml"
+SCHEDULE_PATH = PROJECT_ROOT / "config"
 SEGMENT_TYPES_PATH = PROJECT_ROOT / "config" / "segment_types.yaml"
 OUTPUT_DIR = PROJECT_ROOT / "output" / "talk_segments"
 SCRIPTS_DIR = PROJECT_ROOT / "output" / "scripts"
@@ -645,43 +645,40 @@ def _source_rule_sort_key(rule: dict) -> tuple:
     )
 
 
-def _choose_source_rule_for_show(show, show_id: str, preferred_segment_type: str | None = None) -> dict | None:
+def _ordered_source_rules_for_show(show, show_id: str, preferred_segment_type: str | None = None) -> list[dict]:
+    """Return all eligible source rules in rotation order (next-due first)."""
     rules = [_normalize_source_rule(rule) for rule in getattr(show, "source_rules", []) if isinstance(rule, dict)]
     rules = [rule for rule in rules if rule["value"]]
     if not rules:
-        return None
+        return []
 
     if preferred_segment_type and preferred_segment_type != "random":
         matching = [rule for rule in rules if rule["segment_type"] == preferred_segment_type]
         if matching:
             rules = matching
 
+    used_keys = _used_source_keys_for_show(show_id)
     eligible: list[dict] = []
     for rule in rules:
         source_type = str(rule["type"])
         source_value = str(rule["value"])
         if source_type in {"reddit", "reddit_subreddit", "reddit_thread"}:
-            if source_type == "reddit_subreddit":
-                source_type = "reddit_subreddit"
-            else:
+            if source_type != "reddit_subreddit":
                 kind, _ = _normalize_reddit_source(source_value)
                 source_type = "reddit_subreddit" if kind == "subreddit" else "reddit_thread"
         elif source_type in {"youtube", "youtube_video"}:
-            if _is_youtube_collection_source(source_value):
-                source_type = "youtube_channel"
-            else:
-                source_type = "youtube_video"
+            source_type = "youtube_channel" if _is_youtube_collection_source(source_value) else "youtube_video"
         key = _canonical_source_key(source_type, source_value)
-        if key and key in _used_source_keys_for_show(show_id):
+        if key and key in used_keys:
             continue
         eligible.append(rule)
 
     if not eligible:
-        return None
+        return []
 
     eligible = sorted(eligible, key=_source_rule_sort_key)
     if len(eligible) == 1:
-        return eligible[0]
+        return eligible
 
     history_path = SCRIPTS_DIR / f".{show_id}_source_rotation.json"
     last_key = ""
@@ -704,9 +701,16 @@ def _choose_source_rule_for_show(show, show_id: str, preferred_segment_type: str
     if last_key:
         for idx, rule in enumerate(eligible):
             if rule_key(rule) == last_key:
-                return eligible[(idx + 1) % len(eligible)]
+                start = (idx + 1) % len(eligible)
+                return eligible[start:] + eligible[:start]
 
-    return random.choice(eligible)
+    random.shuffle(eligible)
+    return eligible
+
+
+def _choose_source_rule_for_show(show, show_id: str, preferred_segment_type: str | None = None) -> dict | None:
+    ordered = _ordered_source_rules_for_show(show, show_id, preferred_segment_type)
+    return ordered[0] if ordered else None
 
 
 def _record_source_rotation(show_id: str, rule: dict | None) -> None:
@@ -1378,6 +1382,24 @@ SOURCE_REQUIRED_SEGMENT_TYPES = {"reddit_post", "reddit_storytelling", "youtube"
 
 BRIEFING_SHOW_IDS = ["briefing_ai", "briefing_crypto", "briefing_tech", "briefing_news_aus"]
 _MAX_BRIEFING_SOURCES = 10
+
+
+def _briefing_intro_line(show_name: str, segment_type: str) -> str:
+    """Return a date-stamped intro sentence for briefing segment types.
+
+    For multi-voice daily_briefing scripts the line is prefixed with HOST_A:
+    so the multi-voice renderer assigns it to the primary host.
+    """
+    now = station_now()
+    day_name = now.strftime("%A")
+    month_name = now.strftime("%B")
+    day = now.day
+    suffix = "th" if 11 <= day <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+    date_str = f"{day_name} {month_name} {day}{suffix} {now.year}"
+    intro = f"Welcome to your {show_name} for {date_str}."
+    if segment_type == "daily_briefing":
+        return f"HOST_A: {intro}\n\n"
+    return f"{intro}\n\n"
 _MAX_BRIEFING_CHARS = 12000
 _FAV_YT_TRANSCRIPT_LIMIT = 3   # max favourite YT channels that get full transcript fetch
 _FAV_ITEM_COUNT = 5
@@ -1566,8 +1588,20 @@ def load_source_context(
     source_value = (source_value or "").strip()
     if not source_type or not source_value:
         return None
+
+    # Detect whether source_value is a specific item (thread/video) vs. a
+    # collection (subreddit/channel).  Specific-item requests are explicit —
+    # bypass the "already used" dedup guard that exists to prevent random
+    # selection from re-picking the same source.
+    _is_specific_item = False
+    if source_type in {"reddit", "reddit_thread"}:
+        kind, _ = _normalize_reddit_source(source_value)
+        _is_specific_item = (kind == "thread")
+    elif source_type in {"youtube", "youtube_video"}:
+        _is_specific_item = not _is_youtube_collection_source(source_value)
+
     source_key = _canonical_source_key(source_type, source_value)
-    if used_source_keys and source_key and source_key in used_source_keys:
+    if not _is_specific_item and used_source_keys and source_key and source_key in used_source_keys:
         return None
     try:
         if source_type in {"reddit", "reddit_thread"}:
@@ -2007,15 +2041,7 @@ CURRENT DRAFT:
 # =============================================================================
 
 
-try:
-    from kokoro import KPipeline
-    import soundfile as sf
-    import numpy as np
-    KOKORO_AVAILABLE = True
-except ImportError:
-    KOKORO_AVAILABLE = False
-
-_KOKORO_PIPELINE = None
+from station.kokoro.tts import render_speech as _kokoro_render_speech
 _DIALOGUE_MARKER_PATTERN = (
     r"((?:HOST|GUEST|HOST_A|HOST_B|HOSTA|HOSTB|[A-Z][A-Z\s.]+)"
     r"(?:\s*\([^)]+\))?:)"
@@ -2024,21 +2050,6 @@ _DIALOGUE_SPEAKER_PATTERN = re.compile(
     r"^(?P<speaker>(?:HOST|GUEST|HOST_A|HOST_B|HOSTA|HOSTB|[A-Z][A-Z\s.]+))"
     r"(?:\s*\([^)]+\))?:$"
 )
-
-def get_kokoro_pipeline():
-    global _KOKORO_PIPELINE
-    if _KOKORO_PIPELINE is None:
-        if not KOKORO_AVAILABLE:
-            log("Kokoro not available in current environment")
-            return None
-        log("Loading Kokoro pipeline...")
-        try:
-            # Use CUDA for GPU acceleration
-            _KOKORO_PIPELINE = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M", device="cuda")
-        except (Exception, SystemExit) as e:
-            log(f"Failed to load Kokoro: {e}")
-            return None
-    return _KOKORO_PIPELINE
 
 
 def _normalize_dialogue_speaker(marker: str) -> str | None:
@@ -2180,33 +2191,11 @@ def render_single_voice(
             log(f"  Google rendering error: {e}")
             return False
 
-    pipe = get_kokoro_pipeline()
-    if not pipe:
-        return False
-
     log(f"  Rendering single voice '{voice}' to {output_path.name}...")
-    try:
-        generator = pipe(script, voice=voice, speed=speed)
-        
-        with sf.SoundFile(str(output_path), mode='w', samplerate=24000, channels=1) as f:
-            chunk_count = 0
-            for _, _, audio in generator:
-                if audio is not None:
-                    f.write(audio)
-                    chunk_count += 1
-                    if chunk_count % 10 == 0:
-                        log(f"    ...rendered {chunk_count} segments")
-                        
-        if chunk_count > 0:
-            log(f"  Finished rendering {chunk_count} segments.")
-            return True
-        else:
-            log("  No audio generated.")
-            return False
-            
-    except Exception as e:
-        log(f"  Kokoro rendering error: {e}")
-        return False
+    success = _kokoro_render_speech(script, output_path, voice=voice, speed=speed)
+    if success:
+        log(f"  Finished rendering.")
+    return success
 
 
 def render_single_voice_chunked(
@@ -2373,38 +2362,60 @@ def render_single_voice_chunked(
             log(f"  Google chunked rendering error: {e}")
             return False
 
-    pipe = get_kokoro_pipeline()
-    if not pipe:
-        return False
-
     parts = _split_tts_text(script)
     if not parts:
         return False
 
-    log(f"  Rendering {len(parts)} text chunks to {output_path.name}...")
-    gap_audio = np.zeros(int(24000 * 0.25), dtype=np.float32)
-
+    log(f"  Rendering {len(parts)} Kokoro text chunks to {output_path.name}...")
     try:
-        with sf.SoundFile(str(output_path), mode="w", samplerate=24000, channels=1) as f:
-            total_chunks = 0
+        with tempfile.TemporaryDirectory(prefix="writ_kokoro_single_") as tmpdir:
+            tmp = Path(tmpdir)
+            concat_entries: list[Path] = []
+            silence_path = tmp / "gap.wav"
+            silence_cmd = [
+                "ffmpeg", "-y", "-f", "lavfi",
+                "-i", "anullsrc=r=24000:cl=mono",
+                "-t", "0.25", "-c:a", "pcm_s16le",
+                str(silence_path),
+            ]
+            silence_proc = subprocess.run(silence_cmd, capture_output=True, text=True)
+            if silence_proc.returncode != 0:
+                log(f"  Failed to create silence gap: {(silence_proc.stderr or '').strip()[:200]}")
+                return False
+
+            rendered_parts = 0
             for i, part in enumerate(parts):
                 text = preprocess_for_tts(part, backend=backend)
                 if not text.strip():
                     continue
-                if i > 0:
-                    f.write(gap_audio)
-                generator = pipe(text, voice=voice, speed=speed)
-                for _, _, audio in generator:
-                    if audio is not None:
-                        f.write(audio)
-                        total_chunks += 1
-                        if total_chunks % 10 == 0:
-                            log(f"    ...rendered {total_chunks} segments")
-        if total_chunks > 0:
-            log(f"  Finished rendering {len(parts)} chunks.")
+                if rendered_parts > 0:
+                    concat_entries.append(silence_path)
+                segment_path = tmp / f"segment_{i:03d}.wav"
+                if not _kokoro_render_speech(text, segment_path, voice=voice, speed=speed):
+                    log(f"  Kokoro rendering failed for chunk {i + 1}")
+                    return False
+                concat_entries.append(segment_path)
+                rendered_parts += 1
+
+            if not concat_entries:
+                log("  No Kokoro chunks rendered")
+                return False
+
+            concat_list = tmp / "concat.txt"
+            concat_list.write_text(
+                "".join(f"file '{path.as_posix()}'\n" for path in concat_entries),
+                encoding="utf-8",
+            )
+            concat_cmd = [
+                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                "-i", str(concat_list), "-c", "copy", str(output_path),
+            ]
+            concat_proc = subprocess.run(concat_cmd, capture_output=True, text=True)
+            if concat_proc.returncode != 0:
+                log(f"  Kokoro concat failed: {(concat_proc.stderr or '').strip()[:200]}")
+                return False
+            log(f"  Finished rendering {rendered_parts} Kokoro chunks.")
             return True
-        log("  No audio generated from chunked render.")
-        return False
     except Exception as e:
         log(f"  Kokoro chunked rendering error: {e}")
         return False
@@ -2616,10 +2627,6 @@ def render_multi_voice(script: str, output_path: Path, voices: dict[str, str], b
             log(f"  Google multi-voice rendering error: {e}")
             return False
 
-    pipe = get_kokoro_pipeline()
-    if not pipe:
-        return False
-
     parts = _parse_dialogue_parts(script)
 
     host_voice = voices.get("host", "am_michael")
@@ -2640,40 +2647,58 @@ def render_multi_voice(script: str, output_path: Path, voices: dict[str, str], b
     for key in ("GUEST", "HOST_B", "HOSTB"):
         speed_map[key] = guest_speed
 
-    log(f"  Rendering {len(parts)} dialogue segments to {output_path.name}...")
-    
-    gap_audio = np.zeros(int(24000 * 0.3), dtype=np.float32)
-
+    log(f"  Rendering {len(parts)} Kokoro dialogue segments to {output_path.name}...")
     try:
-        with sf.SoundFile(str(output_path), mode='w', samplerate=24000, channels=1) as f:
-            total_chunks = 0
+        with tempfile.TemporaryDirectory(prefix="writ_kokoro_dialogue_") as tmpdir:
+            tmp = Path(tmpdir)
+            concat_entries: list[Path] = []
+            silence_path = tmp / "gap.wav"
+            silence_cmd = [
+                "ffmpeg", "-y", "-f", "lavfi",
+                "-i", "anullsrc=r=24000:cl=mono",
+                "-t", "0.3", "-c:a", "pcm_s16le",
+                str(silence_path),
+            ]
+            silence_proc = subprocess.run(silence_cmd, capture_output=True, text=True)
+            if silence_proc.returncode != 0:
+                log(f"  Failed to create silence gap: {(silence_proc.stderr or '').strip()[:200]}")
+                return False
+
+            rendered_parts = 0
             for i, (speaker, text) in enumerate(parts):
                 voice = voice_map.get(speaker, host_voice)
                 speed = speed_map.get(speaker, host_speed)
-                
                 text = preprocess_for_tts(text, backend=backend)
                 if not text.strip():
                     continue
-                
-                # Add gap between speakers
-                if i > 0:
-                    f.write(gap_audio)
-                    
-                generator = pipe(text, voice=voice, speed=speed)
-                for _, _, audio in generator:
-                    if audio is not None:
-                        f.write(audio)
-                        total_chunks += 1
-                        if total_chunks % 10 == 0:
-                            log(f"    ...rendered {total_chunks} total segments")
+                if rendered_parts > 0:
+                    concat_entries.append(silence_path)
+                segment_path = tmp / f"segment_{i:03d}.wav"
+                if not _kokoro_render_speech(text, segment_path, voice=voice, speed=speed):
+                    log(f"  Kokoro rendering failed for dialogue segment {i + 1}")
+                    return False
+                concat_entries.append(segment_path)
+                rendered_parts += 1
 
-        if total_chunks > 0:
-            log(f"  Finished rendering {total_chunks} total segments.")
+            if not concat_entries:
+                log("  No dialogue parts rendered")
+                return False
+
+            concat_list = tmp / "concat.txt"
+            concat_list.write_text(
+                "".join(f"file '{path.as_posix()}'\n" for path in concat_entries),
+                encoding="utf-8",
+            )
+            concat_cmd = [
+                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                "-i", str(concat_list), "-c", "copy", str(output_path),
+            ]
+            concat_proc = subprocess.run(concat_cmd, capture_output=True, text=True)
+            if concat_proc.returncode != 0:
+                log(f"  Kokoro concat failed: {(concat_proc.stderr or '').strip()[:200]}")
+                return False
+            log(f"  Finished rendering {rendered_parts} Kokoro dialogue segments.")
             return True
-        else:
-            log("  No dialogue parts rendered")
-            return False
-            
     except Exception as e:
         log(f"  Kokoro multi-voice rendering error: {e}")
         return False
@@ -2752,7 +2777,13 @@ def generate_segment(
         return None
     if source_context and used_source_keys:
         selected_key = _canonical_source_key(source_context.source_type, source_context.source_value)
-        if selected_key and selected_key in used_source_keys:
+        # Only block on dedup for collection-resolved sources; explicit item
+        # URLs (thread, specific video) are intentional re-uses.
+        _ctx_is_specific = (
+            (source_context.source_type in {"reddit", "reddit_thread"} and "/comments/" in source_context.source_value)
+            or (source_context.source_type in {"youtube", "youtube_video"} and not _is_youtube_collection_source(source_context.source_value))
+        )
+        if selected_key and selected_key in used_source_keys and not _ctx_is_specific:
             log(f"  Source '{source_context.source_type}' at '{source_context.source_value}' was already used.")
             return None
     if segment_type == "reddit_storytelling":
@@ -2880,6 +2911,7 @@ def generate_segment(
         with open(meta_path, "w") as f:
             json.dump(meta, f, indent=2)
 
+        _yt_channel = source_context.channel if source_context else ""
         sidecar = output_path.with_suffix(".json")
         with open(sidecar, "w") as f:
             json.dump({
@@ -2888,6 +2920,7 @@ def generate_segment(
                 "show_name": _show_value(show, "name", show_id),
                 "host": _show_value(show, "host", ""),
                 "topic": topic,
+                "short_title": make_short_title(topic, channel=_yt_channel),
                 "word_count": word_count,
                 "voices": voices,
                 "voice": "" if backend_used == "youtube_ingest" else voices.get("host", ""),
@@ -2896,6 +2929,7 @@ def generate_segment(
                 "source_type": source_context.source_type,
                 "source_value": source_context.source_value,
                 "source_title": source_context.title,
+                "source_channel": _yt_channel,
                 "source_subreddit": source_context.subreddit,
                 "source_story_mode": bool(source_context.story_mode),
                 "source_audio_path": source_context.audio_path,
@@ -2947,6 +2981,9 @@ def generate_segment(
                 log("  Failed to generate script")
                 return None
 
+    if segment_type in {"news_briefing", "daily_briefing"}:
+        script = _briefing_intro_line(show.name, segment_type) + script
+
     word_count = len(script.split())
     est_minutes = word_count / 130
     log(f"  Generated {word_count} words (~{est_minutes:.1f} min)")
@@ -2983,8 +3020,6 @@ def generate_segment(
         is_multi_voice = True
 
     use_minimax_final = backend == "minimax" and long_async_enabled and not is_multi_voice
-    if backend == "minimax" and not is_multi_voice and not use_minimax_final and word_count >= 500:
-        log("  Long-form MiniMax is disabled for this run; using Kokoro render only.")
 
     if use_minimax_final:
         validate_voice = primary.get("voice_kokoro", show.voices.get("host", "am_michael"))
@@ -3027,20 +3062,6 @@ def generate_segment(
             success = True
     elif is_multi_voice:
         success = render_multi_voice(processed, output_path, voices, backend=backend)
-    elif backend == "minimax" and word_count >= 500 and not long_async_enabled:
-        fallback_voice = primary.get("voice_kokoro", show.voices.get("host", "am_michael"))
-        log(f"  Long-form MiniMax is disabled for this run; rendering Kokoro voice '{fallback_voice}' only.")
-        success = render_single_voice(
-            processed,
-            output_path.with_suffix(".wav"),
-            fallback_voice,
-            backend="kokoro",
-            speed=float(voices.get("host_speed", 1.0)),
-            wpm=int(voices.get("host_wpm", 130)),
-        )
-        if success:
-            output_path = output_path.with_suffix(".wav")
-            backend_used = "kokoro_longform"
     elif backend == "minimax":
         host_voice = voices.get("host", "Deep_Voice_Man")
         success = render_single_voice(
@@ -3114,6 +3135,7 @@ def generate_segment(
         json.dump(meta, f, indent=2)
 
     # Write a lightweight sidecar next to the audio file for the admin library
+    _sc_channel = source_context.channel if source_context else ""
     sidecar = output_path.with_suffix(".json")
     with open(sidecar, "w") as f:
         json.dump({
@@ -3122,6 +3144,7 @@ def generate_segment(
             "show_name": _show_value(show, "name", show_id),
             "host": primary.get("id", _show_value(show, "host", "")),
             "topic": topic,
+            "short_title": make_short_title(topic, channel=_sc_channel),
             "word_count": word_count,
             "voices": voices,
             "voice": "" if backend_used == "youtube_ingest" else voices.get("host", ""),
@@ -3130,6 +3153,7 @@ def generate_segment(
             "source_type": source_context.source_type if source_context else "",
             "source_value": source_context.source_value if source_context else "",
             "source_title": source_context.title if source_context else "",
+            "source_channel": _sc_channel,
             "source_subreddit": source_context.subreddit if source_context else "",
             "source_story_mode": bool(source_context.story_mode) if source_context else False,
             "source_audio_path": source_context.audio_path if source_context else "",
@@ -3200,20 +3224,22 @@ def generate_for_show(
             and not _all_agnostic
         )
         if auto_source:
-            selected_source_rule = _choose_source_rule_for_show(show, show_id, requested_segment_type)
-            if selected_source_rule:
-                selected_source_context = load_source_context(
-                    selected_source_rule["type"],
-                    selected_source_rule["value"],
-                    lookback_days=int(selected_source_rule["lookback_days"]),
-                    selection_strategy=str(selected_source_rule["selection_strategy"]),
+            for candidate_rule in _ordered_source_rules_for_show(show, show_id, requested_segment_type):
+                ctx = load_source_context(
+                    candidate_rule["type"],
+                    candidate_rule["value"],
+                    lookback_days=int(candidate_rule["lookback_days"]),
+                    selection_strategy=str(candidate_rule["selection_strategy"]),
                     used_source_keys=used_source_keys,
                 )
-                if selected_source_context:
-                    iter_source_type = str(selected_source_rule["type"])
-                    iter_source_value = str(selected_source_rule["value"])
-                    iter_source_lookback_days = int(selected_source_rule["lookback_days"])
-                    iter_source_selection_strategy = str(selected_source_rule["selection_strategy"])
+                if ctx:
+                    selected_source_rule = candidate_rule
+                    selected_source_context = ctx
+                    iter_source_type = str(candidate_rule["type"])
+                    iter_source_value = str(candidate_rule["value"])
+                    iter_source_lookback_days = int(candidate_rule["lookback_days"])
+                    iter_source_selection_strategy = str(candidate_rule["selection_strategy"])
+                    break
             if not selected_source_context and explicit_source_required:
                 log(f"  No unused source items available for source-driven segment type '{requested_segment_type}'.")
                 break

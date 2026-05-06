@@ -63,7 +63,7 @@ def preprocess_for_tts(text: str, *, include_cough: bool = True, backend: str = 
 
     if backend == "minimax":
         text = text or ""
-        # Preserve MiniMax-native interjection tags and translate our legacy cue style.
+        # Translate our legacy cue tags to MiniMax-native interjection format.
         tag_map = {
             "[laugh]": "(laughs)",
             "[chuckle]": "(chuckle)",
@@ -73,12 +73,56 @@ def preprocess_for_tts(text: str, *, include_cough: bool = True, backend: str = 
         }
         for src, dst in tag_map.items():
             text = re.sub(re.escape(src), dst, text, flags=re.IGNORECASE)
+        # Strip remaining square-bracket production cues.
         text = re.sub(r"\[(?![^\]]*\])([^\]]+)\]", " ", text)
+        # Strip standalone stage-direction lines (whole line is a parenthetical).
+        lines = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if line.startswith("(") and line.endswith(")"):
+                continue
+            lines.append(raw_line)
+        text = "\n".join(lines)
+        # Strip inline parentheticals longer than a short vocal interjection.
+        # MiniMax-native cues (laughs, sighs, etc.) have ≤10 chars of content;
+        # production notes like "(synthetic pad running in the background)" are
+        # much longer and cannot be actioned by TTS.
+        text = re.sub(r"\s*\([^)]{12,}\)", " ", text)
         text = text.replace('"', "")
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
 
-    # Drop standalone stage-direction lines before handing text to TTS.
+    if backend == "google":
+        text = text or ""
+        # Strip standalone stage-direction lines.
+        lines = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if line.startswith("(") and line.endswith(")"):
+                continue
+            lines.append(raw_line)
+        text = "\n".join(lines)
+        # Strip inline production-direction parentheticals. Google interprets
+        # short vocal cues like "(sighs)" naturally but cannot produce background
+        # audio, so strip anything longer than a short acting note.
+        text = re.sub(r"\s*\([^)]{25,}\)", " ", text)
+        # Strip square-bracket production cues.
+        text = re.sub(r"\[[^\]]+\]", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+    # --- Kokoro (local) path: strip everything the model can't interpret ---
+
+    # Strip speaker-label prefixes from line starts (e.g. "Zara:", "HOST_A:",
+    # "Liminal Operator:").  Kokoro reads them literally as text.
+    # Pattern: 1-4 title-case or ALL_CAPS words, optional stage cue, then colon+space.
+    _SPEAKER_PREFIX = re.compile(
+        r"^[A-Z][A-Za-z_]*(?:\s+[A-Z][A-Za-z_]*){0,3}(?:\s*\([^)]+\))?:\s+",
+        re.MULTILINE,
+    )
+    text = _SPEAKER_PREFIX.sub("", text or "")
+
+    # Drop standalone stage-direction lines.
     lines = []
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -86,6 +130,10 @@ def preprocess_for_tts(text: str, *, include_cough: bool = True, backend: str = 
             continue
         lines.append(raw_line)
     text = "\n".join(lines)
+
+    # Strip inline stage-direction parentheticals, e.g. "(laughs)", "(speaking softly)".
+    # Match only lowercase-only content (no digits, no capitals) up to ~50 chars.
+    text = re.sub(r"\s*\([a-z][a-z,\s]{0,50}\)", " ", text)
 
     # Remove any remaining bracketed production cues except the few we translate.
     text = re.sub(r"\[(?!pause\]|chuckle\]|cough\])[^\]]+\]", " ", text, flags=re.IGNORECASE)
@@ -96,6 +144,7 @@ def preprocess_for_tts(text: str, *, include_cough: bool = True, backend: str = 
     if include_cough:
         text = text.replace("[cough]", "ahem...")
     text = text.replace('"', "")
+    text = re.sub(r"[ \t]{2,}", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
@@ -107,6 +156,46 @@ def clean_claude_output(text: str, *, strip_quotes: bool = True) -> str:
     return cleaned
 
 
+SHORT_TITLE_MAX = 50
+
+
+def make_short_title(topic: str, channel: str = "") -> str:
+    """Return a display-safe short title (≤ SHORT_TITLE_MAX chars), title only.
+
+    The channel is stored separately (source_channel) and rendered as a badge
+    in the UI — it is NOT embedded in the returned string.
+    If the topic already fits, return it as-is.
+    Otherwise call the LLM for a compressed title; fall back to truncation.
+    """
+    if not topic:
+        return ""
+
+    if len(topic) <= SHORT_TITLE_MAX:
+        return topic
+
+    short = _llm_shorten(topic, max_chars=SHORT_TITLE_MAX)
+    return short
+
+
+def _llm_shorten(text: str, max_chars: int) -> str:
+    """Use the LLM to compress text to ≤ max_chars, with truncation fallback."""
+    prompt = (
+        f"Rewrite the following title as a concise label of {max_chars} characters or fewer. "
+        "Keep the most important nouns and concepts. Output ONLY the shortened title, nothing else.\n\n"
+        f"Title: {text}"
+    )
+    try:
+        result = run_claude(prompt, timeout=20, temperature=0.2, num_predict=64, strip_quotes=True)
+        if result:
+            result = result.strip().strip('"').strip("'")
+            if result and len(result) <= max_chars + 5:
+                return result[:max_chars]
+    except Exception:
+        pass
+    # Truncation fallback
+    return text[: max_chars - 1] + "…"
+
+
 def run_claude(
     prompt: str,
     *,
@@ -116,6 +205,7 @@ def run_claude(
     strip_quotes: bool = True,
     temperature: float = 0.8,
     num_predict: int = 8192,
+    num_ctx: int | None = None,
 ) -> str | None:
     # 1. Try Ollama (if configured)
     import json
@@ -123,16 +213,20 @@ def run_claude(
     if ollama_url:
         ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
         try:
+            options: dict = {
+                "num_predict": num_predict,
+                "temperature": temperature,
+            }
+            # num_ctx must cover prompt tokens + output tokens; auto-size if not given.
+            ctx = num_ctx or (max(16384, len(prompt) // 3 + num_predict))
+            options["num_ctx"] = ctx
             req = urllib.request.Request(
                 f"{ollama_url.rstrip('/')}/api/generate",
                 data=json.dumps({
                     "model": ollama_model,
                     "prompt": prompt,
                     "stream": False,
-                    "options": {
-                        "num_predict": num_predict,
-                        "temperature": temperature,
-                    },
+                    "options": options,
                 }).encode('utf-8'),
                 headers={'Content-Type': 'application/json'}
             )

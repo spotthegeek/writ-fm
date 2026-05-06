@@ -31,17 +31,13 @@ def primary_host_assignment(show: Any, roster_lookup: RosterLookup | None = None
     for host in hosts:
         if host.get("role") == "primary":
             assignment = dict(host)
-            if show_backend:
-                assignment["tts_backend"] = show_backend
-            elif not assignment.get("tts_backend"):
-                assignment["tts_backend"] = "kokoro"
+            if not assignment.get("tts_backend"):
+                assignment["tts_backend"] = show_backend or "kokoro"
             return assignment
     if hosts:
         assignment = dict(hosts[0])
-        if show_backend:
-            assignment["tts_backend"] = show_backend
-        elif not assignment.get("tts_backend"):
-            assignment["tts_backend"] = "kokoro"
+        if not assignment.get("tts_backend"):
+            assignment["tts_backend"] = show_backend or "kokoro"
         return assignment
 
     host_id = _show_value(show, "host", "liminal_operator")
