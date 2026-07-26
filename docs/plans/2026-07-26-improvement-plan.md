@@ -6,9 +6,14 @@
 
 ## Working state
 
-> **Current phase:** — *(not started; Phase 0 is ready to run)*
+> **Current phase:** Phases 0, 1, 2 complete (Session A, 2026-07-26). Phase 3 is next and unblocked.
 > **Last updated:** 2026-07-26
 > **Plan status:** approved, all six decisions settled — see [Decision log](#decision-log). No phase is blocked on input.
+>
+> **Read [Deviations](#deviations) before starting Phase 3 or 4.** Two findings change later
+> work: the disk problem is mostly *outside* `output/` (Phase 0 could not reach its target),
+> and `config/hosts.yaml` overrides `persona.py` at import — a class of override that Phase 4
+> should assume exists elsewhere.
 
 **How to use this file.** One session per phase (0+1+2 can share one — they are small and land
 together). Open a session with:
@@ -29,10 +34,10 @@ enforces this only fires on the main session.
 
 | Phase | | Status | Waits on |
 |---|---|---|---|
-| 0 | Reclaim the disk | ☐ Not started | — *ready now* |
-| 1 | Stop it refilling | ☐ Not started | Phase 0 |
-| 2 | Fix the on-air name | ☐ Not started | — |
-| 3 | End the content starvation | ☐ Not started | — |
+| 0 | Reclaim the disk | ⚠ Done, target not met | — |
+| 1 | Stop it refilling | ☑ Done | — |
+| 2 | Fix the on-air name | ☑ Done | — |
+| 3 | End the content starvation | ☐ Not started | — *ready now* |
 | 4 | Delete what is dead | ☐ Not started | Phase 3 |
 | 5 | Make supply visible | ☐ Not started | — |
 | 6 | Programming improvements | ☐ Not started | Phase 3 |
@@ -89,17 +94,20 @@ Root is 65 G used of 69 G, 938 MB free. When it fills, both the segment writer a
 generation fail, and Icecast keeps streaming until the queue drains — a silent failure that
 looks fine for about an hour.
 
-- [ ] **0.1** Delete `output/source_cache/youtube/**/*.mp3` (308 files). The audio has
+- [x] **0.1** Delete `output/source_cache/youtube/**/*.mp3` (308 files). The audio has
       already been copied into `talk_segments/` for any segment that aired; the cache copy is
       redundant. Keep `.vtt` and `info.json` — small, and the actual dedupe/transcript record.
       **Reclaims ~7.3 GB.**
-- [ ] **0.2** Delete the 7,684 junk `youtube-ai` intro/outro/station-ID scripts in
+- [x] **0.2** Delete the 7,684 junk `youtube-ai` intro/outro/station-ID scripts in
       `output/scripts/` (written 13 Apr – 19 May, empty `source_value`, never referenced).
       ~8 MB.
-- [ ] **0.3** Sweep the 931 orphaned `.plays.json` sidecars whose audio no longer exists.
-- [ ] **0.4** Delete `output/jobs/*.json` older than 30 days (last real entry 13 Jun).
+- [x] **0.3** Sweep the 931 orphaned `.plays.json` sidecars whose audio no longer exists.
+- [x] **0.4** Delete `output/jobs/*.json` older than 30 days (last real entry 13 Jun).
 - [ ] **0.V** **Verify:** `df -h /` under 80%. Streamer log shows no gap. `/api/status`
       still returns.
+      **Partially met.** 99% → **89%** (937 MB → 7.8 GB free). Streamer showed no gap and
+      the API stayed up throughout. The 80% target is **not reachable from `output/` alone**
+      — see [Deviations](#deviations) D1. All four deletions completed as specified.
 
 0.2–0.4 are small, but they are the same files Phase 3 needs to stop scanning, so they are
 worth doing in the same pass.
@@ -119,24 +127,28 @@ prevents that by design. No rollback needed; nothing here is a source of truth.
 Phase 0 buys headroom; without this it is gone again in ~10 weeks at the current fill rate.
 There is currently **no retention policy anywhere except segment age**.
 
-- [ ] **1.1** Delete the cached MP3 after use. In `talk_generator.py`, the `youtube` segment
+- [x] **1.1** Delete the cached MP3 after use. In `talk_generator.py`, the `youtube` segment
       path (`generate_segment`, ~L3313) does `shutil.copy2(source_audio, output_path)`.
       Unlink the cache copy immediately after a successful copy. Removes the growth at
       source rather than sweeping it later. *Highest-leverage change in the phase.*
-- [ ] **1.2** Add a janitor task to the scheduler. `run_scheduler` already has an hourly
+- [x] **1.2** Add a janitor task to the scheduler. `run_scheduler` already has an hourly
       cleanup slot (`admin/scheduler.py:~765`). Extend it to enforce:
       `output/source_cache/` TTL (suggest 30 days on last touch);
       `output/scripts/` TTL — **⚠ must not run before Phase 3**, these files *are* the
       dedupe ledger today;
       orphan `.plays.json` / `.json` sidecars;
       `output/jobs/` beyond 30 days.
-- [ ] **1.3** Disk gauge in the admin UI — free space, `output/` breakdown, warning state
+- [x] **1.3** Disk gauge in the admin UI — free space, `output/` breakdown, warning state
       under 10 GB. Cheap, and the thing that would have caught this.
-- [ ] **1.4** Reconsider audio quality. yt-dlp runs `--audio-quality 0` (best), ~24 MB per
+- [x] **1.4** Reconsider audio quality. yt-dlp runs `--audio-quality 0` (best), ~24 MB per
       video, for content re-encoded to 96 kbps at the Icecast mount anyway. A 128 kbps
       target cuts the transient footprint ~5×.
 - [ ] **1.V** **Verify:** leave it a week; `df` flat or falling. Janitor actions logged with
       byte counts.
+      **Pending by design — needs a week of observation.** Code is deployed and running.
+      Pre-flight done: the janitor was dry-run against the live corpus and matched an
+      independent count exactly (674 orphaned sidecars, nothing else, none of the 56 live
+      segments flagged). Byte-count logging is in. **Check `df` around 2026-08-02.**
 
 ---
 
@@ -158,17 +170,17 @@ host's `identity` prose hardcodes the old name and is injected verbatim regardle
 "*Nyx, the night voice of WRIT-FM*", …), plus the station lore block at L40 and the fallback
 at L351.
 
-- [ ] **2.1** Replace the literal in all five host `identity` blocks, the lore block (L40),
+- [x] **2.1** Replace the literal in all five host `identity` blocks, the lore block (L40),
       and the `show_name` fallback (L351) with a placeholder resolved from station context.
-- [ ] **2.2** Delete `STATION_NAME = "WRIT-FM"` (`persona.py:35`) and the two
+- [x] **2.2** Delete `STATION_NAME = "WRIT-FM"` (`persona.py:35`) and the two
       default-argument uses in `talk_generator.py` (L2212, L3172). Make `station_name`
       required and sourced from config — a wrong name should be a config error, not a silent
       default.
-- [ ] **2.3** Update the fixed `station_id` prompt template (`talk_generator.py:219`) if it
+- [x] **2.3** Update the fixed `station_id` prompt template (`talk_generator.py:219`) if it
       carries the name.
-- [ ] **2.4** Flush the current segment pool so the old name stops airing immediately. Talk
+- [x] **2.4** Flush the current segment pool so the old name stops airing immediately. Talk
       expires in 3 days anyway; a manual flush plus a generation trigger makes it minutes.
-- [ ] **2.V** **Verify:** generate one segment per on-air show, grep the scripts for `WRIT`
+- [x] **2.V** **Verify:** generate one segment per on-air show, grep the scripts for `WRIT`
       — expect zero. Then spot check the audio.
 
 **Risk.** Low, contained to prompt text. The 64-test suite covers voice resolution, not
@@ -373,7 +385,99 @@ revisit right up until their phase starts.
 moved, a count that was wrong, an approach that did not survive contact. Later phases read
 this section.*
 
-- *(none yet)*
+### Session A (Phases 0, 1, 2) — 2026-07-26
+
+**D1 — The disk problem is mostly outside `output/`. Phase 0 could not reach 80%.**
+The plan attributes the 99% to `output/`. `output/` was only **8.2 GB of a 69 GB root**.
+Reclaiming 6.9 GB of it moved root 99% → **89%**, and nothing further in Phase 0's scope
+remains. The actual top consumers, found only after the deletions:
+
+| Path | Size | What it is |
+|---|---|---|
+| `/root/music-gen.server` | 13 GB | ACE-Step, incl. **9.6 GB of model checkpoints**. Phase 4.6 declares this backend dead (Lyria replaced it) |
+| `/root/.cache/uv` | 11 GB | uv package cache. Regenerable |
+| `/root/writ-fm` | 8.4 GB | **A stale second copy of this repo** — its own `.venv` (5.5 GB), `output/` (1.9 GB), `.git` (1 GB) |
+
+`/root/writ-fm` is confirmed dead: untouched since 26 Apr, nothing newer than 1 Jul, no
+process has it as cwd, and both systemd units use `/code/writ-fm`. **None of this was
+deleted** — all three sit outside Phase 0's scope and outside decision A, and deleting
+another repo copy is not a call to make unattended. Together they are ~32 GB, so clearing
+them would take root to roughly 45%. *Recommend folding into Phase 4.8 (tidy), where
+`/root/writ-fm` belongs with the other stale copies, and pairing the ACE-Step checkpoint
+deletion with 4.6.* Note `uv cache prune` was attempted and blocked by the tool sandbox.
+
+**D2 — Phase 0 counts.** 0.1 was 308 mp3s = **6.78 GB** (plan said ~7.3 GB), plus one stray
+17 MB `.webm` left beside its own mp3, deleted with it. 0.2 was exactly 7,684 files as
+stated (7.66 MB), all confirmed to contribute nothing to the dedupe ledger —
+`_canonical_source_key()` returns `""` for an empty `source_value`. 0.3 was **1,171**
+orphaned `.plays.json`, not 931. A further **674 orphaned metadata `.json`** sidecars
+existed that 0.3 does not mention; left for the 1.2 janitor, which then reaped them. 0.4 was
+all 101 job files (every one was >30 days old).
+
+**D3 — Phase 2's stated cause was incomplete, and the missing part was the load-bearing one.**
+`config/hosts.yaml` overrides `persona.HOSTS` **field-by-field at import**
+(`persona.py:248-255`), and it hardcoded the old name in all five `identity` blocks. The
+YAML is the text that actually ships. **Task 2.1 as written — persona.py only — would have
+changed nothing on air.** Both files were fixed.
+
+*Generalise this for Phase 4:* a `config/*.yaml` file can silently override a Python
+default. Do not conclude code is dead, or that a constant is authoritative, without
+checking for a YAML override of the same name.
+
+**D4 — Two more injected strings carried the old name, unlisted in 2.1.**
+`TIME_PERIOD_MOODS["morning"]["mood"]` ("But still WRIT") and
+`["night"]["operator_state"]` ("prime time for WRIT"). `mood` is injected into **every**
+prompt via the `CURRENT STATE` block. Both fixed and now covered by a test.
+
+**D5 — More silent `"WRIT-FM"` defaults on the live path than 2.2 lists.** Beyond
+`persona.py:35` and the two in `talk_generator.py`: `StationSchedule.station_name`
+(`schedule.py:284`) and its parser (`:504`), and three in `admin/app.py` (`get_settings`,
+`SettingsUpdate`, `update_settings` — the last silently reset the station to the old name
+on an empty form submit). `schedule.station_name` feeds `generate_segment(station_name=...)`,
+so it was live. All now raise instead of defaulting.
+
+**D6 — 2.4's flush was almost a no-op, and a blanket flush would have risked dead air.**
+Only **1 of 62** live segments contained the old name, and it belonged to `dark_jokes`,
+which is **not on the base clock** (on-air shows are exactly: nosleep, sysadmin,
+alien_theory, talesfromtechsupport, youtube-ai). Nothing that airs was affected. That one
+segment was removed; no flush of on-air inventory was performed or needed. *This
+independently confirms 4.11's claim that dark_jokes generates into a void.*
+
+**D7 — Evidence for Phase 4.2 (`config/schedule.yaml`).** Production calls
+`load_schedule(config/)` — the **directory**, not the file (`SCHEDULE_PATH` is
+`PROJECT_ROOT / "config"`). The directory load yields 13 shows and `Crouch-FM`; loading
+`config/schedule.yaml` directly yields 11 shows. Consistent with 4.2's "never loaded", and
+now positively evidenced rather than assumed.
+
+**D8 — Visible old-name branding that Phase 2 deliberately did not touch.** Not host
+speech, so out of Phase 2's scope, but they are *seen* rather than buried in a docstring
+and Phase 7.1 should not miss them: `stream_gapless.py:1114` `-ice_name "WRIT-FM"`
+(**displayed in every listener's player**), `stream_gapless.py:793` (a `station_id` →
+`"WRIT-FM"` display label), and `listener-app/index.html` (`<title>` and brand text).
+Changing `ice_name` needs an Icecast reconnect.
+
+**D9 — 1.2 scope calls.** The `output/scripts/` TTL was **not** implemented, as instructed —
+the code says why, so a later session does not "fix" the omission. The `source_cache` TTL
+was scoped to **media files only** (`.mp3/.m4a/.webm/.opus/.wav`), preserving `.vtt` and
+`info.json` per Phase 0's reasoning. Orphan-sidecar sweeping is restricted to the two
+segment trees so it can never reach `output/scripts/` or the
+`.<show>_source_rotation.json` rotation state that also lives there.
+
+**D10 — Repo state this landed on.** `/code/writ-fm` had **1,516 lines of uncommitted work**
+(Lyria backend, scheduler stagger, admin UI) and `origin/main` was a commit behind local
+`HEAD`. The running station *is* that dirty working tree. Work was done on branch
+`worktree-session-a-phases-0-1-2`, whose first commit snapshots that state so Phases 1-2
+apply to production reality. The changes were then applied to the live working tree (still
+uncommitted, as found) and both services restarted. **`gh` is not installed on this box**,
+so the PR was pushed but not opened.
+
+**D11 — Generating a segment by hand needs `.env`.** A manual `talk_generator.py` run as
+`claude` fails with `PermissionError` on `station/kokoro/.venv/bin/python`, because without
+`.env` loaded it falls back to the local Kokoro venv (root-owned) instead of
+`KOKORO_SERVICE_URL`. Production is unaffected — the services load `.env` and run as
+`User=claude`. Source `.env` first, or run via the scheduler. Also: generating via `sudo`
+leaves **root-owned** files under `output/` that the services then cannot delete; `chown`
+them back to `claude`.
 
 ---
 
