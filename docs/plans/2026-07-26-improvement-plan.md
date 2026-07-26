@@ -6,14 +6,16 @@
 
 ## Working state
 
-> **Current phase:** Phases 0, 1, 2 complete (Session A, 2026-07-26). Phase 3 is next and unblocked.
+> **Current phase:** Phases 0–2 complete (Session A). Phase 3a + 3b complete (Session B,
+> 2026-07-26) and **soaking** — Phase 3c/3d is next, after a day of observation.
 > **Last updated:** 2026-07-26
 > **Plan status:** approved, all six decisions settled — see [Decision log](#decision-log). No phase is blocked on input.
 >
-> **Read [Deviations](#deviations) before starting Phase 3 or 4.** Two findings change later
-> work: the disk problem is mostly *outside* `output/` (Phase 0 could not reach its target),
-> and `config/hosts.yaml` overrides `persona.py` at import — a class of override that Phase 4
-> should assume exists elsewhere.
+> **Read [Deviations](#deviations) before starting Phase 3c or 4.** Findings that change later
+> work: the disk problem is mostly *outside* `output/` (Phase 0 could not reach its target);
+> `config/hosts.yaml` overrides `persona.py` at import — a class of override that Phase 4
+> should assume exists elsewhere; and 3.5's index-vs-scan invariant must now be asserted
+> **with the 90-day window applied to both sides** ([D14](#deviations)).
 
 **How to use this file.** One session per phase (0+1+2 can share one — they are small and land
 together). Open a session with:
@@ -44,7 +46,7 @@ enforces this only fires on the main session.
 | 0 | Reclaim the disk | ⚠ Done, target not met | — |
 | 1 | Stop it refilling | ☑ Done | — |
 | 2 | Fix the on-air name | ☑ Done | — |
-| 3 | End the content starvation | ☐ Not started | — *ready now* |
+| 3 | End the content starvation | ◐ 3a + 3b done, soaking | 3c/3d — *ready now* |
 | 4 | Delete what is dead | ☐ Not started | Phase 3 |
 | 5 | Make supply visible | ☐ Not started | — |
 | 6 | Programming improvements | ☐ Not started | Phase 3 |
@@ -212,15 +214,21 @@ since 20 May; production down from 259/month to 67.
 Largest phase, and the one most worth splitting across sessions — 3a/3b, soak a day, then 3c/3d.
 
 ### 3a — Widen the intake
-- [ ] **3.1** Page the Reddit listing past the first 25 results (`after` cursor), to a cap.
-- [ ] **3.2** When the recent window comes back dry, fall back to `top`/`all` before failing.
+- [x] **3.1** Page the Reddit listing past the first 25 results (`after` cursor), to a cap.
+      Done: 100 posts/page × 4 pages (`WRIT_REDDIT_LISTING_PAGE_SIZE`, `WRIT_REDDIT_MAX_PAGES`).
+      Stops at the first usable post, so a healthy subreddit still costs one request; stops
+      paging early on a newest-first listing once a page falls out of the lookback window.
+- [x] **3.2** When the recent window comes back dry, fall back to `top`/`all` before failing.
       A subreddit with 15 years of archive is not exhausted after six weeks.
-- [ ] **3.3** Apply the same widening to `_select_youtube_video_url_from_collection` — the
+      Done — and it is the change that is actually carrying `talesfromtechsupport`.
+- [x] **3.3** Apply the same widening to `_select_youtube_video_url_from_collection` — the
       four `youtube-ai` channels exhaust the same way (889 failures).
+      Done: depth 12/25 → 50 (`WRIT_YOUTUBE_COLLECTION_DEPTH`) plus a back-catalogue pass.
 
 ### 3b — Let the used-set expire
-- [ ] **3.4** Age the used-source ledger out after the window set in decision B, so
-      evergreen material recycles.
+- [x] **3.4** Age the used-source ledger out after the window set in decision B, so
+      evergreen material recycles. Done at 90 days (`WRIT_SOURCE_REUSE_DAYS`; `0` restores
+      dedupe-forever). **Its effect today is small — see [D12](#deviations).**
 
 ### 3c — Make the hot path cheap
 - [ ] **3.5** Replace `_used_source_keys_for_show()` (`talk_generator.py:828`) — currently
@@ -232,7 +240,15 @@ Largest phase, and the one most worth splitting across sessions — 3a/3b, soak 
       19 MB** — roughly 4.4× cheaper already. Still worth doing, but measure the real
       hot-path cost rather than quoting the original number as the win.
       **Invariant to assert before switching:** the new index must reproduce the same key
-      set as the old scan, checked against the current corpus.
+      set as the old scan, checked against the current corpus — **with the 90-day window
+      applied to both sides.** Session B added that window inside
+      `_used_source_keys_for_show()` (task 3.4), so a comparison against an unwindowed
+      full-history scan will show a spurious difference of 19–69 keys per show
+      ([D14](#deviations)). The window is station-local, keyed off the script filename's
+      `_YYYYMMDD_HHMMSS` suffix — the index must prune on the same basis ([D13](#deviations)).
+      *Measured baseline, Session B:* the windowed scan of 2,224 files costs **~160 ms per
+      call**, and the scheduler makes ~11 of them per failing job. That is the real number to
+      beat, not the plan's original 9,903-file figure.
       Unblocks the scripts-TTL deferred from 1.2.
 
 ### 3d — Fail quietly
@@ -247,9 +263,19 @@ Largest phase, and the one most worth splitting across sessions — 3a/3b, soak 
 ### Tests to add
 - [ ] **3.9** Index/scan equivalence; listing pagination; used-set expiry boundary; backoff
       escalation.
+      **Half done.** `tests/test_source_widening.py` (22 tests) covers listing pagination and
+      the used-set expiry boundary, plus the archive fallbacks and the preserved PullPush
+      path. **Still owed by Session C:** index/scan equivalence (3.5) and backoff escalation
+      (3.6). Suite is now **166 tests**.
 - [ ] **3.V** **Verify:** failure count per day drops an order of magnitude. All five on-air
       shows sit at or above `min_inventory: 8` for a full week. `talesfromtechsupport`
       climbs off 1.
+      **First two indicators met on day one; the week of soak is still owed.** In the 25
+      minutes after the Session B restart: **0 generation failures**, against 16 in the
+      preceding two hours. `talesfromtechsupport` **1 → 8**. All five on-air shows at or
+      above `min_inventory: 8` (nosleep 12, sysadmin 13, alien_theory 9,
+      talesfromtechsupport 8, youtube-ai 10). **Re-check around 2026-08-02**, alongside
+      Phase 1's `df` check.
 
 ---
 
@@ -526,6 +552,73 @@ so the PR was pushed but not opened.
 leaves **root-owned** files under `output/` that the services then cannot delete; `chown`
 them back to `claude`.
 
+### Session B (Phases 3a, 3b) — 2026-07-26
+
+**D12 — 3b is a bound on future growth, not the fix. 3a did the work.**
+The plan reads as though the used-set expiring is what unblocks the shows. Measured against
+the live corpus, a 90-day window expires almost nothing today: the oldest script is
+**2026-04-11**, so the corpus is only ~106 days deep. Keys dropped per show: nosleep 19,
+sysadmin 69, alien_theory 42, youtube-ai 56, **talesfromtechsupport 0** — the worst-starved
+show got no relief from 3.4 at all. Everything it gained came from **3.2**, the archive
+fallback. 3.4 still matters — without it the ledger grows forever and the shows re-starve
+around November — but do not credit it with the recovery, and do not expect a re-air window
+change to move anything in the short term.
+
+**D13 — Script filenames are station-local, and the expiry cutoff has to be too.**
+Sidecars are named with `station_now().strftime("%Y%m%d_%H%M%S")`. The station timezone is
+**Australia/Adelaide (UTC+9:30)** and the box runs UTC, so a first implementation that parsed
+the filename with `datetime.strptime(...).timestamp()` (system-local) put the 90-day boundary
+**9.5 hours off** and flipped ~9 keys per show. The shipped version compares the filename
+stamp lexicographically against a `station_now()`-derived cutoff string — correct, and
+cheaper than parsing, so the ledger scan got slightly *faster* (196 ms → 160 ms) rather than
+paying for the new filter. **Task 3.5's index must prune on the same station-local basis.**
+
+**D14 — `_used_source_keys_for_show()` had to be touched after all.**
+Session B was told to leave it for 3.5. That is not separable: task 3.4 *is* the ledger's
+expiry, and the ledger is that function. What was left alone is the part 3.5 actually
+replaces — the glob-every-file, `json.loads`-every-file structure is unchanged. The change is
+one filename check at the top of the loop plus two module-level helpers
+(`_source_reuse_window_days`, `_script_is_within_window`).
+➡ **Consequence for 3.5:** its equivalence assertion must window both sides, or it will
+report a 19–69 key difference per show that is the intended behaviour, not a bug.
+
+**D15 — `youtube-ai` segments are `.mp3`; every other show's are `.wav`.**
+Counting inventory with `*.wav` reports youtube-ai as **0** when it actually holds 10 — the
+`youtube` segment type is a direct audio ingest, not a TTS render. This caught Session B out
+mid-verification. **Phase 5.2's inventory-trend panel must count both extensions**, and so
+must any future starvation check.
+
+**D16 — Two YouTube channels are genuinely exhausted, and that is not a failure.**
+At depth 50 within the 90-day window, `@nateherk` and `@BoxminingAI` have no unused videos
+left (BoxminingAI only after its first pick each cycle). The show still fills, because rule
+rotation reaches `@buildnpublic` and `@TimCarambat`. These are **cold sources** — exactly the
+state task **3.7** has to distinguish from a broken one. The new message is already specific
+(`No unused YouTube entries found (50 scanned, including the back catalogue)`); 3.7 should
+classify on that rather than re-deriving it. A channel's catalogue beyond 50 entries is not
+reached — yt-dlp paging was deliberately not built, since 50 is already 4× the old depth.
+
+**D17 — Measured effect on the live station.** Before: 16 `Generation failed` in the
+preceding two hours; `talesfromtechsupport` at 1 segment; the show's own listing probe
+returning *25 fetched, 1 in-window, 0 unused*. After the restart: **0 failures in 25
+minutes**, `talesfromtechsupport` **1 → 8**, all five on-air shows at or above
+`min_inventory: 8`. Every one of the five Reddit source rules now selects material; r/EBEs
+(3 posts inside its window) needs the archive pass to do so.
+
+**D18 — The archive fallback puts genuinely old posts on air, undated.** The first canary
+segment was a 2017 r/talesfromtechsupport story, read as though current. For that show and
+r/nosleep the material is timeless and it does not matter. For **r/sysadmin, r/UFOs and
+r/EBEs it can**: a three-year-old thread read in the present tense is wrong in a way a
+listener would notice. Nothing was changed for it — out of scope here, and decision B accepts
+repetition — but **Phase 6 should consider passing the post's age into the prompt** so the
+host can say "a few years back" instead of implying it is this week.
+
+**D19 — Deployment shape, unchanged from Session A.** Work was done on branch
+`worktree-session-b-phase-3a-3b` (draft PR **#3**, `gh` works now — D10's note that it is not
+installed is out of date). The change was then applied to `/code/writ-fm`'s working tree as
+an uncommitted diff and both services restarted, because production runs that tree directly.
+`main` is untouched. Merging the PR and resetting the working tree is the tidy-up whenever
+someone wants it.
+
 ---
 
 ## Explicitly out of scope
@@ -588,7 +681,7 @@ Splittable into three sessions if preferred — each phase stands alone.
 
 ### Session B — Phase 3a + 3b
 
-*Revised after Session A.*
+*✅ Ran 2026-07-26. Kept for the record; see [Deviations](#deviations) D12–D19 for what it found.*
 
 ```
 Read docs/plans/2026-07-26-improvement-plan.md. Decisions A–F are settled and binding.
@@ -628,22 +721,30 @@ learned changes them.
 
 ### Session C — Phase 3c + 3d
 
-*Revised after Session A.*
+*Revised after Session B.*
 
 ```
 Read docs/plans/2026-07-26-improvement-plan.md. Decisions A–F are settled and binding.
-Check the Deviations section — Sessions A and B have both run.
+Read the Deviations section first — Sessions A and B have both run, and D12–D19 change
+what this session is walking into.
 
-Execute Phase 3c (3.5), 3d (3.6–3.8) and the tests in 3.9. Do not start Phase 4.
+Execute Phase 3c (3.5), 3d (3.6–3.8) and the rest of the tests in 3.9. Do not start
+Phase 4.
 
 Notes:
 - 3.5 has a mandatory invariant: the new output/state/ index must reproduce exactly
-  the same key set as the current full scan of output/scripts/. Assert that against
-  the live corpus and show me the result BEFORE switching over.
-- 3.5's stated cost is out of date. Phase 0.2 deleted 7,684 junk scripts, so the
-  scan is now ~2,200 files / 19 MB, not 9,903 / 49 MB — roughly 4.4x cheaper than
-  the task describes. Still worth doing, but MEASURE the actual hot-path cost
-  before and after rather than quoting the old figure as the win.
+  the same key set as _used_source_keys_for_show() does today. Assert that against
+  the live corpus and show me the result BEFORE switching over. Session B put a
+  90-day window INSIDE that function (task 3.4), so window both sides — comparing
+  against an unwindowed full-history scan shows a spurious 19–69 key difference per
+  show that is the intended behaviour, not a bug. See D14.
+- The window is station-local (Australia/Adelaide, UTC+9:30) and keyed off the
+  script filename's _YYYYMMDD_HHMMSS suffix, which is written with station_now().
+  Prune the index on the same basis. A system-local parse puts the boundary 9.5
+  hours out — that bug was made and fixed in Session B, see D13.
+- 3.5's stated cost is out of date twice over. The scan is ~2,224 files, and Session
+  B measured it at ~160 ms per call with the window applied. That is the number to
+  beat, not the plan's original 9,903-file figure. Measure before and after.
 - output/scripts/ also holds .<show>_source_rotation.json rotation state, which is
   NOT a script record. The Phase 1 janitor deliberately never touches those; your
   index and TTL must not either. Note there is a forked pair — .youtube-ai_ and
@@ -651,11 +752,28 @@ Notes:
   per show.
 - Once 3.5 lands, the output/scripts/ TTL deferred from task 1.2 becomes safe. Add
   it to _janitor_sweep() in admin/scheduler.py, where a comment marks the spot and
-  explains why it was left out.
+  explains why it was left out. Its TTL must not be shorter than the 90-day re-air
+  window, or deleting a script silently un-uses its source.
 - 3.7 matters more than it looks: two months of starvation read as generic
-  "Generation failed (exit 1)" in the logs. Cold and failed must be distinguishable.
-  You can still see these in `journalctl -u writ-fm-admin.service`.
-- Restart services yourself.
+  "Generation failed (exit 1)". You now have two REAL cold sources to build against,
+  both live right now (D16): @nateherk and @BoxminingAI raise
+  "No unused YouTube entries found (50 scanned, including the back catalogue)".
+  Reddit's cold path raises "No unused posts found for r/X (N scanned, including
+  the archive)". Both messages were written in Session B to be classifiable —
+  classify on them rather than re-deriving the state.
+- 3.6's backoff escalation should reset on success AND treat cold differently from
+  failed once 3.7 lands: a cold source wants a long, quiet backoff, not a retry
+  storm. A broken one wants to be visible.
+- Do NOT re-widen the intake. 3.1–3.3 are done and soaking; if a show is still
+  starving, say so rather than tuning the new knobs
+  (WRIT_REDDIT_MAX_PAGES, WRIT_YOUTUBE_COLLECTION_DEPTH, WRIT_SOURCE_REUSE_DAYS).
+- Restart services yourself. Production runs /code/writ-fm's working tree directly,
+  so a change only takes effect once it is applied there — see D19.
+
+Working state: the suite is 166 tests (144 + Session B's 22 in
+tests/test_source_widening.py) and all should stay green. gh is installed and
+authenticated. Session B's work is on branch worktree-session-b-phase-3a-3b
+(draft PR #3) and applied uncommitted to /code/writ-fm.
 
 When done: tick the checkboxes, update Working state and Progress, record
 Deviations, and revise the later session prompts in the appendix if anything you
@@ -704,11 +822,16 @@ Task 4.9 (correcting CLAUDE.md) is not optional cleanup — the file currently t
 every new session that config/schedule.yaml is the config authority and that
 api_server.py is a standalone service. Both are wrong.
 
-Task 4.8 says "the two stale repo copies in .claude/worktrees/". There are now three
-(imperative-watching-iverson, vibevoice-backend, and Session A's). Check none is in
-use before removing any.
+Task 4.8 says "the two stale repo copies in .claude/worktrees/". There are now four
+(imperative-watching-iverson, vibevoice-backend, Session A's and Session B's). Check
+none is in use before removing any, and do not remove a worktree whose PR is still
+open and unmerged — #3 was Session B's.
 
-Verify with the full test suite (144 tests as of Session A), a clean restart of both
+For 4.10: tests/test_source_widening.py (Session B) already sandboxes itself by
+monkeypatching SCRIPTS_DIR onto tmp_path. Follow that shape when you move the patch
+into conftest.py, and check it does not fight the suite-wide fixture.
+
+Verify with the full test suite (166 tests as of Session B), a clean restart of both
 services, and `graphify update .`.
 
 When done: tick the checkboxes, update Working state and Progress, record
@@ -734,7 +857,14 @@ Any subagent exploring code must run `graphify query` before grepping — the en
 hook only fires on the main session.
 
 5.1 is the one that matters. Everything it needs is already computed inside the
-generator and thrown away.
+generator and thrown away. Session B added two things worth surfacing there: which
+sources are COLD rather than failing (@nateherk and @BoxminingAI are cold right
+now), and whether a selection came from the show's recency window or from the
+archive fallback — the second is the leading indicator that a source is running
+out, well before it fails.
+
+Counting trap for 5.2, per deviation D15: youtube-ai's segments are .mp3 and every
+other show's are .wav. Count both, or youtube-ai reads as 0 when it is full.
 
 Task 5.4 (disk gauge) is ALREADY DONE — it landed as 1.3 in Session A. Do not
 rebuild it. Follow its shape for the new panels: a cached endpoint in admin/app.py
@@ -776,6 +906,14 @@ tests/test_station_naming.py will fail the build if you hardcode it.
 The linear clock currently carries five shows — nosleep, sysadmin, alien_theory,
 talesfromtechsupport, youtube-ai — which is what 6.2's top-of-hour briefing slot has
 to fit around.
+
+One programming problem Phase 3 created and deliberately left, per deviation D18:
+shows now draw on subreddit archives when the recent window is dry, so a 2017 post
+can air read as though it happened this week. Harmless for nosleep and
+talesfromtechsupport; wrong for sysadmin, UFOs and EBEs. Consider passing the post's
+age into the prompt so the host can place it ("a few years back") rather than imply
+it is current. Small change, real quality gain, and it belongs in this phase rather
+than in Phase 3.
 
 When done: tick the checkboxes, update Working state and Progress, record
 Deviations, and revise the later session prompts in the appendix if anything you
