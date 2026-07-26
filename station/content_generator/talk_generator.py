@@ -73,7 +73,7 @@ YOUTUBE_CACHE_DIR = SOURCE_CACHE_DIR / "youtube"
 
 from station.schedule import load_schedule, StationSchedule
 from station.time_utils import station_now, station_iso_now
-from station.content_generator.persona import HOSTS, get_host, build_host_prompt, STATION_NAME
+from station.content_generator.persona import HOSTS, get_host, build_host_prompt, resolve_station_name
 from shared.hosts import (
     assignment_voice as shared_assignment_voice,
     assignment_wpm as shared_assignment_wpm,
@@ -2156,12 +2156,15 @@ def _two_host_prompt_prefix(show, segment_type: str, speaker_labels: dict[str, s
     return "\n".join(instructions)
 
 
-def _fallback_two_host_script(show, segment_type: str, speaker_labels: dict[str, str]) -> str | None:
+def _fallback_two_host_script(
+    show, segment_type: str, speaker_labels: dict[str, str], station_name: str | None = None
+) -> str | None:
     primary_name = speaker_labels.get("primary_host_name", _host_label(show.host))
     secondary_name = speaker_labels.get("secondary_host_name", "the co-host")
+    station_name = station_name or resolve_station_name()
     if segment_type == "station_id":
         return (
-            f"HOST_A: This is {STATION_NAME}, with {show.name}.\n\n"
+            f"HOST_A: This is {station_name}, with {show.name}.\n\n"
             f"HOST_B: {primary_name} and {secondary_name}, still on the line."
         )
     return None
@@ -2212,11 +2215,12 @@ def build_generation_prompt(
     topic: str,
     speaker_labels: dict[str, str],
     backend: str = "kokoro",
-    station_name: str = STATION_NAME,
+    station_name: str | None = None,
     source_context: SourceContext | None = None,
     word_targets: tuple[int, int] | None = None,
 ) -> str:
     """Build the full prompt for content generation."""
+    station_name = station_name or resolve_station_name()
     show_context = {
         "show_name": show.name,
         "show_description": show.description,
@@ -3172,10 +3176,11 @@ def generate_segment(
     source_selection_strategy: str = "latest",
     source_context: SourceContext | None = None,
     used_source_keys: set[str] | None = None,
-    station_name: str = STATION_NAME,
+    station_name: str | None = None,
     include_topic: bool = True,
 ) -> Path | None:
     """Generate a single talk segment with audio."""
+    station_name = station_name or resolve_station_name()
     show_id = show.show_id
     explicit_source_agnostic_types = {"station_id", "show_intro", "show_outro", "news_briefing"}
     if segment_type in explicit_source_agnostic_types:
@@ -3458,7 +3463,7 @@ def generate_segment(
 
             if not script:
                 if _uses_secondary_host_dialogue(show, segment_type):
-                    script = _fallback_two_host_script(show, segment_type, speaker_labels)
+                    script = _fallback_two_host_script(show, segment_type, speaker_labels, station_name)
                     if script:
                         log("  Using deterministic two-host fallback script.")
                     else:

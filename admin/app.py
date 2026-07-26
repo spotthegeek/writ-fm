@@ -1569,14 +1569,16 @@ def get_settings():
     data = load_schedule()
     return {
         "timezone": data.get("timezone", "local"),
-        "station_name": data.get("station_name", "WRIT-FM"),
+        "station_name": data.get("station_name", ""),
         "tagline": data.get("tagline", "AI generated radio"),
     }
 
 
 class SettingsUpdate(BaseModel):
     timezone: str = "local"
-    station_name: str = "WRIT-FM"
+    # Empty rather than a literal name: a blank submit must be rejected, not
+    # silently reset the station to whatever was hardcoded here.
+    station_name: str = ""
     tagline: str = "AI generated radio"
 
 
@@ -1584,7 +1586,10 @@ class SettingsUpdate(BaseModel):
 def update_settings(update: SettingsUpdate):
     data = load_schedule()
     data["timezone"] = _validate_timezone_name(update.timezone)
-    data["station_name"] = (update.station_name or "WRIT-FM").strip() or "WRIT-FM"
+    station_name = (update.station_name or "").strip()
+    if not station_name:
+        raise HTTPException(status_code=400, detail="station_name cannot be empty")
+    data["station_name"] = station_name
     data["tagline"] = update.tagline.strip()
     save_schedule(data)
     return {"ok": True, "timezone": data["timezone"], "station_name": data["station_name"], "tagline": data["tagline"]}

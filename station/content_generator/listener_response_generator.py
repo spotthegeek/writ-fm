@@ -31,7 +31,7 @@ import os
 os.environ.pop("CLAUDECODE", None)
 
 from station.content_generator.helpers import log, preprocess_for_tts, run_claude
-from station.content_generator.persona import build_host_prompt, get_host, STATION_NAME
+from station.content_generator.persona import build_host_prompt, get_host, resolve_station_name
 from shared.hosts import assignment_voice, primary_host_assignment
 from shared.settings import default_voice_for_backend
 
@@ -155,7 +155,7 @@ def build_response_prompt(
 SEGMENT: Listener Response (PRIORITY — these are REAL messages from listeners)
 
 You have received {count} real message{'s' if count > 1 else ''} from listener{'s' if count > 1 else ''} \
-through the {STATION_NAME} website. Respond on air.
+through the {resolve_station_name()} website. Respond on air.
 
 MESSAGES:
 {msg_text}
