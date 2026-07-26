@@ -25,6 +25,13 @@ Tick each task as it lands, update **Current phase** above, and record anything 
 that contradicts the plan in [Deviations](#deviations). A task is only ticked once its
 phase's verification step passes — not when the code is written.
 
+**Keep the [appendix prompts](#appendix--session-prompts) current.** They were all written
+before any session ran, so each one that has not yet executed is working from pre-Session-A
+assumptions. At the end of a session, revise the prompts for the sessions still ahead:
+counts you corrected, line references that moved, an assumption that did not survive. A
+deviation recorded but not reflected in the next session's prompt is a deviation the next
+session will not read in time. Treat this as part of the session, not optional tidying.
+
 Subagents are suppressed by default in this project's sessions. If a phase below says they
 help, **say so explicitly in the prompt** or they will not be used. Any subagent that
 explores code must be told to run `graphify query` before grepping — the project hook that
@@ -217,9 +224,13 @@ Largest phase, and the one most worth splitting across sessions — 3a/3b, soak 
 
 ### 3c — Make the hot path cheap
 - [ ] **3.5** Replace `_used_source_keys_for_show()` (`talk_generator.py:828`) — currently
-      globs and `json.loads` all 9,903 files in `output/scripts/` (49 MB) on **every**
-      attempt, ~11 attempts per failing job — with a single per-show index under
-      `output/state/`. Append on write, prune by the 3b window.
+      globs and `json.loads` every file in `output/scripts/` on **every** attempt, ~11
+      attempts per failing job — with a single per-show index under `output/state/`.
+      Append on write, prune by the 3b window.
+      *Figure corrected after Session A:* the scan was 9,903 files / 49 MB when this plan
+      was written; Phase 0.2 deleted 7,684 junk scripts, so it is now **~2,200 files /
+      19 MB** — roughly 4.4× cheaper already. Still worth doing, but measure the real
+      hot-path cost rather than quoting the original number as the win.
       **Invariant to assert before switching:** the new index must reproduce the same key
       set as the old scan, checked against the current corpus.
       Unblocks the scripts-TTL deferred from 1.2.
@@ -270,6 +281,38 @@ covered unused imports and dead branches — these are whole features.
 - [ ] **4.8** Tidy: `archive/`, `tools/backfill_short_titles.py`, `writ-fm.pid`,
       `SCHEDULE.md`, `WRIT-FM-Screenshot.png`, `CLAUDE_CODE_ISSUE_…md`, and the two stale
       repo copies in `.claude/worktrees/`.
+- [ ] **4.8b** **Reclaim the ~32 GB outside the repo.** Added after Session A, which found
+      that Phase 0's disk problem was mostly *not* in `output/` — see [D1](#deviations).
+      Root is still at **89%** (7.7 GB free) after Phase 0 did everything it could.
+      This is the item that actually fixes it.
+
+      | Path | Size | Status | Verified |
+      |---|---|---|---|
+      | `/root/music-gen.server` | 16 GB (9.6 GB checkpoints) | ACE-Step model + venv | Backend is Lyria — **pair with 4.6** |
+      | `/root/.cache/uv` | 11 GB | uv package cache | Regenerable |
+      | `/root/writ-fm` | 14 GB (5.8 venv / 1.9 output / 1.0 `.git`) | **Stale pre-move copy of this repo** | Untouched since 26 Apr, nothing newer than 1 Jun, no process cwd, both units use `/code/writ-fm` |
+
+      **Sizes do not add up, and that is expected.** Measured separately they total 41 GB;
+      measured in one `du` invocation, which counts each hardlinked inode once, they total
+      **32 GB**. The uv cache hardlinks into the venvs, so 32 GB is the real figure. Deleting
+      all three takes root from 89% to roughly **40%**.
+
+      Cautions, in the order they bite:
+      - **`/root/writ-fm/output/` holds 1.9 GB of its own segments and sidecars.** Confirm
+        nothing there is unique before deleting — it is a different corpus from
+        `/code/writ-fm/output/`, not a copy of it.
+      - `/root/writ-fm/.git` is a full 1 GB history. Confirm it has no commits absent from
+        the live repo (`git log --oneline` against `origin/main`) before removing it.
+      - ACE-Step checkpoints are only dead if 4.6 lands. Do them together or not at all.
+      - Prefer `uv cache prune` (removes unused entries) over `uv cache clean`. Because of
+        the hardlinking above, pruning may free far less than 11 GB — measure, do not assume.
+        The cache is shared with `music-gen.server`, so deleting that first changes the sum.
+      - All three are **root-owned and outside the repo**, so none of this is covered by
+        decision A. Treat it as its own decision.
+
+      *Session A did not touch any of it — out of scope for Phase 0, and deleting another
+      repo copy is not an unattended call. `uv cache prune` was attempted and blocked by the
+      tool sandbox.*
 - [ ] **4.9** Correct `CLAUDE.md`. It still names `config/schedule.yaml` as the config
       authority and describes `api_server.py` as a standalone third service (it is a thread
       inside the streamer). Both send future work to the wrong place. Update the Kokoro note
@@ -398,13 +441,17 @@ remains. The actual top consumers, found only after the deletions:
 | `/root/.cache/uv` | 11 GB | uv package cache. Regenerable |
 | `/root/writ-fm` | 8.4 GB | **A stale second copy of this repo** — its own `.venv` (5.5 GB), `output/` (1.9 GB), `.git` (1 GB) |
 
-`/root/writ-fm` is confirmed dead: untouched since 26 Apr, nothing newer than 1 Jul, no
+`/root/writ-fm` is confirmed dead: untouched since 26 Apr, nothing newer than 1 Jun, no
 process has it as cwd, and both systemd units use `/code/writ-fm`. **None of this was
 deleted** — all three sit outside Phase 0's scope and outside decision A, and deleting
-another repo copy is not a call to make unattended. Together they are ~32 GB, so clearing
-them would take root to roughly 45%. *Recommend folding into Phase 4.8 (tidy), where
-`/root/writ-fm` belongs with the other stale copies, and pairing the ACE-Step checkpoint
-deletion with 4.6.* Note `uv cache prune` was attempted and blocked by the tool sandbox.
+another repo copy is not a call to make unattended.
+
+➡ **Now tracked as [task 4.8b](#phase-4--delete-what-is-dead)**, with per-path sizes,
+verification status and cautions. Together they are **~32 GB** (not the 41 GB the
+per-directory figures suggest — the uv cache hardlinks into the venvs, so a single `du`
+invocation counts the shared inodes once). Clearing all three takes root from 89% to
+roughly **40%**. `uv cache prune` was attempted in Session A and blocked by the tool
+sandbox.
 
 **D2 — Phase 0 counts.** 0.1 was 308 mp3s = **6.78 GB** (plan said ~7.3 GB), plus one stray
 17 MB `.webm` left beside its own mp3, deleted with it. 0.2 was exactly 7,684 files as
@@ -516,6 +563,8 @@ them, that is deliberate.
 
 ### Session A — Phases 0, 1, 2
 
+*✅ Ran 2026-07-26. Kept for the record; see [Deviations](#deviations) for what it found.*
+
 ```
 Read docs/plans/2026-07-26-improvement-plan.md. That file is the source of truth;
 decisions A–F at the bottom are settled and binding.
@@ -539,8 +588,11 @@ Splittable into three sessions if preferred — each phase stands alone.
 
 ### Session B — Phase 3a + 3b
 
+*Revised after Session A.*
+
 ```
 Read docs/plans/2026-07-26-improvement-plan.md. Decisions A–F are settled and binding.
+Read the Deviations section first — Session A ran Phases 0, 1 and 2 on 2026-07-26.
 
 Execute Phase 3a (tasks 3.1–3.3) and 3b (task 3.4) only. Stop before 3c.
 
@@ -549,17 +601,38 @@ Notes:
 - These change which source gets selected. Roll out to one show first, watch a
   generation cycle, then apply to the rest.
 - Do not touch _used_source_keys_for_show() yet — that's 3.5, next session.
+- Internalise deviation D3 before you trust anything you read in code:
+  config/hosts.yaml silently overrides persona.py's Python defaults field by
+  field at import. Whenever a default matters to your reasoning, check whether a
+  config/*.yaml overrides it first.
+- The shows that actually air are exactly: nosleep, sysadmin, alien_theory,
+  talesfromtechsupport, youtube-ai. dark_jokes still generates but is not on the
+  base clock — do not use it as a canary. talesfromtechsupport sits at 1 segment
+  and youtube-ai at 6, so those two show the problem most clearly.
+- To generate by hand, source .env first, or Kokoro falls back to a root-owned
+  venv and dies with PermissionError. Do NOT run the generator under sudo: it
+  leaves root-owned files under output/ that the services (User=claude) then
+  cannot delete.
+- Restart writ-fm.service and writ-fm-admin.service yourself; don't ask me to.
+
+Working state: the repo is clean on main (Session A's work is merged), gh is
+installed and authenticated so the branch/PR flow works, and the suite is 144
+tests — all of which should stay green.
 
 Leave it to soak for a day before I start the next session.
 
-When done: tick the checkboxes, update Working state and Progress, record Deviations.
+When done: tick the checkboxes, update Working state and Progress, record
+Deviations, and revise the later session prompts in the appendix if anything you
+learned changes them.
 ```
 
 ### Session C — Phase 3c + 3d
 
+*Revised after Session A.*
+
 ```
 Read docs/plans/2026-07-26-improvement-plan.md. Decisions A–F are settled and binding.
-Check the Deviations section — Phase 3a/3b ran in a previous session.
+Check the Deviations section — Sessions A and B have both run.
 
 Execute Phase 3c (3.5), 3d (3.6–3.8) and the tests in 3.9. Do not start Phase 4.
 
@@ -567,15 +640,31 @@ Notes:
 - 3.5 has a mandatory invariant: the new output/state/ index must reproduce exactly
   the same key set as the current full scan of output/scripts/. Assert that against
   the live corpus and show me the result BEFORE switching over.
-- Once 3.5 lands, the output/scripts/ TTL deferred from task 1.2 becomes safe. Add it.
+- 3.5's stated cost is out of date. Phase 0.2 deleted 7,684 junk scripts, so the
+  scan is now ~2,200 files / 19 MB, not 9,903 / 49 MB — roughly 4.4x cheaper than
+  the task describes. Still worth doing, but MEASURE the actual hot-path cost
+  before and after rather than quoting the old figure as the win.
+- output/scripts/ also holds .<show>_source_rotation.json rotation state, which is
+  NOT a script record. The Phase 1 janitor deliberately never touches those; your
+  index and TTL must not either. Note there is a forked pair — .youtube-ai_ and
+  .youtube_ai_ — which is the bug task 4.10 predicts, so do not assume one file
+  per show.
+- Once 3.5 lands, the output/scripts/ TTL deferred from task 1.2 becomes safe. Add
+  it to _janitor_sweep() in admin/scheduler.py, where a comment marks the spot and
+  explains why it was left out.
 - 3.7 matters more than it looks: two months of starvation read as generic
   "Generation failed (exit 1)" in the logs. Cold and failed must be distinguishable.
+  You can still see these in `journalctl -u writ-fm-admin.service`.
 - Restart services yourself.
 
-When done: tick the checkboxes, update Working state and Progress, record Deviations.
+When done: tick the checkboxes, update Working state and Progress, record
+Deviations, and revise the later session prompts in the appendix if anything you
+learned changes them.
 ```
 
 ### Session D — Phase 4
+
+*Revised after Session A.*
 
 ```
 Read docs/plans/2026-07-26-improvement-plan.md. Decisions A–F are settled and binding.
@@ -594,16 +683,42 @@ each subagent prompt.
 Decisions already made: C = delete the Docker/Swarm path outright.
 D = move the 8 dead shows to shows.disabled.yaml, do not delete them.
 
+Deviation D3 is the one that can make this phase delete live code: config/hosts.yaml
+overrides persona.py's Python defaults field by field at import. A constant that
+looks authoritative in code may be dead, and a YAML key that looks like config may
+be the only live definition. Tell every verifier subagent to check for a
+config/*.yaml override before declaring anything unused.
+
+Two candidates already have evidence from Session A, so verify rather than re-derive:
+- 4.2: production calls load_schedule(config/) — the DIRECTORY, not the file.
+  The directory load yields 13 shows; config/schedule.yaml directly yields 11.
+  Consistent with "never loaded" (D7).
+- 4.11: dark_jokes is confirmed not on the base clock and generating into a void (D6).
+
+Task 4.8b is new — the ~32 GB of reclaimable space OUTSIDE the repo that Phase 0
+could not touch. Root is still at 89%. Read its cautions: /root/writ-fm has its own
+output/ corpus and .git history that must be checked for unique content first, and
+none of it is covered by decision A.
+
 Task 4.9 (correcting CLAUDE.md) is not optional cleanup — the file currently tells
 every new session that config/schedule.yaml is the config authority and that
 api_server.py is a standalone service. Both are wrong.
 
-Verify with the full test suite, a clean restart of both services, and `graphify update .`.
+Task 4.8 says "the two stale repo copies in .claude/worktrees/". There are now three
+(imperative-watching-iverson, vibevoice-backend, and Session A's). Check none is in
+use before removing any.
 
-When done: tick the checkboxes, update Working state and Progress, record Deviations.
+Verify with the full test suite (144 tests as of Session A), a clean restart of both
+services, and `graphify update .`.
+
+When done: tick the checkboxes, update Working state and Progress, record
+Deviations, and revise the later session prompts in the appendix if anything you
+learned changes them.
 ```
 
 ### Session E — Phase 5
+
+*Revised after Session A.*
 
 ```
 Read docs/plans/2026-07-26-improvement-plan.md. Decisions A–F are settled and binding.
@@ -621,10 +736,22 @@ hook only fires on the main session.
 5.1 is the one that matters. Everything it needs is already computed inside the
 generator and thrown away.
 
-When done: tick the checkboxes, update Working state and Progress, record Deviations.
+Task 5.4 (disk gauge) is ALREADY DONE — it landed as 1.3 in Session A. Do not
+rebuild it. Follow its shape for the new panels: a cached endpoint in admin/app.py
+(/api/system/disk, 60s cache because it stats every file under output/), a
+computation helper in admin/scheduler.py (disk_usage_report()), and a self-contained
+component in admin/index.html (DiskCard) rendered from DashboardScreen. All three
+panels here can follow that pattern, which also keeps the index.html edits separable
+per subagent.
+
+When done: tick the checkboxes, update Working state and Progress, record
+Deviations, and revise the later session prompts in the appendix if anything you
+learned changes them.
 ```
 
 ### Session F — Phase 6
+
+*Revised after Session A.*
 
 ```
 Read docs/plans/2026-07-26-improvement-plan.md. Decisions A–F are settled and binding.
@@ -642,10 +769,22 @@ model of the module in a single context.
 6.3 is the largest item. If context runs short, land 6.1 and 6.2 and leave 6.3 for
 its own session rather than half-finishing it.
 
-When done: tick the checkboxes, update Working state and Progress, record Deviations.
+For 6.1, the evergreen bank needs prose that will outlive another rebrand: write
+{station_name} rather than the station's name, exactly as host prose now does.
+tests/test_station_naming.py will fail the build if you hardcode it.
+
+The linear clock currently carries five shows — nosleep, sysadmin, alien_theory,
+talesfromtechsupport, youtube-ai — which is what 6.2's top-of-hour briefing slot has
+to fit around.
+
+When done: tick the checkboxes, update Working state and Progress, record
+Deviations, and revise the later session prompts in the appendix if anything you
+learned changes them.
 ```
 
 ### Session G — Phase 7
+
+*Revised after Session A.*
 
 ```
 Read docs/plans/2026-07-26-improvement-plan.md. Decisions A–F are settled and binding.
@@ -663,8 +802,22 @@ a default, so the shim is what makes this safe.
 
 No subagents — the coordination is the hard part and it wants one context.
 
+Session A already did part of layer 1 and some of what 7.1 would have caught:
+- Host prose, config/hosts.yaml, the mood strings and every station_name default
+  on the live path are done. tests/test_station_naming.py now fails the build if
+  a station name is hardcoded in host prose — extend its FORBIDDEN list rather
+  than working around it.
+- Still outstanding and VISIBLE to listeners, per deviation D8: stream_gapless.py
+  -ice_name "WRIT-FM" (shown in every player — needs an Icecast reconnect), the
+  station_id display label at stream_gapless.py:793, and listener-app/index.html
+  (<title> and brand text). Do these in 7.1; they are the last user-facing ones.
+- Test fixtures still say WRIT-FM in tests/test_schedule_voice_defaults.py and
+  tests/test_talk_generator_voice_logic.py. Harmless, but in 7.1's scope.
+
 Verify both services restart clean and the streamer reconnects to Icecast.
 Restart them yourself.
 
-When done: tick the checkboxes, update Working state and Progress, record Deviations.
+When done: tick the checkboxes, update Working state and Progress, record
+Deviations, and revise the later session prompts in the appendix if anything you
+learned changes them.
 ```
