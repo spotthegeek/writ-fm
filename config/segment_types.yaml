@@ -150,8 +150,21 @@ segment_types:
   reddit_storytelling:
     name: Reddit Storytelling
     description: Read a Reddit post as a story, with light performance cues.
-    word_count_min: 1200
-    word_count_max: 2200
+    runtime_minutes_min: 3
+    runtime_minutes_max: 15
+    scale_with_source: true
+    # Calibrated against gemma3:12b, which renders a post at roughly 0.6-0.7x its
+    # source length rather than reading it verbatim. Mapping post size across a
+    # wider span keeps the derived target near what the model actually produces.
+    source_words_min: 300
+    source_words_max: 4000
+    # Posts with less material than this cannot fill runtime_minutes_min without
+    # the model padding and repeating itself, so they are skipped at selection.
+    # Comments are not counted: this type reads the post and ignores comments.
+    min_source_words: 400
+    source_counts_comments: false
+    word_count_min: 380
+    word_count_max: 1900
     multi_voice: false
     prompt_template: 'Read the Reddit post as a story, not a summary.
 
@@ -170,8 +183,17 @@ segment_types:
   reddit_post:
     name: Reddit Post
     description: Radio retelling and discussion of a Reddit thread, including comments.
-    word_count_min: 500
-    word_count_max: 2000
+    runtime_minutes_min: 3
+    runtime_minutes_max: 15
+    scale_with_source: true
+    source_words_min: 250
+    source_words_max: 3000
+    # This type discusses the thread including comments, so a shorter body is
+    # viable when there is a comment pile to work with.
+    min_source_words: 220
+    source_counts_comments: true
+    word_count_min: 380
+    word_count_max: 1900
     multi_voice: false
     prompt_template: 'Turn this Reddit thread into a compelling on-air segment.
 
@@ -279,61 +301,73 @@ segment_types:
     name: News Briefing
     description: Professional podcast-style daily briefing synthesised from multiple
       sources covering a specific topic area.
-    word_count_min: 800
-    word_count_max: 2800
+    runtime_minutes_min: 2.5
+    runtime_minutes_max: 6
+    word_count_min: 350
+    word_count_max: 800
     multi_voice: false
     prompt_template: 'You are producing a professional on-demand audio news podcast
       episode for {show_name}.
 
-      Tone: clear, confident, informative. Not late-night radio — a focused daily briefing.
+      Your job is to report what the sources say — clearly, directly, and without
+      adding your own analysis or opinion on top. Take the source material at face
+      value. Do not second-guess, cast doubt on, or add skeptical qualifiers to claims
+      that appear in the sources. If a source says something happened, report it as
+      having happened.
+
+      Tone: clear, confident, neutral. A focused daily briefing — not commentary.
 
       Structure:
 
-      1. Open with 2-3 sentences framing today''s key themes. No "welcome back" filler.
+      1. Open with 1-2 sentences covering the main stories of the day. Do NOT start
+      with the show name, today''s date, or any "welcome" line — that intro is prepended
+      automatically.
 
-      2. Cover each major story: what happened, why it matters, what is next.
+      2. Cover each major story: what happened and what comes next. You may reflect
+      the significance a story has within its field if the sources convey that — but
+      do not add your own conclusions or opinions beyond what the sources say.
 
-      3. Where sources contradict or add nuance, acknowledge it briefly.
+      3. If sources report conflicting accounts, note both briefly and move on.
 
-      4. Close with one sentence of outlook or synthesis.
+      4. Close with a sentence on what to watch next, drawn from the sources.
 
       Rules:
 
-      - Attribute claims to their source (e.g. "On r/LocalLLaMA...", "via TechCrunch...",
-      "From a recent YouTube video by...").
+      - Credit sources naturally where it aids clarity (e.g. "On r/LocalLLaMA…", "TechCrunch
+      reports…") but do not over-attribute every sentence.
 
       - Do not invent facts not present in the source material.
 
+      - Do not add your own editorial spin: no personal takes, no "this is worrying",
+      no speculation beyond what the sources themselves say.
+
       - Skip trivial or purely promotional items.
 
-      - Use [pause] sparingly — this is a podcast, not late-night radio.
+      - Use [pause] sparingly.
 
       - Output ONLY the spoken words.'
-  daily_briefing:
-    name: Daily Briefing
-    description: Consolidated two-host briefing covering all topic areas — AI, Crypto,
-      Tech, and Australian News.
-    word_count_min: 1200
-    word_count_max: 2200
-    multi_voice: true
-    prompt_template: 'Two hosts — HOST_A and HOST_B — co-present this consolidated
-      daily briefing.
+  jokes:
+    name: Jokes
+    description: A set of jokes presented as a continuous on-air segment.
+    word_count_min: 80
+    word_count_max: 500
+    multi_voice: false
+    items_per_segment_min: 5
+    items_per_segment_max: 10
+    prompt_template: 'Present a set of dark jokes as a continuous on-air segment.
 
-      Format every line with HOST_A: or HOST_B: at the start.
+      Each joke in the SOURCE MATERIAL is separated by "---". Read every joke —
+      do not skip any.
 
-      Guidelines:
+      For each joke: read the setup and punchline verbatim or near-verbatim. Do not
+      paraphrase or summarise — the joke must land, and paraphrasing kills the punchline.
 
-      - Divide topic areas between them naturally. Do not always alternate.
+      Between jokes, use a very short natural transition (one phrase max): "Next one.",
+      "Oh, this is dark.", "Here''s another.", "Ready?", etc.
 
-      - React to each other''s stories with genuine curiosity or a brief observation.
+      Add performance cues sparingly: [pause] before a punchline, [laugh] or [chuckle]
+      after a good one.
 
-      - Provide smooth transitions between topic areas (AI, Crypto, Tech, Australian
-      News).
+      Do not add commentary, explanations, or reactions beyond the cues above.
 
-      - Avoid formal handoff language ("Now over to you for...").
-
-      - Cover the top 2-3 stories from each topic area.
-
-      - Keep the combined runtime to roughly 25-30 minutes of spoken audio.
-
-      Output ONLY the spoken dialogue with HOST_A: and HOST_B: markers.'
+      Output ONLY the spoken words.'

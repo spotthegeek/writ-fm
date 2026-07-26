@@ -4,7 +4,7 @@ import os
 
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "qwen3.5:4b"
+DEFAULT_OLLAMA_MODEL = "gemma3:12b"
 
 DEFAULT_INVENTORY_CACHE_TTL = 300.0
 DEFAULT_MESSAGE_COOLDOWN_SECONDS = 300
@@ -15,6 +15,12 @@ DEFAULT_GOOGLE_TTS_MODEL = "gemini-3.1-flash-tts-preview"
 DEFAULT_GOOGLE_TTS_SAMPLE_RATE = 24000
 DEFAULT_GOOGLE_TTS_TIMEOUT_SECONDS = 300.0
 DEFAULT_GOOGLE_TTS_MAX_RETRIES = 3
+
+# Music bumper generation. Lyria bills per 30s of output, so a 15-30s bumper costs
+# one unit; MiniMax always renders ~130s regardless of the requested duration.
+DEFAULT_MUSIC_BACKEND = "lyria"
+DEFAULT_LYRIA_MODEL = "lyria-002"
+DEFAULT_VERTEX_LOCATION = "us-central1"
 
 DEFAULT_VOICE_BY_BACKEND_AND_ROLE = {
     "kokoro": {
@@ -50,6 +56,27 @@ def ollama_model() -> str:
 
 def minimax_music_model() -> str:
     return os.environ.get("MINIMAX_MUSIC_MODEL", DEFAULT_MINIMAX_MUSIC_MODEL)
+
+
+def music_backend() -> str:
+    """Which provider generates music bumpers: 'lyria' or 'minimax'."""
+    return (os.environ.get("WRIT_MUSIC_BACKEND") or DEFAULT_MUSIC_BACKEND).strip().lower()
+
+
+def lyria_model() -> str:
+    return os.environ.get("LYRIA_MODEL", DEFAULT_LYRIA_MODEL)
+
+
+def vertex_location() -> str:
+    return os.environ.get("GOOGLE_VERTEX_LOCATION", DEFAULT_VERTEX_LOCATION)
+
+
+def vertex_project() -> str:
+    """Vertex AI needs a GCP project; Gemini API keys do not carry one."""
+    return (
+        os.environ.get("GOOGLE_VERTEX_PROJECT", "").strip()
+        or os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip()
+    )
 
 
 def minimax_tts_model() -> str:

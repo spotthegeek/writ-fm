@@ -181,7 +181,7 @@ _inventory_invalidator: Callable[[str | None], None] | None = None
 
 
 _STRUCTURAL_SEGMENT_PREFIXES = (
-    "station_id_", "show_intro_", "show_outro_", "news_briefing_", "daily_briefing_",
+    "station_id_", "show_intro_", "show_outro_", "news_briefing_",
 )
 
 def _count_inventory(directory: Path, show_id: str) -> int:
@@ -427,63 +427,150 @@ def _run_music_generation(show_id: str, count: int, bumper_style: str, job_regis
         cache_invalidator("bumpers")
 
 
-BRIEFING_SHOW_IDS = ["briefing_ai", "briefing_crypto", "briefing_tech", "briefing_news_aus"]
+def _segment_generated_at(f: Path, now: datetime) -> datetime:
+    """Generation time of a segment, from its sidecar, falling back to mtime."""
+    sidecar = f.with_suffix(".json")
+    if sidecar.exists():
+        try:
+            import json as _json
+            generated_at = _json.loads(sidecar.read_text()).get("generated_at")
+            if generated_at:
+                dt = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=now.tzinfo)
+                return dt.astimezone(now.tzinfo)
+        except Exception:
+            pass
+    return datetime.fromtimestamp(f.stat().st_mtime, tz=now.tzinfo)
+
+
+def _segment_times(show_id: str, now: datetime) -> list[tuple[datetime, Path]]:
+    """All talk segments for a show as (generated_at, audio_path), oldest first."""
+    show_dir = TALK_DIR / show_id
+    if not show_dir.exists():
+        return []
+    items = [
+        (_segment_generated_at(f, now), f)
+        for f in show_dir.iterdir()
+        if f.is_file() and f.suffix.lower() in AUDIO_EXTS
+    ]
+    items.sort(key=lambda pair: pair[0])
+    return items
+
+
+def _delete_segment(f: Path) -> None:
+    """Remove an audio segment along with its sidecars."""
+    for path in (f, f.with_suffix(".json"), f.with_suffix(".plays.json")):
+        if path.exists():
+            try:
+                path.unlink()
+            except Exception:
+                pass
 
 
 def _cleanup_expired_segments(show_id: str, max_days: int) -> int:
     """Delete talk segments (audio + sidecar .json + .plays.json) older than max_days.
     Returns count of audio files deleted."""
-    show_dir = TALK_DIR / show_id
-    if not show_dir.exists():
-        return 0
+    now = _station_now()
     cutoff = timedelta(days=max_days)
-    now = datetime.now()
     deleted = 0
-    for f in list(show_dir.iterdir()):
-        if not f.is_file() or f.suffix.lower() not in AUDIO_EXTS:
-            continue
-        sidecar = f.with_suffix(".json")
-        age = None
-        if sidecar.exists():
-            try:
-                import json as _json
-                meta = _json.loads(sidecar.read_text())
-                generated_at = meta.get("generated_at")
-                if generated_at:
-                    age = now - datetime.fromisoformat(generated_at.replace("Z", "+00:00").split("+")[0])
-            except Exception:
-                pass
-        if age is None:
-            age = now - datetime.fromtimestamp(f.stat().st_mtime)
-        if age > cutoff:
-            for path in (f, sidecar, f.with_suffix(".plays.json")):
-                if path.exists():
-                    try:
-                        path.unlink()
-                    except Exception:
-                        pass
+    for generated_at, f in _segment_times(show_id, now):
+        if now - generated_at > cutoff:
+            _delete_segment(f)
             deleted += 1
     return deleted
 
 
-def _briefing_daily_has_deps() -> bool:
-    """Check that at least 2 of 4 category briefings exist with mtime < 26 hours."""
-    now = datetime.now()
-    cutoff = timedelta(hours=26)
-    found = 0
-    for show_id in BRIEFING_SHOW_IDS:
-        show_dir = TALK_DIR / show_id
-        if not show_dir.exists():
+def _stagger_expiry_count(
+    generated: list[datetime],
+    now: datetime,
+    *,
+    max_days: int,
+    target: int,
+    minimum: int,
+) -> int:
+    """How many of the oldest segments to expire early to break up a same-day cluster.
+
+    A show whose whole catalogue was generated on one day also expires on one day:
+    listeners get the same batch for `max_days`, then all of it swaps at once.
+    Dropping one day's slice early lets the normal top-up refill a slice per day,
+    so generation and expiry spread across the window instead of pulsing.
+
+    Returns 0 when there is nothing useful to do.
+    """
+    inventory = len(generated)
+    if inventory < 2 or max_days < 2 or target <= minimum:
+        return 0
+    # Already spread across the window — leave it alone.
+    if len({dt.date() for dt in generated}) >= max_days:
+        return 0
+    # Everything was made today. Expiring now would only be replaced by more of
+    # today's date, so wait until the cluster is at least a day old.
+    if (now - min(generated)).days < 1:
+        return 0
+    # Below the minimum the normal top-up already fires; no need to force it.
+    if inventory <= minimum:
+        return 0
+    slice_size = max(1, (target + max_days - 1) // max_days)
+    # Take at least a day's slice, and enough to reach the minimum so the top-up
+    # runs on this same pass. Never empty the show.
+    return min(max(slice_size, inventory - minimum), inventory - 1)
+
+
+STAGGER_STATE_FILE = PROJECT_ROOT / "output" / ".stagger_last_run"
+
+
+def _stagger_ran_today(today) -> bool:
+    """Has the stagger pass already run today? Persisted, because the admin service
+    restarts often and an in-memory flag would expire a fresh slice every restart."""
+    try:
+        return STAGGER_STATE_FILE.read_text().strip() == today.isoformat()
+    except Exception:
+        return False
+
+
+def _record_stagger_run(today) -> None:
+    try:
+        STAGGER_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        STAGGER_STATE_FILE.write_text(today.isoformat())
+    except Exception as e:
+        print(f"[scheduler] Stagger: could not record run date: {e}")
+
+
+def _stagger_segment_ages() -> int:
+    """Expire a day's slice early for shows whose stock is bunched on one day."""
+    try:
+        data = _load_schedule()
+    except Exception as e:
+        print(f"[scheduler] Stagger: failed to load schedule: {e}")
+        return 0
+    now = _station_now()
+    total = 0
+    for show_id, show in (data.get("shows") or {}).items():
+        talk_cfg = {**DEFAULT_TALK_CONFIG, **((show.get("generation") or {}).get("talk") or {})}
+        if not talk_cfg["enabled"]:
             continue
-        candidates = list(show_dir.glob("news_briefing_*.json"))
-        if not candidates:
-            candidates = list(show_dir.glob("*.json"))
-        for jf in candidates:
-            age = now - datetime.fromtimestamp(jf.stat().st_mtime)
-            if age < cutoff:
-                found += 1
-                break
-    return found >= 2
+        max_days = ((show.get("content_lifecycle") or {}).get("talk") or {}).get("max_days")
+        if not max_days:
+            continue
+        items = _segment_times(show_id, now)
+        n = _stagger_expiry_count(
+            [t for t, _ in items],
+            now,
+            max_days=int(max_days),
+            target=int(talk_cfg["target_inventory"]),
+            minimum=int(talk_cfg["min_inventory"]),
+        )
+        if not n:
+            continue
+        for _, f in items[:n]:
+            _delete_segment(f)
+        total += n
+        print(
+            f"[scheduler] Stagger: expired {n} oldest segment(s) for {show_id} "
+            f"to spread generation over {max_days} day(s)"
+        )
+    return total
 
 
 def _newest_segment_time(show_dir: Path) -> datetime | None:
@@ -568,10 +655,6 @@ def _check_and_generate(job_registry: dict):
             if already_running:
                 continue
 
-            if show_id == "briefing_daily" and not _briefing_daily_has_deps():
-                state.add_log(show_id, "talk", "Waiting for category briefings (need ≥2 of 4 recent)")
-                continue
-
             inventory = _count_inventory(TALK_DIR, show_id)
             target = int(talk_cfg["target_inventory"])
             minimum = int(talk_cfg["min_inventory"])
@@ -579,8 +662,10 @@ def _check_and_generate(job_registry: dict):
             time_after = talk_cfg.get("time_after") or None
 
             if cadence == "continuous":
-                # Top up whenever inventory drops below minimum
-                should_run = inventory < minimum
+                # Top up once inventory reaches the minimum. This is `<=`, not `<`:
+                # a show sitting exactly ON its minimum with nothing expiring can
+                # never fall below it, and used to stall there forever.
+                should_run = inventory <= minimum and inventory < target
                 needed = target - inventory
             else:
                 # Time-based (daily/weekly/…): cadence drives generation, not inventory.
@@ -617,7 +702,8 @@ def _check_and_generate(job_registry: dict):
             cadence = music_cfg.get("cadence", "continuous")
 
             if cadence == "continuous":
-                should_run = inventory < minimum
+                # `<=` for the same reason as talk: exactly-at-minimum is a stall.
+                should_run = inventory <= minimum and inventory < target
                 needed = target - inventory
             else:
                 should_run = _cadence_ok(show_id, "music", cadence)
@@ -647,9 +733,22 @@ def run_scheduler(job_registry: dict, check_interval: int = 300):
     print(f"[scheduler] Started. Check interval: {check_interval}s")
     _seed_last_run_from_fs()
     last_cleanup = 0.0
+    last_stagger_day = None
 
     while state.running:
         state.last_check = _station_now()
+
+        # Once per station-day, before the inventory check, so anything expired
+        # early is topped back up on this same pass.
+        today = state.last_check.date()
+        if last_stagger_day != today and not _stagger_ran_today(today):
+            last_stagger_day = today
+            try:
+                _stagger_segment_ages()
+                _record_stagger_run(today)
+            except Exception as e:
+                print(f"[scheduler] Stagger error: {e}")
+
         try:
             _check_and_generate(job_registry)
         except Exception as e:

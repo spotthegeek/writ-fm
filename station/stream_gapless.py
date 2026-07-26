@@ -1352,7 +1352,7 @@ def run():
     log("=== WRIT-FM Talk Radio Streamer ===")
     log(f"Talk segments: {TALK_SEGMENTS_DIR}")
     log(f"AI bumpers: {AI_BUMPERS_DIR}")
-    log(f"Streaming to: {ICECAST_URL}")
+    log(f"Streaming to: {ICECAST_HOST}:{ICECAST_PORT}{ICECAST_MOUNT}")
 
     # Block until any previously running instance exits cleanly.
     # This prevents two simultaneous starts (e.g. systemd double-start on

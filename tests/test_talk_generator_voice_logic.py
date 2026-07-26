@@ -174,7 +174,7 @@ def test_render_single_voice_minimax_chunks_long_scripts(monkeypatch, tmp_path: 
         return True
 
     fake_minimax.generate_speech = fake_generate_speech
-    sys.modules["minimax_tts"] = fake_minimax
+    sys.modules["station.minimax_tts"] = fake_minimax
 
     def fake_run(cmd, capture_output=True, text=True):
         out_path = Path(cmd[-1])
@@ -193,7 +193,7 @@ def test_render_single_voice_minimax_chunks_long_scripts(monkeypatch, tmp_path: 
             speed=1.0,
         )
     finally:
-        sys.modules.pop("minimax_tts", None)
+        sys.modules.pop("station.minimax_tts", None)
 
     assert ok is True
     assert len(calls) > 1

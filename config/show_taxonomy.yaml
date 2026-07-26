@@ -30,3 +30,6 @@ source_types:
 - id: rss
   name: RSS Feed
   category: feed
+- id: joke_api
+  name: Joke API
+  category: api

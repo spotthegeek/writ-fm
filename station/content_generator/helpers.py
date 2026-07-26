@@ -15,6 +15,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from shared.settings import ollama_model as default_ollama_model
 from station.time_utils import station_now
 
 DEFAULT_NEWS_FEEDS = (
@@ -58,69 +59,115 @@ def get_time_of_day(hour: int | None = None, profile: str = "default") -> str:
     return "late_night"
 
 
+# All interjection tags natively supported by MiniMax speech-2.8-hd.
+_MM_INTERJECTIONS: frozenset[str] = frozenset({
+    "(laughs)", "(chuckle)", "(sighs)", "(coughs)", "(clear-throat)",
+    "(groans)", "(breath)", "(pant)", "(inhale)", "(exhale)", "(gasps)",
+    "(sniffs)", "(snorts)", "(burps)", "(lip-smacking)", "(humming)",
+    "(hissing)", "(emm)", "(sneezes)", "(yawns)",
+})
+
+
+# MiniMax native pause markup, e.g. "<#0.5#>". It reaches non-MiniMax backends two
+# ways: the model emits it directly on a MiniMax show, or a MiniMax render falls back
+# to another backend. Kokoro has no idea what it is and reads it aloud as
+# "number zero point five number", so every non-MiniMax path must neutralise it.
+_MM_PAUSE = re.compile(r"<\s*#\s*\d+(?:\.\d+)?\s*#\s*>")
+
+
+# Matches speaker-label prefixes like "Host:", "HOST_A:", "Dr. Resonance:", "Vector (laughing):"
+_SPEAKER_PREFIX = re.compile(
+    r"^[A-Z][A-Za-z_]*(?:\s+[A-Z][A-Za-z_]*){0,3}(?:\s*\([^)]+\))?:\s+",
+    re.MULTILINE,
+)
+
+
 def preprocess_for_tts(text: str, *, include_cough: bool = True, backend: str = "kokoro") -> str:
     backend = (backend or "kokoro").strip().lower()
 
     if backend == "minimax":
         text = text or ""
-        # Translate our legacy cue tags to MiniMax-native interjection format.
+        # Strip speaker-label prefixes — MiniMax reads them as literal text.
+        text = _SPEAKER_PREFIX.sub("", text)
+        # speech-2.8-hd supports: <#n#> timed pauses and (interjection) tags.
+        # Translate generic script cues to native MiniMax formats.
         tag_map = {
-            "[laugh]": "(laughs)",
+            "[pause]":   "<#0.5#>",
+            "[laugh]":   "(laughs)",
             "[chuckle]": "(chuckle)",
-            "[cough]": "(coughs)" if include_cough else "",
-            "[sigh]": "(sighs)",
-            "[pause]": "<#0.4#>",
+            "[sigh]":    "(sighs)",
+            "[cough]":   "(coughs)",
+            "[gasp]":    "(gasps)",
+            "[breath]":  "(breath)",
+            "[groan]":   "(groans)",
+            "[exhale]":  "(exhale)",
+            "[inhale]":  "(inhale)",
+            "[hum]":     "(humming)",
+            "[yawn]":    "(yawns)",
+            "[sniff]":   "(sniffs)",
         }
         for src, dst in tag_map.items():
             text = re.sub(re.escape(src), dst, text, flags=re.IGNORECASE)
-        # Strip remaining square-bracket production cues.
-        text = re.sub(r"\[(?![^\]]*\])([^\]]+)\]", " ", text)
-        # Strip standalone stage-direction lines (whole line is a parenthetical).
-        lines = []
-        for raw_line in text.splitlines():
-            line = raw_line.strip()
-            if line.startswith("(") and line.endswith(")"):
-                continue
-            lines.append(raw_line)
-        text = "\n".join(lines)
-        # Strip inline parentheticals longer than a short vocal interjection.
-        # MiniMax-native cues (laughs, sighs, etc.) have ≤10 chars of content;
-        # production notes like "(synthetic pad running in the background)" are
-        # much longer and cannot be actioned by TTS.
-        text = re.sub(r"\s*\([^)]{12,}\)", " ", text)
+        # Strip remaining unknown square-bracket production cues.
+        text = re.sub(r"\[[^\]]+\]", " ", text)
+        # Keep only known interjection tags; replace all other parentheticals with a space.
+        text = re.sub(
+            r"\([^)]+\)",
+            lambda m: m.group(0) if m.group(0).lower() in _MM_INTERJECTIONS else " ",
+            text,
+        )
         text = text.replace('"', "")
+        text = re.sub(r"[ \t]{2,}", " ", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
 
     if backend == "google":
         text = text or ""
-        # Strip standalone stage-direction lines.
+        # Strip speaker-label prefixes — Gemini reads them as literal text.
+        text = _SPEAKER_PREFIX.sub("", text)
+        text = _MM_PAUSE.sub("...", text)
+        # Gemini TTS is instruction-following: short parenthetical acting notes
+        # embedded in the text are interpreted as spoken directions.
+        tag_map = {
+            "[pause]":   "...",
+            "[laugh]":   "(laughs)",
+            "[chuckle]": "(chuckle)",
+            "[sigh]":    "(sighs)",
+            "[cough]":   "(clears throat)",
+            "[gasp]":    "(gasps)",
+            "[breath]":  "(exhales)",
+            "[groan]":   "(groans)",
+            "[exhale]":  "(exhales)",
+            "[inhale]":  "(inhales)",
+            "[hum]":     "(hums)",
+            "[yawn]":    "(yawns)",
+            "[sniff]":   "(sniffs)",
+            "[whisper]": "(whispers)",
+        }
+        for src, dst in tag_map.items():
+            text = re.sub(re.escape(src), dst, text, flags=re.IGNORECASE)
+        # Strip remaining unknown square-bracket production cues.
+        text = re.sub(r"\[[^\]]+\]", " ", text)
+        # Preserve short standalone parentheticals — Gemini interprets them as
+        # acting directions. Strip only long ones (production notes).
         lines = []
         for raw_line in text.splitlines():
             line = raw_line.strip()
-            if line.startswith("(") and line.endswith(")"):
+            if line.startswith("(") and line.endswith(")") and len(line) > 20:
                 continue
             lines.append(raw_line)
         text = "\n".join(lines)
-        # Strip inline production-direction parentheticals. Google interprets
-        # short vocal cues like "(sighs)" naturally but cannot produce background
-        # audio, so strip anything longer than a short acting note.
+        # Strip long inline parentheticals (production notes, not acting cues).
         text = re.sub(r"\s*\([^)]{25,}\)", " ", text)
-        # Strip square-bracket production cues.
-        text = re.sub(r"\[[^\]]+\]", " ", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
 
-    # --- Kokoro (local) path: strip everything the model can't interpret ---
+    # --- Kokoro (local) path: no native syntax — translate to spoken approximations ---
 
     # Strip speaker-label prefixes from line starts (e.g. "Zara:", "HOST_A:",
     # "Liminal Operator:").  Kokoro reads them literally as text.
-    # Pattern: 1-4 title-case or ALL_CAPS words, optional stage cue, then colon+space.
-    _SPEAKER_PREFIX = re.compile(
-        r"^[A-Z][A-Za-z_]*(?:\s+[A-Z][A-Za-z_]*){0,3}(?:\s*\([^)]+\))?:\s+",
-        re.MULTILINE,
-    )
     text = _SPEAKER_PREFIX.sub("", text or "")
+    text = _MM_PAUSE.sub("...", text)
 
     # Drop standalone stage-direction lines.
     lines = []
@@ -131,18 +178,31 @@ def preprocess_for_tts(text: str, *, include_cough: bool = True, backend: str = 
         lines.append(raw_line)
     text = "\n".join(lines)
 
-    # Strip inline stage-direction parentheticals, e.g. "(laughs)", "(speaking softly)".
-    # Match only lowercase-only content (no digits, no capitals) up to ~50 chars.
+    # Strip inline stage-direction parentheticals.
     text = re.sub(r"\s*\([a-z][a-z,\s]{0,50}\)", " ", text)
 
-    # Remove any remaining bracketed production cues except the few we translate.
-    text = re.sub(r"\[(?!pause\]|chuckle\]|cough\])[^\]]+\]", " ", text, flags=re.IGNORECASE)
-    text = text.replace("[pause]", "...")
-    text = text.replace("[chuckle]", "heh...")
-    text = text.replace("[laugh]", "heh...")
-    text = text.replace("[sigh]", "hmm...")
+    # Translate known cues to spoken approximations; strip everything else.
+    tag_map_kokoro = {
+        "[pause]":   "...",
+        "[laugh]":   "heh...",
+        "[chuckle]": "heh...",
+        "[sigh]":    "hmm...",
+        "[gasp]":    "oh...",
+        "[groan]":   "ugh...",
+        "[exhale]":  "...",
+        "[inhale]":  "...",
+        "[hum]":     "hmm...",
+        "[yawn]":    "...",
+        "[sniff]":   "...",
+        "[whisper]": "",
+    }
     if include_cough:
-        text = text.replace("[cough]", "ahem...")
+        tag_map_kokoro["[cough]"] = "ahem..."
+    for src, dst in tag_map_kokoro.items():
+        text = re.sub(re.escape(src), dst, text, flags=re.IGNORECASE)
+    # Strip any remaining unknown bracket cues.
+    text = re.sub(r"\[[^\]]+\]", " ", text)
+    text = text.replace("[breath]", "")
     text = text.replace('"', "")
     text = re.sub(r"[ \t]{2,}", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -185,7 +245,9 @@ def _llm_shorten(text: str, max_chars: int) -> str:
         f"Title: {text}"
     )
     try:
-        result = run_claude(prompt, timeout=20, temperature=0.2, num_predict=64, strip_quotes=True)
+        # think=False: a reasoning model spends all 64 tokens thinking and returns nothing.
+        result = run_claude(prompt, timeout=20, temperature=0.2, num_predict=64,
+                            strip_quotes=True, think=False)
         if result:
             result = result.strip().strip('"').strip("'")
             if result and len(result) <= max_chars + 5:
@@ -206,12 +268,13 @@ def run_claude(
     temperature: float = 0.8,
     num_predict: int = 8192,
     num_ctx: int | None = None,
+    think: bool | None = None,
 ) -> str | None:
     # 1. Try Ollama (if configured)
     import json
     ollama_url = os.environ.get("OLLAMA_URL")
     if ollama_url:
-        ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
+        ollama_model = os.environ.get("OLLAMA_MODEL") or default_ollama_model()
         try:
             options: dict = {
                 "num_predict": num_predict,
@@ -220,14 +283,22 @@ def run_claude(
             # num_ctx must cover prompt tokens + output tokens; auto-size if not given.
             ctx = num_ctx or (max(16384, len(prompt) // 3 + num_predict))
             options["num_ctx"] = ctx
+            payload = {
+                "model": ollama_model,
+                "prompt": prompt,
+                "stream": False,
+                "options": options,
+            }
+            # Only sent when the caller is explicit. On reasoning models (qwen3.x) a small
+            # num_predict is consumed entirely by thinking tokens, leaving `response` empty —
+            # so short utility calls pass think=False. Long-form script calls must NOT: with
+            # reasoning disabled the model runs to the num_predict cap and loops badly
+            # (measured 6.7k-7.9k words against a 1200-2200 target, one 12-gram repeated 94x).
+            if think is not None:
+                payload["think"] = think
             req = urllib.request.Request(
                 f"{ollama_url.rstrip('/')}/api/generate",
-                data=json.dumps({
-                    "model": ollama_model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": options,
-                }).encode('utf-8'),
+                data=json.dumps(payload).encode('utf-8'),
                 headers={'Content-Type': 'application/json'}
             )
             with urllib.request.urlopen(req, timeout=timeout) as response:

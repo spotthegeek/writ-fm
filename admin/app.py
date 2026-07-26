@@ -147,6 +147,34 @@ _ADMIN_SESSION_DAYS = admin_session_days()
 _ADMIN_COOKIE = "writ_admin_session"
 _ADMIN_SECRET = secrets.token_bytes(32)  # random per-process; restarts invalidate all sessions
 
+if not _ADMIN_AUTH_ENABLED:
+    print("[admin] WARNING: WRIT_ADMIN_PASSWORD is not set — admin UI is disabled. Set it to enable access.")
+
+_NO_AUTH_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Unavailable</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#0f0f0f;color:#f0f0f0;display:flex;align-items:center;justify-content:center;height:100vh}
+.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:36px 40px;width:380px}
+h1{font-size:17px;font-weight:600;margin-bottom:16px;color:#f0f0f0;letter-spacing:-.01em}
+.accent{color:oklch(0.52 0.21 16)}
+p{font-size:13px;color:#999;line-height:1.6;margin-bottom:10px}
+code{background:#111;border:1px solid #2a2a2a;border-radius:4px;padding:2px 6px;font-size:12px;color:#f0f0f0}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1><span class="accent">Crouch</span><span style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin-left:4px;opacity:.7">FM</span> &nbsp;Admin</h1>
+  <p>The admin interface is not configured.</p>
+  <p>Set the <code>WRIT_ADMIN_PASSWORD</code> environment variable and restart the service to enable access.</p>
+</div>
+</body>
+</html>"""
+
 _LOGIN_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -199,7 +227,9 @@ def _verify_admin_token(token: str) -> bool:
 class AdminAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if not _ADMIN_AUTH_ENABLED:
-            return await call_next(request)
+            if request.url.path.startswith("/api/"):
+                return JSONResponse({"error": "Admin not configured. Set WRIT_ADMIN_PASSWORD."}, status_code=503)
+            return HTMLResponse(_NO_AUTH_HTML, status_code=503)
         path = request.url.path
         if path in ("/login", "/logout", "/favicon.ico") or path.startswith("/static/"):
             return await call_next(request)
@@ -2503,9 +2533,9 @@ class GenerationConfig(BaseModel):
     music: dict = {}
 
 
-_BRIEFING_SHOW_IDS = {"briefing_ai", "briefing_crypto", "briefing_tech", "briefing_news_aus", "briefing_daily"}
+_BRIEFING_SHOW_IDS = {"briefing_ai", "briefing_crypto", "briefing_tech", "briefing_news_aus"}
 _BRIEFING_AUDIO_EXTS = {".wav", ".mp3", ".flac"}
-_BRIEFING_ORDER = ["briefing_ai", "briefing_crypto", "briefing_tech", "briefing_news_aus", "briefing_daily"]
+_BRIEFING_ORDER = ["briefing_ai", "briefing_crypto", "briefing_tech", "briefing_news_aus"]
 
 
 def _briefing_last_generated(show_id: str) -> str | None:

@@ -23,7 +23,25 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 from station.schedule import load_schedule, merge_playback_sequence
 from station.time_utils import station_now, station_iso_now
-from station.music_gen_client import generate_music, is_server_available
+from shared.settings import music_backend, lyria_model, minimax_music_model
+
+
+def _music_client():
+    """Resolve the configured music provider. Selected at call time, not import
+    time, so switching WRIT_MUSIC_BACKEND does not require a code change."""
+    if music_backend() == "minimax":
+        from station import music_gen_client as client
+        return client, minimax_music_model()
+    from station import lyria_music_client as client
+    return client, lyria_model()
+
+
+def generate_music(*args, **kwargs) -> bool:
+    return _music_client()[0].generate_music(*args, **kwargs)
+
+
+def is_server_available() -> bool:
+    return _music_client()[0].is_server_available()
 from station.content_generator.helpers import run_claude
 from station.content_generator.persona import get_host
 
@@ -543,12 +561,12 @@ def generate_one_bumper(show_id: str, verbose: bool = True,
             "bumper_max_seconds": bumper_max,
             "instrumental": instrumental,
             "voice": "instrumental" if instrumental else "vocal",
-            "generation_backend": "music-gen",
+            "generation_backend": music_backend(),
             "backend_origin": "cloud",
             "generated_at": station_iso_now(),
             "generation_seconds": round(elapsed, 1),
             "ai_generated": True,
-            "model": "ace-step",
+            "model": _music_client()[1],
         }
         meta_path.write_text(json.dumps(meta, indent=2))
         if verbose:
@@ -593,7 +611,16 @@ def main():
         return
 
     if not is_server_available():
-        print("MINIMAX_TOKEN_PLAN_API_KEY is not set — cannot generate music")
+        backend = music_backend()
+        if backend == "minimax":
+            print("MINIMAX_TOKEN_PLAN_API_KEY is not set — cannot generate music")
+        else:
+            print(
+                f"Music backend '{backend}' is not configured — cannot generate music.\n"
+                "Lyria needs GOOGLE_VERTEX_PROJECT plus either "
+                "GOOGLE_APPLICATION_CREDENTIALS (service-account JSON with "
+                "roles/aiplatform.user) or GOOGLE_VERTEX_ACCESS_TOKEN."
+            )
         sys.exit(1)
 
     if args.all:
