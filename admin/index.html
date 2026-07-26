@@ -521,7 +521,7 @@ const LibColHead = ({ t }) => (
 );
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-const SEG_TYPE_LABEL = { reddit_storytelling: "Storytelling", reddit_post: "Reddit", news_briefing: "Briefing", daily_briefing: "Daily Briefing", youtube: "YouTube", deep_dive: "Deep Dive", panel: "Panel", interview: "Interview", story: "Story", news_analysis: "Analysis", listener_mailbag: "Mailbag", show_intro: "Intro", show_outro: "Outro", station_id: "Station ID", music_bumper: "Music" };
+const SEG_TYPE_LABEL = { reddit_storytelling: "Storytelling", reddit_post: "Reddit", news_briefing: "Briefing", youtube: "YouTube", deep_dive: "Deep Dive", panel: "Panel", interview: "Interview", story: "Story", news_analysis: "Analysis", listener_mailbag: "Mailbag", show_intro: "Intro", show_outro: "Outro", station_id: "Station ID", music_bumper: "Music" };
 const TTS_LABEL = { kokoro: "Kokoro", kokoro_fallback: "Kokoro", google: "Google TTS", minimax: "MiniMax", youtube_ingest: "YouTube", "music-gen": "MusicGen", "ace-step": "MusicGen" };
 const TTS_COLOR = { kokoro: "#3b82f6", kokoro_fallback: "#3b82f6", google: "#22c55e", minimax: "#a855f7", youtube_ingest: "#ef4444", "music-gen": "#f97316", "ace-step": "#f97316" };
 
@@ -536,6 +536,76 @@ const fmtActivityDate = (iso) => {
   if (sameDay) return `Today ${time}`;
   const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   return `${months[d.getMonth()]} ${d.getDate()}, ${time}`;
+};
+
+// Disk gauge. Root hit 99% in July 2026 with nothing surfacing it — the streamer
+// keeps playing from its queue for about an hour after writes start failing, so a
+// full disk looks like a healthy station until the queue drains.
+const DISK_STATE_COLOR = { ok: "#22c55e", warning: "#f59e0b", critical: "#ef4444" };
+
+const fmtBytes = (n) => {
+  if (!n && n !== 0) return "—";
+  const gb = n / 1073741824;
+  if (gb >= 1) return `${gb.toFixed(1)} GB`;
+  const mb = n / 1048576;
+  if (mb >= 1) return `${mb.toFixed(0)} MB`;
+  return `${(n / 1024).toFixed(0)} KB`;
+};
+
+const DiskCard = ({ t }) => {
+  const [disk, , , reloadDisk] = useApi("/api/system/disk");
+  useInterval(reloadDisk, 60000);
+
+  if (!disk || !disk.total_bytes) return null;
+  const color = DISK_STATE_COLOR[disk.state] || t.textMuted;
+  const breakdown = Object.entries(disk.output_breakdown || {})
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => b[1] - a[1]);
+  const outputMax = breakdown.length ? breakdown[0][1] : 0;
+
+  return (
+    <Card t={t} style={{ padding: "16px 18px", marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
+        <div style={{ fontSize: 10.5, color: t.textFaint, textTransform: "uppercase", letterSpacing: "0.06em" }}>Disk</div>
+        {disk.state !== "ok" && (
+          <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: `${color}20`, color, fontWeight: 600, textTransform: "uppercase" }}>
+            {disk.state}
+          </span>
+        )}
+        <span style={{ marginLeft: "auto", fontSize: 11, color: t.textFaint, fontFamily: "'DM Mono',monospace" }}>
+          output/ {fmtBytes(disk.output_bytes)}
+        </span>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 24, fontWeight: 600, color, letterSpacing: "-0.02em" }}>{fmtBytes(disk.free_bytes)}</span>
+        <span style={{ fontSize: 12, color: t.textMuted }}>free of {fmtBytes(disk.total_bytes)}</span>
+        <span style={{ marginLeft: "auto", fontSize: 12, color: t.textMuted, fontFamily: "'DM Mono',monospace" }}>{disk.percent_used}% used</span>
+      </div>
+
+      <div style={{ height: 6, background: t.border, borderRadius: 99, overflow: "hidden", marginBottom: breakdown.length ? 14 : 0 }}>
+        <div style={{ height: "100%", width: `${Math.min(100, disk.percent_used)}%`, background: color, borderRadius: 99, transition: "width 0.4s" }} />
+      </div>
+
+      {breakdown.length > 0 && (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <tbody>
+            {breakdown.map(([name, bytes]) => (
+              <tr key={name}>
+                <td style={{ padding: "3px 0", color: t.textMuted, width: 140 }}>{name}</td>
+                <td style={{ padding: "3px 8px" }}>
+                  <div style={{ height: 4, background: t.border, borderRadius: 99, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${outputMax ? (bytes / outputMax) * 100 : 0}%`, background: t.accent, borderRadius: 99 }} />
+                  </div>
+                </td>
+                <td style={{ padding: "3px 0", textAlign: "right", color: t.textFaint, fontFamily: "'DM Mono',monospace", width: 70 }}>{fmtBytes(bytes)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Card>
+  );
 };
 
 const DashboardScreen = ({ t, onNav, npTopic, npChannel, npTitle: npTitleProp, npShow: npShowProp, npType, elapsed, npTotal }) => {
@@ -592,6 +662,8 @@ const DashboardScreen = ({ t, onNav, npTopic, npChannel, npTitle: npTitleProp, n
           </Card>
         ))}
       </div>
+
+      <DiskCard t={t} />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
         <Card t={t} style={{ padding: "16px 18px" }}>
@@ -833,6 +905,7 @@ const GenerateScreen = ({ t, setStatus, shows }) => {
   const [triggerLogs, setTriggerLogs] = useState({});  // jobId → log text
   const [triggerStatuses, setTriggerStatuses] = useState({}); // jobId → status
   const triggerPollRefs = useRef({});
+  const [isGeneratingAll, setIsGeneratingAll] = useState(false);
 
   const showList = shows ? Object.values(shows) : [];
   const selectedShow = form.show_id ? shows?.[form.show_id] : showList[0];
@@ -921,6 +994,78 @@ const GenerateScreen = ({ t, setStatus, shows }) => {
     triggerPollRefs.current[jid] = poll;
   }, [shows]);
 
+  const triggerShowAll = useCallback(async (showId) => {
+    const showName = shows?.[showId]?.name || showId;
+    setStatus(`Generating all for ${showName}…`, "running");
+    let res;
+    try {
+      res = await api("POST", `/api/scheduler/trigger/${showId}`);
+    } catch (e) {
+      setStatus("Trigger failed: " + e.message, "error");
+      return;
+    }
+    const jobIds = res.job_ids || (res.job_id ? [res.job_id] : []);
+    const types = ["talk", "music"];
+    jobIds.forEach((jid, i) => {
+      if (!jid) return;
+      const type = types[i] || "talk";
+      const key = `${showId}|${type}`;
+      setTriggerJobs(j => ({ ...j, [key]: jid }));
+      setTriggerLogs(l => ({ ...l, [jid]: "Starting…" }));
+      setTriggerStatuses(s => ({ ...s, [jid]: "running" }));
+      const poll = setInterval(async () => {
+        try {
+          const job = await api("GET", `/api/generate/jobs/${jid}`);
+          setTriggerLogs(l => ({ ...l, [jid]: (job.log || []).join("\n") || "Starting…" }));
+          setTriggerStatuses(s => ({ ...s, [jid]: job.status }));
+          if (job.status === "completed" || job.status === "failed") {
+            clearInterval(poll);
+            delete triggerPollRefs.current[jid];
+            setTriggerJobs(j => { const n = {...j}; delete n[key]; return n; });
+            reloadSched();
+          }
+        } catch { clearInterval(poll); delete triggerPollRefs.current[jid]; }
+      }, 2000);
+      triggerPollRefs.current[jid] = poll;
+    });
+    if (jobIds.length) setStatus(`Generating talk + music for ${showName}…`, "running");
+  }, [shows]);
+
+  const generateAll = useCallback(async () => {
+    setIsGeneratingAll(true);
+    setStatus("Triggering all shows…", "running");
+    try {
+      const res = await api("POST", "/api/scheduler/trigger-all");
+      const results = res.results || [];
+      for (const { show_id, content_type, job_id: jid } of results) {
+        if (!jid) continue;
+        const key = `${show_id}|${content_type}`;
+        setTriggerJobs(j => ({ ...j, [key]: jid }));
+        setTriggerLogs(l => ({ ...l, [jid]: "Starting…" }));
+        setTriggerStatuses(s => ({ ...s, [jid]: "running" }));
+        const poll = setInterval(async () => {
+          try {
+            const job = await api("GET", `/api/generate/jobs/${jid}`);
+            setTriggerLogs(l => ({ ...l, [jid]: (job.log || []).join("\n") || "Starting…" }));
+            setTriggerStatuses(s => ({ ...s, [jid]: job.status }));
+            if (job.status === "completed" || job.status === "failed") {
+              clearInterval(poll);
+              delete triggerPollRefs.current[jid];
+              setTriggerJobs(j => { const n = {...j}; delete n[key]; return n; });
+              reloadSched();
+            }
+          } catch { clearInterval(poll); delete triggerPollRefs.current[jid]; }
+        }, 2000);
+        triggerPollRefs.current[jid] = poll;
+      }
+      setStatus(results.length ? `Generating ${results.length} jobs across all shows…` : "Nothing to generate", results.length ? "running" : "done");
+    } catch (e) {
+      setStatus("Generate all failed: " + e.message, "error");
+    } finally {
+      setIsGeneratingAll(false);
+    }
+  }, [shows]);
+
   const tabs = [{ id: "manual", label: "Manual Generate" }, { id: "schedules", label: "Auto-Generate" }, { id: "briefings", label: "Briefings" }, { id: "activity", label: "Activity Log" }];
 
   const BRIEFING_SHOWS = [
@@ -928,14 +1073,16 @@ const GenerateScreen = ({ t, setStatus, shows }) => {
     { id: "briefing_crypto",   label: "Crypto Briefing" },
     { id: "briefing_tech",     label: "Tech Briefing" },
     { id: "briefing_news_aus", label: "Australian News" },
-    { id: "briefing_daily",    label: "Daily Briefing" },
   ];
   const [bfJobs, setBfJobs] = useState({});      // show_id → jobId
   const [bfLogs, setBfLogs] = useState({});      // jobId → log text
   const [bfStatuses, setBfStatuses] = useState({}); // jobId → status
-  const [bfLastGen, setBfLastGen] = useState({}); // show_id → {last_generated_at, count}
+  const [bfLastGen, setBfLastGen] = useState({}); // show_id → {last_generated_at, count, time_after}
   const bfPollRefs = useRef({});
   useEffect(() => () => Object.values(bfPollRefs.current).forEach(clearInterval), []);
+
+  const [bfCategoryTime, setBfCategoryTime] = useState("07:30");
+  const [bfScheduleSaving, setBfScheduleSaving] = useState(false);
 
   const fetchBriefingStatuses = useCallback(async () => {
     try {
@@ -943,8 +1090,22 @@ const GenerateScreen = ({ t, setStatus, shows }) => {
       const map = {};
       (data.briefings || []).forEach(b => { map[b.show_id] = b; });
       setBfLastGen(map);
+      const catTime = data.briefings?.find(b => b.show_id === "briefing_ai")?.time_after;
+      if (catTime) setBfCategoryTime(catTime);
     } catch {}
   }, []);
+
+  const saveBriefingSchedule = useCallback(async () => {
+    setBfScheduleSaving(true);
+    try {
+      await api("PUT", "/api/briefings/schedule", { category_time_after: bfCategoryTime });
+      setStatus("Briefing schedule saved", "done");
+    } catch (e) {
+      setStatus("Save failed: " + e.message, "error");
+    } finally {
+      setBfScheduleSaving(false);
+    }
+  }, [bfCategoryTime]);
 
   const fmtBriefingDate = (iso) => {
     if (!iso) return null;
@@ -1155,7 +1316,13 @@ const GenerateScreen = ({ t, setStatus, shows }) => {
 
       {tab === "schedules" && (
         <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
-          <p style={{ fontSize: 13, color: t.textMuted, marginBottom: 16 }}>The scheduler checks inventory every 5 minutes and generates when below the minimum. Edit enabled/disabled and thresholds via Shows → Automation tab.</p>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, marginBottom: 16 }}>
+            <p style={{ fontSize: 13, color: t.textMuted, margin: 0 }}>The scheduler checks inventory every 5 minutes and generates when below the minimum. Edit enabled/disabled and thresholds via Shows → Automation tab.</p>
+            <button onClick={generateAll} disabled={isGeneratingAll}
+              style={{ flexShrink: 0, padding: "6px 14px", borderRadius: 7, border: "none", background: isGeneratingAll ? t.border : t.accent, color: isGeneratingAll ? t.textMuted : "#fff", fontSize: 12, cursor: isGeneratingAll ? "default" : "pointer", fontFamily: "'DM Sans',sans-serif", display: "flex", alignItems: "center", gap: 5, transition: "all 0.15s" }}>
+              {isGeneratingAll ? <><Spinner size={11} color={t.textMuted} /> Triggering…</> : "⚡ Generate All"}
+            </button>
+          </div>
 
           {/* Active trigger job logs */}
           {Object.entries(triggerJobs).map(([key, jid]) => {
@@ -1192,6 +1359,7 @@ const GenerateScreen = ({ t, setStatus, shows }) => {
               const musicBackoff = musicCfg.in_backoff;
               const isTalkRunning = !!triggerJobs[`${showId}|talk`];
               const isMusicRunning = !!triggerJobs[`${showId}|music`];
+              const isAnyRunning = isTalkRunning || isMusicRunning;
               return (
                 <Card t={t} key={showId} style={{ padding: "16px 20px" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
@@ -1203,12 +1371,16 @@ const GenerateScreen = ({ t, setStatus, shows }) => {
                       {(talkBackoff || musicBackoff) && <Pill label="Backoff" bg={t.pillNew} color={t.pillNewText} />}
                     </div>
                     <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => !isAnyRunning && triggerShowAll(showId)} disabled={isAnyRunning}
+                        style={{ padding: "5px 12px", borderRadius: 7, border: "none", background: isAnyRunning ? t.border : t.accent, color: isAnyRunning ? t.textMuted : "#fff", fontSize: 12, cursor: isAnyRunning ? "default" : "pointer", fontFamily: "'DM Sans',sans-serif", display: "flex", alignItems: "center", gap: 5, transition: "all 0.15s" }}>
+                        {isAnyRunning ? <><Spinner size={11} color={t.textMuted} /> Generating…</> : "⚡ All"}
+                      </button>
                       <button onClick={() => !isTalkRunning && triggerJob(showId, "talk")} disabled={isTalkRunning}
-                        style={{ padding: "5px 12px", borderRadius: 7, border: "none", background: isTalkRunning ? t.border : t.accent, color: isTalkRunning ? t.textMuted : "#fff", fontSize: 12, cursor: isTalkRunning ? "default" : "pointer", fontFamily: "'DM Sans',sans-serif", display: "flex", alignItems: "center", gap: 5, transition: "all 0.15s" }}>
+                        style={{ padding: "5px 12px", borderRadius: 7, border: `1px solid ${t.border}`, background: isTalkRunning ? t.sidebarBg : "transparent", color: isTalkRunning ? t.textMuted : t.text, fontSize: 12, cursor: isTalkRunning ? "default" : "pointer", fontFamily: "'DM Sans',sans-serif", display: "flex", alignItems: "center", gap: 5, transition: "all 0.15s" }}>
                         {isTalkRunning ? <><Spinner size={11} color={t.textMuted} /> Generating…</> : "↺ Talk"}
                       </button>
                       <button onClick={() => !isMusicRunning && triggerJob(showId, "music")} disabled={isMusicRunning}
-                        style={{ padding: "5px 12px", borderRadius: 7, border: `1px solid ${isMusicRunning ? t.border : t.border}`, background: isMusicRunning ? t.sidebarBg : "transparent", color: isMusicRunning ? t.textMuted : t.text, fontSize: 12, cursor: isMusicRunning ? "default" : "pointer", fontFamily: "'DM Sans',sans-serif", display: "flex", alignItems: "center", gap: 5, transition: "all 0.15s" }}>
+                        style={{ padding: "5px 12px", borderRadius: 7, border: `1px solid ${t.border}`, background: isMusicRunning ? t.sidebarBg : "transparent", color: isMusicRunning ? t.textMuted : t.text, fontSize: 12, cursor: isMusicRunning ? "default" : "pointer", fontFamily: "'DM Sans',sans-serif", display: "flex", alignItems: "center", gap: 5, transition: "all 0.15s" }}>
                         {isMusicRunning ? <><Spinner size={11} color={t.textMuted} /> Generating…</> : "↺ Music"}
                       </button>
                     </div>
@@ -1250,8 +1422,24 @@ const GenerateScreen = ({ t, setStatus, shows }) => {
         <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
           <p style={{ fontSize: 13, color: t.textMuted, marginBottom: 20 }}>
             Regenerate deletes today's existing briefing and generates a fresh one from current sources.
-            Category briefings (AI, Crypto, Tech, Australian News) must exist before regenerating the Daily Briefing.
           </p>
+          <Card t={t} style={{ padding: "16px 20px", marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: t.text, marginBottom: 12 }}>Generation Schedule</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-end" }}>
+              <div>
+                <div style={{ fontSize: 11.5, color: t.textMuted, marginBottom: 4 }}>Category briefings generate after</div>
+                <input type="time" value={bfCategoryTime} onChange={e => setBfCategoryTime(e.target.value)}
+                  style={{ padding: "6px 10px", borderRadius: 7, border: `1px solid ${t.inputBorder}`, background: t.inputBg, color: t.text, fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" }} />
+                <div style={{ fontSize: 11, color: t.textFaint, marginTop: 3 }}>AI · Crypto · Tech · Australian News</div>
+              </div>
+              <button onClick={saveBriefingSchedule} disabled={bfScheduleSaving}
+                style={{ padding: "7px 16px", borderRadius: 7, border: "none", background: bfScheduleSaving ? t.border : t.accent,
+                  color: bfScheduleSaving ? t.textMuted : "#fff", fontSize: 12.5, fontWeight: 600,
+                  cursor: bfScheduleSaving ? "default" : "pointer", fontFamily: "'DM Sans',sans-serif", alignSelf: "flex-end", marginBottom: 18 }}>
+                {bfScheduleSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </Card>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {BRIEFING_SHOWS.map(({ id: showId, label }) => {
               const jid = bfJobs[showId];
@@ -1531,14 +1719,15 @@ const ShowModal = ({ show, t, onClose, onSaved, segmentTypes, hosts }) => {
                       <option value="reddit_subreddit">Reddit Subreddit</option>
                       <option value="reddit_thread">Reddit Thread</option>
                       <option value="url">URL</option>
+                      <option value="joke_api">Joke API</option>
                     </Select>
                   </div>
                   <div>
                     <div style={{ fontSize: 11, color: t.textFaint, marginBottom: 4 }}>
-                      {src.type === "reddit_subreddit" ? "Subreddit (e.g. /r/sysadmin/)" : src.type === "reddit_thread" ? "Thread URL" : "URL"}
+                      {src.type === "reddit_subreddit" ? "Subreddit (e.g. /r/sysadmin/)" : src.type === "reddit_thread" ? "Thread URL" : src.type === "joke_api" ? "API endpoint" : "URL"}
                     </div>
                     <Input t={t} value={src.value} onChange={e => set("value", e.target.value)}
-                      placeholder={src.type === "reddit_subreddit" ? "/r/subreddit/" : "https://…"} />
+                      placeholder={src.type === "reddit_subreddit" ? "/r/subreddit/" : src.type === "joke_api" ? "https://v2.jokeapi.dev/joke/…" : "https://…"} />
                   </div>
                   <div style={{ marginTop: 18 }}>
                     <button onClick={() => set("favourite", !src.favourite)} title="Favourite: fetches full transcript for YouTube, more items for Reddit"
@@ -1554,19 +1743,19 @@ const ShowModal = ({ show, t, onClose, onSaved, segmentTypes, hosts }) => {
                     <Ico d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5M3 4l1 10h8l1-10" size={13} />
                   </button>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-                  <div>
+                <div style={{ display: "grid", gridTemplateColumns: src.type === "joke_api" ? "1fr" : "1fr 1fr 1fr", gap: 8 }}>
+                  {src.type !== "joke_api" && <div>
                     <div style={{ fontSize: 11, color: t.textFaint, marginBottom: 4 }}>Lookback days</div>
                     <Input t={t} type="number" value={src.lookback_days} onChange={e => set("lookback_days", parseInt(e.target.value) || 7)} />
-                  </div>
-                  <div>
+                  </div>}
+                  {src.type !== "joke_api" && <div>
                     <div style={{ fontSize: 11, color: t.textFaint, marginBottom: 4 }}>Selection strategy</div>
                     <Select t={t} value={src.selection_strategy} onChange={e => set("selection_strategy", e.target.value)}>
                       <option value="latest">Latest</option>
                       <option value="top">Top</option>
                       <option value="random">Random</option>
                     </Select>
-                  </div>
+                  </div>}
                   <div>
                     <div style={{ fontSize: 11, color: t.textFaint, marginBottom: 4 }}>Segment type (optional)</div>
                     <Select t={t} value={src.segment_type} onChange={e => set("segment_type", e.target.value)}>

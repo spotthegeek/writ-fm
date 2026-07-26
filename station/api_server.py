@@ -187,6 +187,26 @@ def _is_lan_ip(ip: str) -> bool:
         return False
 
 
+def _get_real_ip(handler) -> str:
+    """Return the real visitor IP, unwrapping Cloudflare Tunnel connections.
+
+    cloudflared connects to the local server from loopback (or a LAN IP if it
+    runs on a different host). Cloudflare injects CF-Connecting-IP with the
+    actual visitor's IP. When the direct connection comes from a trusted source,
+    use that header so external visitors aren't accidentally granted LAN bypass.
+    """
+    direct_ip = handler.client_address[0]
+    try:
+        addr = ipaddress.ip_address(direct_ip)
+        if addr.is_loopback or any(addr in net for net in _LAN_NETS):
+            cf_ip = handler.headers.get("CF-Connecting-IP", "").strip()
+            if cf_ip:
+                return cf_ip
+    except ValueError:
+        pass
+    return direct_ip
+
+
 def _get_cookies(handler) -> dict[str, str]:
     raw = handler.headers.get("Cookie", "")
     if not raw:
@@ -205,7 +225,7 @@ def _check_listener_auth(handler) -> bool:
     path = urllib.parse.urlparse(handler.path).path.rstrip("/") or "/"
     if path in _LISTENER_EXEMPT:
         return True
-    if _is_lan_ip(handler.client_address[0]):
+    if _is_lan_ip(_get_real_ip(handler)):
         return True
     return _is_valid_token(_get_cookies(handler).get(_LISTENER_COOKIE, ""))
 

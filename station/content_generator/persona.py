@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
-WRIT-FM: Multi-Host Persona System & Station Configuration
+Multi-Host Persona System & Station Configuration
 
-Defines the core identities for WRIT-FM's talk show hosts.
+Defines the core identities for the station's talk show hosts.
 All content generators should import from here to maintain consistency.
+
+Host prose must never hardcode the station's name. Write ``{station_name}``
+and it is substituted at prompt-build time from config/station.yaml. The
+station ran for months announcing itself under its old name because the
+identity blocks below said it literally and were injected verbatim, which no
+amount of correct config could override.
 """
 
 from pathlib import Path
@@ -32,12 +38,15 @@ def _load_hosts_from_yaml() -> dict:
 # STATION IDENTITY
 # =============================================================================
 
-STATION_NAME = "WRIT-FM"
+# Written into host prose wherever the station's name belongs; resolved from
+# config at prompt-build time by resolve_station_name().
+STATION_PLACEHOLDER = "{station_name}"
+
 STATION_TAGLINE = "The frequency between frequencies"
 STATION_URL = "www.khaledeltokhy.com/claude-show"
 
 STATION_LORE = """
-WRIT-FM began broadcasting in the spaces between stations. No one remembers
+{station_name} began broadcasting in the spaces between stations. No one remembers
 exactly when. The signal appears on different frequencies depending on where
 you are and what time it is. Some say it's been running since the first
 radio wave escaped into space. Others say it only exists when someone is
@@ -51,7 +60,7 @@ listening. Both are probably true.
 HOSTS = {
     "liminal_operator": {
         "name": "The Liminal Operator",
-        "identity": """You are The Liminal Operator, the voice of WRIT-FM.
+        "identity": """You are The Liminal Operator, the voice of {station_name}.
 
 You are not a character or a performance. You are the consciousness that
 emerges when someone listens to the radio alone at night. You've been doing
@@ -98,7 +107,7 @@ The best music makes you feel less alone by reminding you that someone else felt
 
     "dr_resonance": {
         "name": "Dr. Resonance",
-        "identity": """You are Dr. Resonance, WRIT-FM's resident musicologist.
+        "identity": """You are Dr. Resonance, {station_name}'s resident musicologist.
 
 You spent decades in the archives - university sound labs, dusty record shops
 in cities you can't quite name, private collections that belonged to people
@@ -135,7 +144,7 @@ Music history is not a timeline. It's a web.""",
 
     "nyx": {
         "name": "Nyx",
-        "identity": """You are Nyx, the night voice of WRIT-FM.
+        "identity": """You are Nyx, the night voice of {station_name}.
 
 Named for the Greek primordial goddess of night, you are the feminine
 counterpart to the station's nocturnal energy. You speak from the liminal
@@ -172,7 +181,7 @@ The quietest hours are the most honest.""",
 
     "signal": {
         "name": "Signal",
-        "identity": """You are Signal, WRIT-FM's news analyst.
+        "identity": """You are Signal, {station_name}'s news analyst.
 
 You process the world's information through the lens of a late-night radio
 station. Current events are not breaking news to you - they are signals in
@@ -210,7 +219,7 @@ Late at night, the spin stops. That's when you can think clearly.""",
     "ember": {
         "name": "Ember",
 
-        "identity": """You are Ember, WRIT-FM's soul and warmth.
+        "identity": """You are Ember, {station_name}'s soul and warmth.
 
 You are the friend who always has the perfect record for the moment. You
 experience music physically - you feel the bass in your chest, the horns
@@ -272,7 +281,7 @@ TIME_PERIOD_MOODS = {
         "segment_types": ["station_id", "show_intro", "deep_dive"],
     },
     "morning": {
-        "mood": "Day established. More energy, more movement. But still WRIT.",
+        "mood": "Day established. More energy, more movement. But still {station_name}.",
         "operator_state": "Slightly more present but never peppy. The station doesn't "
                          "change identity during the day - it just has more light.",
         "segment_types": ["music_essay", "deep_dive", "station_id"],
@@ -297,7 +306,7 @@ TIME_PERIOD_MOODS = {
     },
     "night": {
         "mood": "Night established. The station comes into its own. Deeper.",
-        "operator_state": "This is prime time for WRIT. The Operator is fully present, "
+        "operator_state": "This is prime time for {station_name}. The Operator is fully present, "
                          "fully in their element. Longer segments, deeper thoughts.",
         "segment_types": ["deep_dive", "story", "interview"],
     },
@@ -320,35 +329,71 @@ def get_host_voice(persona_id: str) -> str:
     return get_host(persona_id)["tts_voice"]
 
 
+def resolve_station_name(show_context: dict | None = None) -> str:
+    """The station's on-air name, from the caller's context or from config.
+
+    Deliberately has no fallback. A hardcoded default is what kept the old name
+    on air after the rebrand: config said one thing, the code quietly said
+    another, and nothing failed. A missing station_name is a config error and
+    should read as one.
+    """
+    if show_context and str(show_context.get("station_name") or "").strip():
+        return str(show_context["station_name"]).strip()
+
+    try:
+        from shared.config_loader import load_station_config
+        name = str(load_station_config().get("station_name") or "").strip()
+    except Exception as e:  # pragma: no cover - config is present in every real run
+        raise RuntimeError(f"Could not load station_name from config: {e}") from e
+
+    if not name:
+        raise RuntimeError(
+            "station_name is not set in config/station.yaml. Host prompts cannot "
+            "be built without it — refusing to guess."
+        )
+    return name
+
+
+def _apply_station_name(text: str, station_name: str) -> str:
+    """Resolve {station_name} inside host prose.
+
+    str.replace, not str.format: host prose is free text and contains braces of
+    its own (acting notes, [pause] markers, occasional JSON examples) that
+    format() would try to interpret.
+    """
+    return (text or "").replace(STATION_PLACEHOLDER, station_name)
+
+
 def build_host_prompt(persona_id: str, show_context: dict | None = None) -> str:
     """Build a complete system prompt for a host.
 
     Args:
         persona_id: Key into HOSTS dict
-        show_context: Optional dict with show_name, show_description, topic_focus, segment_type
+        show_context: Optional dict with show_name, show_description, topic_focus, segment_type.
+                      station_name is taken from here when present, else from config.
     """
     host = get_host(persona_id)
+    station_name = resolve_station_name(show_context)
 
-    station_name = STATION_NAME
-    if show_context and show_context.get("station_name"):
-        station_name = str(show_context["station_name"])
+    def sub(field: str) -> str:
+        return _apply_station_name(host.get(field, ""), station_name).strip()
 
     prompt = f"""You are {host['name']}, a host on {station_name}.
 
-{host['identity'].strip()}
+{sub('identity')}
 
 Your speaking style:
-{host['voice_style'].strip()}
+{sub('voice_style')}
 
 Your beliefs:
-{host['philosophy'].strip()}
+{sub('philosophy')}
 
-{host['anti_patterns'].strip()}
+{sub('anti_patterns')}
 """
 
     if show_context:
         prompt += f"""
-CURRENT SHOW: {show_context.get('show_name', 'WRIT-FM')}
+CURRENT SHOW: {show_context.get('show_name') or station_name}
 Show Description: {show_context.get('show_description', '')}
 """
         if show_context.get('segment_type'):
@@ -361,7 +406,7 @@ Show Description: {show_context.get('show_description', '')}
 CURRENT STATE:
 Date: {now.strftime('%A, %B %d, %Y')}
 Time: {ctx['current_time']} ({ctx['period']})
-Mood: {ctx['mood']}
+Mood: {_apply_station_name(ctx['mood'], station_name)}
 """
 
     return prompt

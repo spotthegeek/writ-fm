@@ -101,7 +101,7 @@ shows:
       talk:
         max_days: 3
       music:
-        max_days: 14
+        max_days: 60
     generation:
       talk:
         enabled: true
@@ -156,7 +156,7 @@ shows:
       talk:
         max_days: 3
       music:
-        max_days: 14
+        max_days: 60
     generation:
       talk:
         enabled: true
@@ -194,25 +194,25 @@ shows:
       voice_kokoro: am_liam
       voice_minimax: Deep_Voice_Man
       voice_google: Kore
-      tts_backend: google
+      tts_backend: kokoro
       display_name: root
     - id: sudo
       role: co-host
       voice_kokoro: af_nova
       voice_minimax: Lively_Girl
       voice_google: Zephyr
-      tts_backend: google
+      tts_backend: kokoro
       display_name: Sudo
     content_lifecycle:
       talk:
         max_days: 3
       music:
-        max_days: 14
+        max_days: 60
     generation:
       talk:
         enabled: true
         min_inventory: 6
-        target_inventory: '9'
+        target_inventory: 9
         cadence: continuous
       music:
         enabled: true
@@ -264,7 +264,7 @@ shows:
       talk:
         max_days: 3
       music:
-        max_days: 14
+        max_days: 60
     generation:
       talk:
         enabled: true
@@ -287,11 +287,11 @@ shows:
       voice_kokoro: am_adam
       voice_minimax: Deep_Voice_Man
       voice_google: Kore
-      tts_backend: minimax
+      tts_backend: kokoro
       display_name: Byte
     segment_types:
     - news_briefing
-    tts_backend: minimax
+    tts_backend: kokoro
     content_lifecycle:
       talk:
         max_days: 3
@@ -299,7 +299,7 @@ shows:
       talk:
         enabled: true
         cadence: daily
-        time_after: 05:30
+        time_after: 07:30
         min_inventory: 0
         target_inventory: 1
     research_sources: &id005
@@ -542,11 +542,11 @@ shows:
       voice_kokoro: am_adam
       voice_minimax: Deep_Voice_Man
       voice_google: Kore
-      tts_backend: minimax
+      tts_backend: kokoro
       display_name: Byte
     segment_types:
     - news_briefing
-    tts_backend: minimax
+    tts_backend: kokoro
     content_lifecycle:
       talk:
         max_days: 3
@@ -554,7 +554,7 @@ shows:
       talk:
         enabled: true
         cadence: daily
-        time_after: 05:30
+        time_after: 07:30
         min_inventory: 0
         target_inventory: 1
     research_sources: &id006
@@ -667,11 +667,11 @@ shows:
       voice_kokoro: am_adam
       voice_minimax: Deep_Voice_Man
       voice_google: Kore
-      tts_backend: minimax
+      tts_backend: kokoro
       display_name: Byte
     segment_types:
     - news_briefing
-    tts_backend: minimax
+    tts_backend: kokoro
     content_lifecycle:
       talk:
         max_days: 3
@@ -679,7 +679,7 @@ shows:
       talk:
         enabled: true
         cadence: daily
-        time_after: 05:30
+        time_after: 07:30
         min_inventory: 0
         target_inventory: 1
     research_sources: &id007
@@ -1026,11 +1026,11 @@ shows:
       voice_kokoro: af_sky
       voice_minimax: Calm_Woman
       voice_google: Zephyr
-      tts_backend: minimax
+      tts_backend: kokoro
       display_name: Matilda
     segment_types:
     - news_briefing
-    tts_backend: minimax
+    tts_backend: kokoro
     content_lifecycle:
       talk:
         max_days: 3
@@ -1038,7 +1038,7 @@ shows:
       talk:
         enabled: true
         cadence: daily
-        time_after: 05:30
+        time_after: 07:30
         min_inventory: 0
         target_inventory: 1
     research_sources: &id008
@@ -1078,39 +1078,6 @@ shows:
       selection_strategy: latest
       segment_type: ''
     source_rules: *id008
-    guests: []
-    bumper_style: ambient
-    playback_sequence: {}
-  briefing_daily:
-    name: Daily Briefing
-    description: Consolidated 25-30 min on-demand briefing covering AI, Crypto, Tech,
-      and Australian News.
-    hosts:
-    - id: byte
-      role: primary
-      voice_kokoro: am_adam
-      voice_minimax: Deep_Voice_Man
-      voice_google: Kore
-      tts_backend: google
-      display_name: Byte
-    - id: vector
-      role: co-host
-      tts_backend: google
-    segment_types:
-    - daily_briefing
-    tts_backend: google
-    content_lifecycle:
-      talk:
-        max_days: 3
-    generation:
-      talk:
-        enabled: true
-        cadence: daily
-        time_after: 05:30
-        min_inventory: 0
-        target_inventory: 1
-    research_sources: &id009 []
-    source_rules: *id009
     guests: []
     bumper_style: ambient
     playback_sequence: {}

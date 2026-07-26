@@ -281,7 +281,9 @@ class StationSchedule:
     base: list[ScheduleBlock]
     overrides: list[ScheduleBlock]
     timezone_name: str = "local"
-    station_name: str = "WRIT-FM"
+    # No default name. Callers resolve an empty value from config; inventing one
+    # here is how the old name stayed on air after the rebrand.
+    station_name: str = ""
     tagline: str = "AI generated radio"
     podcast_hours: set[int] = field(default_factory=set)
 
@@ -501,7 +503,12 @@ def load_schedule(path: Path) -> StationSchedule:
     if not isinstance(sched, dict):
         raise ScheduleError("Missing or invalid `schedule` section")
     timezone_name = str(payload.get("timezone", "local")).strip() or "local"
-    station_name = str(payload.get("station_name", "WRIT-FM")).strip() or "WRIT-FM"
+    station_name = str(payload.get("station_name") or "").strip()
+    if not station_name:
+        raise ScheduleError(
+            "station_name is missing or empty. Set it in config/station.yaml — "
+            "it is announced on air and must not be guessed."
+        )
     tagline = str(payload.get("tagline", "AI generated radio")).strip()
     _station_tz(timezone_name)
 

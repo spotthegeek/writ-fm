@@ -73,7 +73,7 @@ YOUTUBE_CACHE_DIR = SOURCE_CACHE_DIR / "youtube"
 
 from station.schedule import load_schedule, StationSchedule
 from station.time_utils import station_now, station_iso_now
-from station.content_generator.persona import HOSTS, get_host, build_host_prompt, STATION_NAME
+from station.content_generator.persona import HOSTS, get_host, build_host_prompt, resolve_station_name
 from shared.hosts import (
     assignment_voice as shared_assignment_voice,
     assignment_wpm as shared_assignment_wpm,
@@ -273,6 +273,135 @@ def segment_word_targets(segment_type: str) -> tuple[int, int]:
     cfg = get_segment_type_definition(segment_type)
     return int(cfg.get("word_count_min", 1500)), int(cfg.get("word_count_max", 2500))
 
+
+# --- runtime-based targets -------------------------------------------------
+# A segment type may declare its length as runtime minutes instead of raw word
+# counts. Words are then derived from the WPM of the hosts who actually speak it,
+# so "5 minutes" means 5 minutes whether the host talks at 110 or 145 wpm.
+# Types that declare neither keep their legacy word_count_min/max untouched.
+
+_DEFAULT_SOURCE_WORDS_MIN = 250
+_DEFAULT_SOURCE_WORDS_MAX = 2500
+
+
+def _source_size_words(source_context, count_comments: bool = True) -> int:
+    """Rough size of the usable material for a segment.
+
+    Comments are excluded for types that ignore them (storytelling reads the post
+    only), so both the size gate and the runtime scaling see the same material the
+    script will actually be built from.
+    """
+    if source_context is None:
+        return 0
+    body = getattr(source_context, "body", "") or ""
+    n = len(body.split())
+    if count_comments:
+        comments = getattr(source_context, "comments", None) or []
+        n += sum(len(str(c).split()) for c in comments)
+    if n:
+        return n
+    # Fall back to whatever was assembled for the prompt
+    return len((getattr(source_context, "source_material", "") or "").split())
+
+
+_COMMENT_WORD_ALLOWANCE = 15   # rough usable words contributed per comment
+_MAX_COUNTED_COMMENTS = 40
+
+
+def _min_source_words_for(segment_type: str) -> int:
+    """Smallest source a segment type can work with, 0 when it does not care."""
+    if not segment_type:
+        return 0
+    cfg = get_segment_type_definition(segment_type)
+    try:
+        return max(0, int(cfg.get("min_source_words", 0) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _segment_counts_comments(segment_type: str) -> bool:
+    if not segment_type:
+        return False
+    return bool(get_segment_type_definition(segment_type).get("source_counts_comments"))
+
+
+def _listing_post_source_words(data: dict, count_comments: bool = False) -> int:
+    """Approximate usable material in a raw Reddit listing post.
+
+    Used to skip posts too small to fill the segment's minimum runtime before
+    paying for a full thread fetch.
+    """
+    body = _clean_text_block(data.get("selftext") or "")
+    words = len(body.split())
+    if count_comments:
+        try:
+            n_comments = int(data.get("num_comments") or 0)
+        except (TypeError, ValueError):
+            n_comments = 0
+        words += min(n_comments, _MAX_COUNTED_COMMENTS) * _COMMENT_WORD_ALLOWANCE
+    return words
+
+
+def _source_size_fraction(source_context, cfg: dict) -> float:
+    """Map source size onto 0.0-1.0 across the configured span."""
+    words = _source_size_words(source_context, bool(cfg.get("source_counts_comments", True)))
+    lo = int(cfg.get("source_words_min", _DEFAULT_SOURCE_WORDS_MIN))
+    hi = int(cfg.get("source_words_max", _DEFAULT_SOURCE_WORDS_MAX))
+    if hi <= lo:
+        return 0.0
+    return min(1.0, max(0.0, (words - lo) / (hi - lo)))
+
+
+def segment_effective_wpm(show, segment_type: str, backend: str = "kokoro") -> float:
+    """Average speaking pace of the hosts who will actually voice this segment."""
+    primary = _primary_host_assignment(show)
+    rates = [float(_pace_wpm_for_assignment(primary, backend))]
+    if _uses_secondary_host_dialogue(show, segment_type):
+        secondary = _secondary_host_assignment(show, primary)
+        if secondary:
+            rates.append(float(_pace_wpm_for_assignment(secondary, backend)))
+    return sum(rates) / len(rates)
+
+
+def resolve_word_targets(
+    segment_type: str,
+    show=None,
+    source_context=None,
+    backend: str = "kokoro",
+) -> tuple[int, int]:
+    """Word band for a segment, derived from runtime minutes where declared.
+
+    For source-scaled types the target runtime slides between the configured
+    minimum and maximum according to how much source material there is, so a
+    short Reddit post produces a short read and a long thread a long one.
+    """
+    cfg = get_segment_type_definition(segment_type)
+    rt_min = cfg.get("runtime_minutes_min")
+    rt_max = cfg.get("runtime_minutes_max")
+    if rt_min is None or rt_max is None:
+        return segment_word_targets(segment_type)
+
+    rt_min = float(rt_min)
+    rt_max = float(rt_max)
+    wpm = segment_effective_wpm(show, segment_type, backend) if show is not None else 130.0
+
+    if cfg.get("scale_with_source") and source_context is not None:
+        target = rt_min + (rt_max - rt_min) * _source_size_fraction(source_context, cfg)
+        # Band around the scaled target, clamped so it never escapes the
+        # declared runtime range in either direction. Deliberately loose: the band
+        # drives the repair/condense gates, and normal variation in how much a
+        # model expands a given post should not trip them.
+        lo_min = max(rt_min, target * 0.85)
+        hi_min = min(rt_max, target * 1.25)
+        if hi_min <= lo_min:
+            hi_min = min(rt_max, lo_min * 1.1)
+    else:
+        lo_min, hi_min = rt_min, rt_max
+
+    min_words = max(1, int(round(lo_min * wpm)))
+    max_words = max(min_words + 1, int(round(hi_min * wpm)))
+    return min_words, max_words
+
 # =============================================================================
 # TOPIC POOLS
 # =============================================================================
@@ -387,6 +516,12 @@ REDDIT_USER_AGENT = os.environ.get(
 )
 REDDIT_TIMEOUT_SECONDS = int(os.environ.get("WRIT_REDDIT_TIMEOUT", "10"))
 REDDIT_COMMENT_LIMIT = int(os.environ.get("WRIT_REDDIT_COMMENT_LIMIT", "6"))
+REDDIT_CLIENT_ID = os.environ.get("REDDIT_CLIENT_ID", "")
+REDDIT_CLIENT_SECRET = os.environ.get("REDDIT_CLIENT_SECRET", "")
+REDDIT_USERNAME = os.environ.get("REDDIT_USERNAME", "")
+REDDIT_PASSWORD = os.environ.get("REDDIT_PASSWORD", "")
+
+_REDDIT_TOKEN_CACHE: dict = {"token": None, "expires_at": 0.0}
 REDDIT_STORY_SUBREDDITS = {
     "nosleep",
     "prorevenge",
@@ -446,6 +581,78 @@ def _fetch_url(url: str, timeout: int = REDDIT_TIMEOUT_SECONDS) -> bytes:
     )
     with urllib.request.urlopen(req, timeout=timeout) as response:
         return response.read()
+
+
+def _get_reddit_oauth_token() -> str | None:
+    """Get a Reddit OAuth bearer token via client_credentials grant.
+    Returns None if REDDIT_CLIENT_ID/SECRET are not configured."""
+    if not (REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET):
+        return None
+    now = time.time()
+    if _REDDIT_TOKEN_CACHE["token"] and now < _REDDIT_TOKEN_CACHE["expires_at"] - 60:
+        return _REDDIT_TOKEN_CACHE["token"]
+    try:
+        import base64
+        credentials = base64.b64encode(
+            f"{REDDIT_CLIENT_ID}:{REDDIT_CLIENT_SECRET}".encode()
+        ).decode()
+        body = urllib.parse.urlencode({"grant_type": "client_credentials"}).encode()
+        req = urllib.request.Request(
+            "https://www.reddit.com/api/v1/access_token",
+            data=body,
+            headers={
+                "Authorization": f"Basic {credentials}",
+                "User-Agent": REDDIT_USER_AGENT,
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read().decode())
+        token = result.get("access_token")
+        if token:
+            _REDDIT_TOKEN_CACHE["token"] = token
+            _REDDIT_TOKEN_CACHE["expires_at"] = now + int(result.get("expires_in", 86400))
+            log(f"  Reddit OAuth: token acquired (expires in {result.get('expires_in', 86400)}s)")
+            return token
+        log(f"  Reddit OAuth: no token in response: {result}")
+    except Exception as exc:
+        log(f"  Reddit OAuth token fetch failed: {exc}")
+    return None
+
+
+def _fetch_url_reddit(url: str, timeout: int = REDDIT_TIMEOUT_SECONDS) -> bytes:
+    """Fetch a Reddit URL. Uses OAuth (oauth.reddit.com) when credentials are configured,
+    otherwise falls back to the public API."""
+    token = _get_reddit_oauth_token()
+    if token:
+        # OAuth requests must go to oauth.reddit.com
+        url = re.sub(
+            r"https?://(?:old\.|www\.)?reddit\.com",
+            "https://oauth.reddit.com",
+            url,
+        )
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "User-Agent": REDDIT_USER_AGENT,
+            },
+        )
+    else:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": REDDIT_USER_AGENT,
+                "Accept": "application/json,text/html,application/xhtml+xml",
+            },
+        )
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return response.read()
+
+
+def _reddit_allow_nsfw() -> bool:
+    """True when OAuth credentials are configured — user has opted in to NSFW content."""
+    return bool(REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET)
 
 
 def _reddit_listing_base() -> str:
@@ -602,7 +809,7 @@ def _canonical_source_key(source_type: str, source_value: str) -> str:
     source_value = (source_value or "").strip()
     if not source_type or not source_value:
         return ""
-    if source_type in {"news_briefing", "daily_briefing"}:
+    if source_type in {"news_briefing", "joke_api"}:
         return ""
     if source_type in {"reddit", "reddit_thread"}:
         kind, normalized = _normalize_reddit_source(source_value)
@@ -638,7 +845,10 @@ def _used_source_keys_for_show(show_id: str) -> set[str]:
 
 
 def _source_rule_sort_key(rule: dict) -> tuple:
+    # joke_api sorts last — it's a fallback; real sources (reddit, youtube, rss) rotate first
+    is_fallback = 1 if str(rule.get("type") or "") == "joke_api" else 0
     return (
+        is_fallback,
         str(rule.get("type") or ""),
         str(rule.get("value") or ""),
         str(rule.get("segment_type") or ""),
@@ -688,19 +898,9 @@ def _ordered_source_rules_for_show(show, show_id: str, preferred_segment_type: s
     except Exception:
         last_key = ""
 
-    def rule_key(rule: dict) -> str:
-        src_type = str(rule["type"])
-        src_value = str(rule["value"])
-        if src_type in {"youtube", "youtube_video"} and _is_youtube_collection_source(src_value):
-            src_type = "youtube_channel"
-        elif src_type in {"reddit", "reddit_thread"}:
-            kind, _ = _normalize_reddit_source(src_value)
-            src_type = "reddit_subreddit" if kind == "subreddit" else "reddit_thread"
-        return _canonical_source_key(src_type, src_value)
-
     if last_key:
         for idx, rule in enumerate(eligible):
-            if rule_key(rule) == last_key:
+            if _rotation_key_for_rule(rule) == last_key:
                 start = (idx + 1) % len(eligible)
                 return eligible[start:] + eligible[:start]
 
@@ -713,20 +913,27 @@ def _choose_source_rule_for_show(show, show_id: str, preferred_segment_type: str
     return ordered[0] if ordered else None
 
 
+def _rotation_key_for_rule(rule: dict) -> str:
+    """Return a stable key for rotation tracking. Unlike _canonical_source_key,
+    this always returns a non-empty string so the rotation can advance past every
+    source type including joke_api (which has no dedup key)."""
+    src_type = str(rule.get("type") or "")
+    src_value = str(rule.get("value") or "")
+    if src_type in {"youtube", "youtube_video"} and _is_youtube_collection_source(src_value):
+        src_type = "youtube_channel"
+    elif src_type in {"reddit", "reddit_thread"}:
+        kind, _ = _normalize_reddit_source(src_value)
+        src_type = "reddit_subreddit" if kind == "subreddit" else "reddit_thread"
+    return _canonical_source_key(src_type, src_value) or f"{src_type}:{src_value}"
+
+
 def _record_source_rotation(show_id: str, rule: dict | None) -> None:
     if not rule:
         return
     try:
         SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
-        src_type = str(rule.get("type") or "")
-        src_value = str(rule.get("value") or "")
-        if src_type in {"youtube", "youtube_video"} and _is_youtube_collection_source(src_value):
-            src_type = "youtube_channel"
-        elif src_type in {"reddit", "reddit_thread"}:
-            kind, _ = _normalize_reddit_source(src_value)
-            src_type = "reddit_subreddit" if kind == "subreddit" else "reddit_thread"
         payload = {
-            "last_key": _canonical_source_key(src_type, src_value),
+            "last_key": _rotation_key_for_rule(rule),
             "updated_at": station_iso_now(),
         }
         (SCRIPTS_DIR / f".{show_id}_source_rotation.json").write_text(json.dumps(payload, indent=2))
@@ -755,7 +962,7 @@ def _extract_reddit_comments(children: list[dict], limit: int = REDDIT_COMMENT_L
 def _fetch_reddit_thread_context(source_value: str) -> SourceContext:
     _, normalized = _normalize_reddit_source(source_value)
     json_url = normalized.rstrip("/") + ".json?limit=12&sort=top"
-    payload = json.loads(_fetch_url(json_url).decode("utf-8", errors="ignore"))
+    payload = json.loads(_fetch_url_reddit(json_url).decode("utf-8", errors="ignore"))
 
     post_data = payload[0]["data"]["children"][0]["data"]
     comments_children = payload[1]["data"]["children"]
@@ -917,11 +1124,12 @@ def _fetch_reddit_subreddit_context(source_value: str) -> SourceContext:
     _, subreddit = _normalize_reddit_source(source_value)
     listing_url = f"{_reddit_listing_base()}/r/{subreddit}/hot.json?limit=8"
     posts = []
+    allow_nsfw = _reddit_allow_nsfw()
     try:
-        payload = json.loads(_fetch_url(listing_url).decode("utf-8", errors="ignore"))
+        payload = json.loads(_fetch_url_reddit(listing_url).decode("utf-8", errors="ignore"))
         for child in payload.get("data", {}).get("children", []):
             data = child.get("data", {})
-            if data.get("stickied") or data.get("over_18"):
+            if data.get("stickied") or (not allow_nsfw and data.get("over_18")):
                 continue
             title = _clean_text_block(data.get("title", ""))
             if not title:
@@ -949,6 +1157,7 @@ def _fetch_reddit_subreddit_context_with_strategy(
     lookback_days: int = 7,
     selection_strategy: str = "latest",
     used_source_keys: set[str] | None = None,
+    segment_type: str = "",
 ) -> SourceContext:
     _, subreddit = _normalize_reddit_source(source_value)
     strategy = (selection_strategy or "latest").strip().lower()
@@ -971,18 +1180,19 @@ def _fetch_reddit_subreddit_context_with_strategy(
         url += f"&t={t}"
 
     cutoff = time.time() - max(1, int(lookback_days)) * 86400
+    allow_nsfw = _reddit_allow_nsfw()
     posts: list[dict] = []
     try:
         try:
-            payload = json.loads(_fetch_url(url).decode("utf-8", errors="ignore"))
+            payload = json.loads(_fetch_url_reddit(url).decode("utf-8", errors="ignore"))
         except Exception as exc:
             fallback_url = f"{_reddit_listing_base()}/r/{subreddit}/hot.json?limit=25"
             log(f"Reddit listing fetch blocked for {url}; retrying hot listing: {exc}")
-            payload = json.loads(_fetch_url(fallback_url).decode("utf-8", errors="ignore"))
+            payload = json.loads(_fetch_url_reddit(fallback_url).decode("utf-8", errors="ignore"))
         children = payload.get("data", {}).get("children", [])
         for child in children:
             data = (child or {}).get("data", {})
-            if data.get("stickied") or data.get("over_18"):
+            if data.get("stickied") or (not allow_nsfw and data.get("over_18")):
                 continue
             created = data.get("created_utc")
             if isinstance(created, (int, float)) and created < cutoff:
@@ -1001,22 +1211,38 @@ def _fetch_reddit_subreddit_context_with_strategy(
     if not posts:
         raise RuntimeError(f"No usable posts found for r/{subreddit}")
     used_source_keys = used_source_keys or set()
-    chosen = None
+    # Skip posts too small to fill this segment type's minimum runtime — padding
+    # a thin post out to length makes the model repeat itself.
+    min_source_words = _min_source_words_for(segment_type)
+    count_comments = _segment_counts_comments(segment_type)
+    too_small = 0
+
+    candidates = posts[:]
     if strategy == "random":
-        candidates = posts[:]
         random.shuffle(candidates)
-        for post in candidates:
-            permalink = f"{_reddit_thread_base()}{post.get('permalink', '')}"
-            if _canonical_source_key("reddit_thread", permalink) not in used_source_keys:
-                chosen = post
-                break
-    else:
-        for post in posts:
-            permalink = f"{_reddit_thread_base()}{post.get('permalink', '')}"
-            if _canonical_source_key("reddit_thread", permalink) not in used_source_keys:
-                chosen = post
-                break
+    chosen = None
+    for post in candidates:
+        permalink = f"{_reddit_thread_base()}{post.get('permalink', '')}"
+        if _canonical_source_key("reddit_thread", permalink) in used_source_keys:
+            continue
+        if min_source_words:
+            size = _listing_post_source_words(post, count_comments)
+            if size < min_source_words:
+                too_small += 1
+                continue
+        chosen = post
+        break
+    if too_small:
+        log(
+            f"  Skipped {too_small} r/{subreddit} post(s) under "
+            f"{min_source_words} usable words for {segment_type or 'segment'}"
+        )
     if chosen is None:
+        if too_small:
+            raise RuntimeError(
+                f"No r/{subreddit} post large enough for {segment_type or 'segment'} "
+                f"(need {min_source_words}+ usable words)"
+            )
         raise RuntimeError(f"No unused posts found for r/{subreddit}")
     permalink = f"{_reddit_thread_base()}{chosen.get('permalink', '')}"
     try:
@@ -1024,6 +1250,116 @@ def _fetch_reddit_subreddit_context_with_strategy(
     except Exception as exc:
         log(f"Reddit thread fetch blocked for {permalink}; using listing fallback: {exc}")
         return _reddit_context_from_listing_post(chosen)
+
+
+_BUNDLE_PLACEHOLDER_TEXTS = {"[removed]", "[deleted]", "self", ""}
+
+
+def _bundle_listing_posts(subreddit: str, lookback_days: int, selection_strategy: str) -> list[dict]:
+    """Fetch a listing of posts from Reddit's API for bundle use (returns raw post dicts)."""
+    strategy = (selection_strategy or "latest").strip().lower()
+    sort = {"latest": "new", "top": "top", "popular": "hot", "random": "new"}.get(strategy, "new")
+    url = f"{_reddit_listing_base()}/r/{subreddit}/{sort}.json?limit=50"
+    if sort == "top":
+        url += f"&t={'day' if lookback_days <= 1 else 'week' if lookback_days <= 7 else 'month'}"
+    cutoff = time.time() - max(1, int(lookback_days)) * 86400
+    posts: list[dict] = []
+    try:
+        payload = json.loads(_fetch_url_reddit(url).decode("utf-8", errors="ignore"))
+        for child in payload.get("data", {}).get("children", []):
+            data = (child or {}).get("data", {})
+            if data.get("stickied"):
+                continue
+            created = data.get("created_utc")
+            if isinstance(created, (int, float)) and created < cutoff:
+                continue
+            if data.get("title"):
+                posts.append(data)
+    except Exception as exc:
+        log(f"  Bundle listing fetch failed for r/{subreddit}: {exc}")
+    return posts
+
+
+def _usable_bundle_post(p: dict) -> tuple[str, str] | None:
+    title = _normalize_reddit_user_mentions(_clean_text_block(p.get("title", "")))
+    selftext_raw = _normalize_reddit_user_mentions(_clean_text_block(p.get("selftext", "")))
+    selftext = "" if selftext_raw in _BUNDLE_PLACEHOLDER_TEXTS else selftext_raw
+    if len(title) < 15:
+        return None
+    return title, selftext
+
+
+def _fetch_reddit_bundle(
+    source_value: str,
+    *,
+    lookback_days: int = 7,
+    selection_strategy: str = "latest",
+    used_source_keys: set[str] | None = None,
+    n_min: int = 5,
+    n_max: int = 10,
+) -> SourceContext | None:
+    """Fetch multiple Reddit posts and bundle them as a single SourceContext for joke segments."""
+    _, subreddit = _normalize_reddit_source(source_value)
+    used_source_keys = used_source_keys or set()
+
+    # Try listing API first (full selftext, current posts), fall back to PullPush
+    posts = _bundle_listing_posts(subreddit, lookback_days, selection_strategy)
+    if not posts:
+        log(f"  Bundle listing blocked for r/{subreddit}; trying PullPush.")
+        try:
+            posts = _pullpush_fetch_subreddit_posts(
+                subreddit,
+                lookback_days=lookback_days,
+                selection_strategy=selection_strategy,
+            )
+        except Exception as exc:
+            log(f"  Reddit bundle fetch failed for r/{subreddit}: {exc}")
+            return None
+
+    # Filter already-used and non-joke posts
+    unused_posts = [
+        p for p in posts
+        if _canonical_source_key(
+            "reddit_thread",
+            f"{_reddit_thread_base()}{p.get('permalink', '')}",
+        ) not in used_source_keys
+    ]
+    if len(unused_posts) < n_min and len(posts) >= n_min:
+        unused_posts = posts  # relax dedup if not enough fresh posts
+
+    usable = [(p, _usable_bundle_post(p)) for p in unused_posts]
+    usable = [(p, content) for p, content in usable if content is not None]
+
+    if len(usable) < n_min:
+        log(f"  Not enough usable joke posts in r/{subreddit}: {len(usable)} after filtering")
+        return None
+
+    n = min(random.randint(n_min, n_max), len(usable))
+    chosen_pairs = usable[:n]
+
+    parts = [f"Subreddit: r/{subreddit}", ""]
+    for post, (title, selftext) in chosen_pairs:
+        parts.append("---")
+        parts.append(title)
+        if selftext:
+            parts.append(selftext)
+        parts.append("")
+
+    chosen = [p for p, _ in chosen_pairs]
+
+    # Mark all chosen threads as used for this run
+    for post in chosen:
+        permalink = f"{_reddit_thread_base()}{post.get('permalink', '')}"
+        used_source_keys.add(_canonical_source_key("reddit_thread", permalink))
+
+    return SourceContext(
+        source_type="reddit_subreddit",
+        source_value=f"/r/{subreddit}",
+        title=f"r/{subreddit} jokes ({n} items)",
+        topic=f"Dark jokes from r/{subreddit}",
+        source_material="\n".join(parts),
+        subreddit=subreddit,
+    )
 
 
 def _build_reddit_story_script(source_context: SourceContext) -> str:
@@ -1172,8 +1508,11 @@ def _download_youtube_assets(source_value: str) -> tuple[dict, Path | None, str,
             "-x",
             "--audio-format",
             "mp3",
+            # The Icecast mount re-encodes to 96 kbps, so downloading at yt-dlp's
+            # best (quality 0, ~24 MB/video) buys nothing audible and costs ~5x
+            # the transient disk. Overridable for anyone who disagrees.
             "--audio-quality",
-            "0",
+            os.environ.get("WRIT_YTDLP_AUDIO_QUALITY", "128K"),
             "-o",
             audio_tmpl,
             source_url,
@@ -1378,28 +1717,20 @@ def _normalize_source_rule(rule: dict | None) -> dict[str, str | int]:
         "favourite": bool(rule.get("favourite", False)),
     }
 
-SOURCE_REQUIRED_SEGMENT_TYPES = {"reddit_post", "reddit_storytelling", "youtube"}
+SOURCE_REQUIRED_SEGMENT_TYPES = {"reddit_post", "reddit_storytelling", "youtube", "jokes"}
 
-BRIEFING_SHOW_IDS = ["briefing_ai", "briefing_crypto", "briefing_tech", "briefing_news_aus"]
 _MAX_BRIEFING_SOURCES = 10
 
 
 def _briefing_intro_line(show_name: str, segment_type: str) -> str:
-    """Return a date-stamped intro sentence for briefing segment types.
-
-    For multi-voice daily_briefing scripts the line is prefixed with HOST_A:
-    so the multi-voice renderer assigns it to the primary host.
-    """
+    """Return a date-stamped intro sentence for briefing segment types."""
     now = station_now()
     day_name = now.strftime("%A")
     month_name = now.strftime("%B")
     day = now.day
     suffix = "th" if 11 <= day <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
     date_str = f"{day_name} {month_name} {day}{suffix} {now.year}"
-    intro = f"Welcome to your {show_name} for {date_str}."
-    if segment_type == "daily_briefing":
-        return f"HOST_A: {intro}\n\n"
-    return f"{intro}\n\n"
+    return f"Welcome to your {show_name} for {date_str}.\n\n"
 _MAX_BRIEFING_CHARS = 12000
 _FAV_YT_TRANSCRIPT_LIMIT = 3   # max favourite YT channels that get full transcript fetch
 _FAV_ITEM_COUNT = 5
@@ -1532,49 +1863,59 @@ def _fetch_all_sources_for_briefing(show, show_id: str) -> tuple[str, str]:
     return combined, show_name
 
 
-def _fetch_category_briefing_scripts() -> str:
-    """Read the most recent news_briefing script from each of the 4 category shows.
-    Returns combined source material. Proceeds if at least 2 of 4 shows have content."""
-    parts: list[str] = []
-    for show_id in BRIEFING_SHOW_IDS:
-        show_dir = OUTPUT_DIR / show_id
-        if not show_dir.exists():
-            continue
-        candidates = sorted(
-            show_dir.glob("news_briefing_*.json"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-        if not candidates:
-            # Also check for any .json with segment_type news_briefing
-            all_json = sorted(
-                show_dir.glob("*.json"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-            for jf in all_json[:5]:
-                try:
-                    meta = json.loads(jf.read_text())
-                    if meta.get("type") == "news_briefing" and meta.get("script"):
-                        candidates = [jf]
-                        break
-                except Exception:
-                    continue
-        if not candidates:
-            log(f"  daily_briefing: no news_briefing found for {show_id}")
-            continue
-        try:
-            meta = json.loads(candidates[0].read_text())
-            script = (meta.get("script") or "").strip()
-            show_name = meta.get("show_name") or show_id
-            if script:
-                parts.append(f"=== {show_name} ===\n{script[:4000]}")
-        except Exception as exc:
-            log(f"  daily_briefing: failed to read script for {show_id}: {exc}")
+def _fetch_joke_api(source_value: str, amount: int = 10) -> SourceContext | None:
+    """Fetch a batch of jokes from JokeAPI and return them as a bundled SourceContext."""
+    base_url = source_value.rstrip("/").rstrip("?")
+    sep = "&" if "?" in base_url else "?"
+    url = f"{base_url}{sep}amount={amount}&safe-mode"
+    # safe-mode is intentionally NOT used — we want dark/edgy content
+    url = f"{base_url}{sep}amount={amount}"
+    try:
+        raw = _fetch_url(url, timeout=10)
+        payload = json.loads(raw.decode("utf-8", errors="ignore"))
+    except Exception as exc:
+        log(f"  JokeAPI fetch failed for {url}: {exc}")
+        return None
 
-    if not parts:
-        return "[No category briefings available — run category briefings first]"
-    return "\n\n".join(parts)
+    jokes_raw = payload.get("jokes") if isinstance(payload.get("jokes"), list) else [payload]
+    if not jokes_raw or payload.get("error"):
+        log(f"  JokeAPI returned no jokes or an error: {payload.get('message', '')}")
+        return None
+
+    parts: list[str] = []
+    count = 0
+    for j in jokes_raw:
+        if not isinstance(j, dict):
+            continue
+        if j.get("type") == "twopart":
+            setup = (j.get("setup") or "").strip()
+            delivery = (j.get("delivery") or "").strip()
+            if setup and delivery:
+                parts.append("---")
+                parts.append(setup)
+                parts.append(delivery)
+                parts.append("")
+                count += 1
+        elif j.get("type") == "single":
+            joke_text = (j.get("joke") or "").strip()
+            if joke_text:
+                parts.append("---")
+                parts.append(joke_text)
+                parts.append("")
+                count += 1
+
+    if count == 0:
+        log("  JokeAPI returned no usable jokes.")
+        return None
+
+    log(f"  JokeAPI: fetched {count} jokes from {source_value}")
+    return SourceContext(
+        source_type="joke_api",
+        source_value=source_value,
+        title=f"JokeAPI ({count} jokes)",
+        topic=f"Dark Jokes",
+        source_material="\n".join(parts),
+    )
 
 
 def load_source_context(
@@ -1583,6 +1924,7 @@ def load_source_context(
     lookback_days: int = 7,
     selection_strategy: str = "latest",
     used_source_keys: set[str] | None = None,
+    segment_type: str = "",
 ) -> SourceContext | None:
     source_type = (source_type or "").strip().lower()
     source_value = (source_value or "").strip()
@@ -1604,15 +1946,23 @@ def load_source_context(
     if not _is_specific_item and used_source_keys and source_key and source_key in used_source_keys:
         return None
     try:
+        if source_type == "joke_api":
+            return _fetch_joke_api(source_value)
         if source_type in {"reddit", "reddit_thread"}:
             kind, _ = _normalize_reddit_source(source_value)
             return (
-                _fetch_reddit_subreddit_context_with_strategy(source_value, lookback_days, selection_strategy, used_source_keys)
+                _fetch_reddit_subreddit_context_with_strategy(
+                    source_value, lookback_days, selection_strategy, used_source_keys,
+                    segment_type=segment_type,
+                )
                 if kind == "subreddit"
                 else _fetch_reddit_thread_context(source_value)
             )
         if source_type == "reddit_subreddit":
-            return _fetch_reddit_subreddit_context_with_strategy(source_value, lookback_days, selection_strategy, used_source_keys)
+            return _fetch_reddit_subreddit_context_with_strategy(
+                source_value, lookback_days, selection_strategy, used_source_keys,
+                segment_type=segment_type,
+            )
         if source_type in {"youtube", "youtube_video"}:
             if _is_youtube_collection_source(source_value):
                 selected_url = _select_youtube_video_url_from_collection(source_value, lookback_days, selection_strategy, used_source_keys)
@@ -1806,12 +2156,15 @@ def _two_host_prompt_prefix(show, segment_type: str, speaker_labels: dict[str, s
     return "\n".join(instructions)
 
 
-def _fallback_two_host_script(show, segment_type: str, speaker_labels: dict[str, str]) -> str | None:
+def _fallback_two_host_script(
+    show, segment_type: str, speaker_labels: dict[str, str], station_name: str | None = None
+) -> str | None:
     primary_name = speaker_labels.get("primary_host_name", _host_label(show.host))
     secondary_name = speaker_labels.get("secondary_host_name", "the co-host")
+    station_name = station_name or resolve_station_name()
     if segment_type == "station_id":
         return (
-            f"HOST_A: This is {STATION_NAME}, with {show.name}.\n\n"
+            f"HOST_A: This is {station_name}, with {show.name}.\n\n"
             f"HOST_B: {primary_name} and {secondary_name}, still on the line."
         )
     return None
@@ -1825,13 +2178,34 @@ def _slugify_topic(value: str, max_len: int = 30) -> str:
 
 
 def _minimax_performance_instructions(segment_type: str) -> str:
+    # Ask for generic bracket cues, never MiniMax-native markup. preprocess_for_tts
+    # translates these per backend at render time, which keeps the saved script
+    # playable by whichever backend ends up speaking it — MiniMax renders fail often
+    # enough that scripts containing raw "<#0.5#>" got read aloud by the Kokoro
+    # fallback as "number zero point five number".
     instructions = [
-        "When it helps the performance, you may use MiniMax speech interjection tags sparingly.",
-        "Allowed tags: (laughs), (chuckle), (coughs), (clear-throat), (groans), (breath), (pant), (inhale), (exhale), (gasps), (sniffs), (sighs), (snorts), (burps), (lip-smacking), (humming), (hissing), (emm), (sneezes).",
-        "Use them only occasionally at natural emotional beats. Do not stack tags or overuse them.",
+        "When it helps the performance, use short production cues sparingly at natural emotional beats.",
+        "Allowed cues, written exactly like this in square brackets:",
+        "[pause] [laugh] [chuckle] [sigh] [cough] [gasp] [breath] [groan]",
+        "[exhale] [inhale] [hum] [yawn] [sniff]",
+        "Do not stack cues or overuse them. Do not invent cues not in this list.",
+        "Do not use any other markup, symbols, or timing syntax.",
     ]
     if segment_type in {"panel", "interview", "reddit_post", "reddit_storytelling", "youtube"}:
-        instructions.append("In conversation, let the tags appear naturally inside a speaker's line, not as standalone stage directions.")
+        instructions.append("Place tags inline within a speaker's line, not as standalone lines.")
+    return "\n".join(instructions)
+
+
+def _google_performance_instructions(segment_type: str) -> str:
+    instructions = [
+        "When it helps the performance, use short inline acting notes sparingly at natural emotional beats.",
+        "Allowed notes (place inline within a sentence, not on a line by themselves):",
+        "(laughs) (chuckle) (sighs) (gasps) (exhales) (inhales) (clears throat)",
+        "(groans) (hums) (yawns) (sniffs) (whispers)",
+        "Do not overuse. Do not invent notes not in this list.",
+    ]
+    if segment_type in {"panel", "interview"}:
+        instructions.append("In dialogue, place acting notes inside a speaker's line.")
     return "\n".join(instructions)
 
 
@@ -1841,10 +2215,12 @@ def build_generation_prompt(
     topic: str,
     speaker_labels: dict[str, str],
     backend: str = "kokoro",
-    station_name: str = STATION_NAME,
+    station_name: str | None = None,
     source_context: SourceContext | None = None,
+    word_targets: tuple[int, int] | None = None,
 ) -> str:
     """Build the full prompt for content generation."""
+    station_name = station_name or resolve_station_name()
     show_context = {
         "show_name": show.name,
         "show_description": show.description,
@@ -1854,7 +2230,9 @@ def build_generation_prompt(
     primary = _primary_host_assignment(show)
     base = build_host_prompt(primary.get("id", show.host), show_context)
 
-    min_words, max_words = segment_word_targets(segment_type)
+    min_words, max_words = word_targets or resolve_word_targets(
+        segment_type, show=show, source_context=source_context, backend=backend
+    )
     config = get_segment_type_definition(segment_type)
     prompt_template = config.get("prompt_template", DEFAULT_SEGMENT_TYPES["deep_dive"]["prompt_template"])
 
@@ -1899,16 +2277,34 @@ def build_generation_prompt(
             f"{prompt_template}"
         )
 
-    # For long-form segments, add a hard length reminder at the end of the prompt
-    is_long_form = min_words >= 500
-    length_reminder = (
-        f"\n\nLENGTH REQUIREMENT: You MUST write at least {min_words} words. "
-        f"Do not summarise, do not wrap up early. "
-        f"Keep developing ideas, adding examples, and exploring tangents until you have reached the minimum. "
-        f"A response under {min_words} words is incomplete and will be rejected."
-    ) if is_long_form else ""
-    if (backend or "").strip().lower() == "minimax":
+    # Length reminder. Long-form segments need pushing up to the minimum; short
+    # ones (briefings) need holding down to the maximum, so state both bounds and
+    # emphasise whichever direction this segment type actually drifts.
+    wpm = segment_effective_wpm(show, segment_type, backend)
+    mins_lo = min_words / wpm
+    mins_hi = max_words / wpm
+    if min_words >= 500:
+        length_reminder = (
+            f"\n\nLENGTH REQUIREMENT: Write between {min_words} and {max_words} words "
+            f"(about {mins_lo:.0f}-{mins_hi:.0f} minutes of spoken audio). "
+            f"Do not summarise, do not wrap up early. "
+            f"Keep developing ideas, adding examples, and exploring tangents until you have "
+            f"reached at least {min_words} words. "
+            f"A response under {min_words} words is incomplete and will be rejected."
+        )
+    else:
+        length_reminder = (
+            f"\n\nLENGTH REQUIREMENT: Write between {min_words} and {max_words} words "
+            f"(about {mins_lo:.1f}-{mins_hi:.1f} minutes of spoken audio). "
+            f"This is a tight segment — cover the material and stop. "
+            f"Do not pad, do not repeat yourself, and do not exceed {max_words} words. "
+            f"A response over {max_words} words will be cut short on air."
+        )
+    _backend_lower = (backend or "").strip().lower()
+    if _backend_lower == "minimax":
         length_reminder += f"\n\n{_minimax_performance_instructions(segment_type)}"
+    elif _backend_lower == "google":
+        length_reminder += f"\n\n{_google_performance_instructions(segment_type)}"
 
     source_block = ""
     if source_context and source_context.source_material:
@@ -1964,9 +2360,13 @@ TARGET LENGTH: {min_words}-{max_words} words
     return prompt
 
 
-def run_generation(prompt: str, segment_type: str) -> str | None:
+def run_generation(
+    prompt: str,
+    segment_type: str,
+    word_targets: tuple[int, int] | None = None,
+) -> str | None:
     """Run LLM to generate the script."""
-    min_words, max_words = segment_word_targets(segment_type)
+    min_words, max_words = word_targets or segment_word_targets(segment_type)
     timeout = 120 if max_words < 200 else 300
     min_acceptable = int(min_words * 0.8)
     temperature = 0.8
@@ -2026,6 +2426,48 @@ CURRENT DRAFT:
                 )
                 script = repaired_script
                 word_count = repaired_word_count
+
+    # If the model overshoots badly, condense once rather than let an over-long
+    # script go to air. Tolerate 10% over — trimming costs more than it gains.
+    max_acceptable = int(max_words * 1.10)
+    if word_count > max_acceptable:
+        condense_prompt = f"""{prompt}
+
+The draft below is too long for this segment.
+Target length: {min_words}-{max_words} words.
+Current length: {word_count} words.
+
+Cut it down to at most {max_words} words.
+Keep every distinct topic and the opening and closing lines.
+Tighten the wording and drop repetition, asides, and filler — do not drop whole topics.
+Preserve the same speaker markers, structure, tone, and voice.
+Do not add commentary about the revision.
+Output ONLY the revised spoken text.
+
+CURRENT DRAFT:
+{script}
+"""
+        condensed = run_claude(
+            condense_prompt,
+            timeout=timeout,
+            temperature=max(0.3, temperature - 0.2),
+            num_predict=num_predict,
+        )
+        if condensed:
+            condensed_word_count = len(condensed.split())
+            if min_acceptable <= condensed_word_count < word_count:
+                log(
+                    "Script condensed from "
+                    f"{word_count} to {condensed_word_count} words "
+                    f"(target {min_words}-{max_words})"
+                )
+                script = condensed
+                word_count = condensed_word_count
+        if word_count > max_acceptable:
+            log(
+                f"Script still long: {word_count} words "
+                f"(target {min_words}-{max_words}) — airing as-is"
+            )
 
     # Quality gate: keep the existing 80% floor, but reject anything too short
     # before it reaches TTS.
@@ -2157,7 +2599,7 @@ def render_single_voice(
 
     if backend == "minimax":
         try:
-            from minimax_tts import generate_speech
+            from station.minimax_tts import generate_speech
         except Exception as e:
             log(f"  MiniMax import error: {e}")
             return False
@@ -2209,7 +2651,7 @@ def render_single_voice_chunked(
     """Render a long single-voice script in smaller pieces."""
     if backend == "minimax":
         try:
-            from minimax_tts import generate_speech
+            from station.minimax_tts import generate_speech
         except Exception as e:
             log(f"  MiniMax import error: {e}")
             return False
@@ -2425,7 +2867,7 @@ def render_multi_voice(script: str, output_path: Path, voices: dict[str, str], b
     """Render a multi-voice script (panel/interview) to audio."""
     if backend == "minimax":
         try:
-            from minimax_tts import generate_speech
+            from station.minimax_tts import generate_speech
         except Exception as e:
             log(f"  MiniMax import error: {e}")
             return False
@@ -2734,12 +3176,13 @@ def generate_segment(
     source_selection_strategy: str = "latest",
     source_context: SourceContext | None = None,
     used_source_keys: set[str] | None = None,
-    station_name: str = STATION_NAME,
+    station_name: str | None = None,
     include_topic: bool = True,
 ) -> Path | None:
     """Generate a single talk segment with audio."""
+    station_name = station_name or resolve_station_name()
     show_id = show.show_id
-    explicit_source_agnostic_types = {"station_id", "show_intro", "show_outro", "news_briefing", "daily_briefing"}
+    explicit_source_agnostic_types = {"station_id", "show_intro", "show_outro", "news_briefing"}
     if segment_type in explicit_source_agnostic_types:
         source_type = ""
         source_value = ""
@@ -2754,23 +3197,27 @@ def generate_segment(
             source_material=source_material,
             format_instructions="",
         )
-    elif segment_type == "daily_briefing" and source_context is None:
-        source_material = _fetch_category_briefing_scripts()
-        source_context = SourceContext(
-            source_type="daily_briefing",
-            source_value=show_id,
-            title="Daily Briefing",
-            topic="Daily Briefing",
-            source_material=source_material,
-            format_instructions="",
+    # Bundle segment types fetch multiple posts from a subreddit in one shot
+    seg_def = get_segment_type_definition(segment_type)
+    _bundle_n_min = int(seg_def.get("items_per_segment_min", 0))
+    if _bundle_n_min > 1 and source_type in {"reddit_subreddit", "reddit"} and source_value:
+        _bundle_n_max = max(_bundle_n_min, int(seg_def.get("items_per_segment_max", _bundle_n_min)))
+        source_context = _fetch_reddit_bundle(
+            source_value,
+            lookback_days=source_lookback_days,
+            selection_strategy=source_selection_strategy,
+            used_source_keys=used_source_keys,
+            n_min=_bundle_n_min,
+            n_max=_bundle_n_max,
         )
-    if source_context is None:
+    elif source_context is None:
         source_context = load_source_context(
             source_type,
             source_value,
             lookback_days=source_lookback_days,
             selection_strategy=source_selection_strategy,
             used_source_keys=used_source_keys,
+            segment_type=segment_type,
         )
     if source_type and source_value and source_context is None:
         log(f"  Source '{source_type}' at '{source_value}' was unavailable or already used.")
@@ -2786,6 +3233,19 @@ def generate_segment(
         if selected_key and selected_key in used_source_keys and not _ctx_is_specific:
             log(f"  Source '{source_context.source_type}' at '{source_context.source_value}' was already used.")
             return None
+    # Second size gate. The selection filter skips thin posts before fetching, but
+    # an explicitly requested thread never passes through it, and a fetched body can
+    # be smaller than the listing suggested. Drop rather than pad to length.
+    _min_src = _min_source_words_for(segment_type)
+    if _min_src and source_context is not None:
+        _have = _source_size_words(source_context, _segment_counts_comments(segment_type))
+        if _have < _min_src:
+            log(
+                f"  Source too small for {segment_type}: {_have} usable words "
+                f"(need {_min_src}+) — skipping rather than padding."
+            )
+            return None
+
     if segment_type == "reddit_storytelling":
         if not source_context or source_context.source_type != "reddit":
             log("  Reddit Storytelling requires a Reddit thread or subreddit source.")
@@ -2816,17 +3276,24 @@ def generate_segment(
     elif source_context and source_context.source_type == "youtube" and segment_type == "random":
         segment_type = "youtube"
 
-    min_words, max_words = segment_word_targets(segment_type)
     primary = _primary_host_assignment(show)
     backend = os.environ.get("WRIT_TTS_BACKEND", "").strip() or primary.get("tts_backend", getattr(show, "tts_backend", "kokoro"))
+    # Resolved once here and passed down, so the prompt, the repair/condense gates
+    # and this log all agree on the same band (source-scaled types depend on it).
+    word_targets = resolve_word_targets(
+        segment_type, show=show, source_context=source_context, backend=backend
+    )
+    min_words, max_words = word_targets
     long_async_enabled = os.environ.get("WRIT_MINIMAX_LONG_ASYNC", "").strip() == "1"
     backend_used = backend
     speaker_labels: dict[str, str] = {}
     voices: dict[str, str] = {}
 
+    _wpm = segment_effective_wpm(show, segment_type, backend)
     log(f"=== Generating {segment_type} for {show.name} ===")
     log(f"  Topic: {topic[:80]}...")
-    log(f"  Target: {min_words}-{max_words} words")
+    log(f"  Target: {min_words}-{max_words} words "
+        f"(~{min_words / _wpm:.1f}-{max_words / _wpm:.1f} min at {_wpm:.0f} wpm)")
     if source_context:
         log(f"  Source: {source_context.source_type} ({source_context.title or source_context.source_value})")
         if source_context.subreddit:
@@ -2845,15 +3312,7 @@ def generate_segment(
             log(f"  Channel: {source_context.channel or 'unknown'}")
 
     script = None
-    if (
-        source_context
-        and source_context.source_type == "reddit"
-        and segment_type == "reddit_storytelling"
-        and not _uses_secondary_host_dialogue(show, segment_type)
-    ):
-        script = _build_reddit_story_script(source_context)
-        log("  Using direct Reddit story read-through; skipping LLM generation.")
-    elif source_context and source_context.source_type == "youtube" and segment_type == "youtube":
+    if source_context and source_context.source_type == "youtube" and segment_type == "youtube":
         if not source_context.audio_path:
             log("  YouTube source has no cached audio file; cannot ingest.")
             return None
@@ -2872,6 +3331,20 @@ def generate_segment(
 
         output_path = show_dir / f"{segment_type}_{topic_slug}_{timestamp}{source_audio.suffix or '.mp3'}"
         shutil.copy2(source_audio, output_path)
+
+        # The cache copy is redundant once the segment owns the audio, and it is the
+        # single largest source of disk growth (~24 MB per video, never reclaimed).
+        # Drop it only after verifying the copy landed intact. _download_youtube_assets
+        # guards on `.exists()`, so a re-request simply re-downloads.
+        try:
+            if output_path.stat().st_size == source_audio.stat().st_size:
+                freed = source_audio.stat().st_size
+                source_audio.unlink()
+                log(f"  Released cached source audio ({freed / 1048576:.1f} MB): {source_audio.name}")
+            else:
+                log(f"  Cache copy size mismatch; keeping {source_audio.name}")
+        except Exception as e:
+            log(f"  Could not release cached source audio: {e}")
 
         script = source_context.transcript or source_context.source_material or source_context.title or ""
         word_count = len(script.split()) if script else 0
@@ -2949,39 +3422,58 @@ def generate_segment(
             if secondary:
                 log(f"  Co-host: {secondary.get('id', 'guest')} (voice: {voices.get('guest', 'af_bella')})")
         log(f"  TTS backend: {backend}")
-        # Build prompt and generate script
-        prompt = build_generation_prompt(
-            show=show,
-            segment_type=segment_type,
-            topic=topic,
-            speaker_labels=speaker_labels,
-            backend=backend,
-            station_name=station_name,
-            source_context=source_context,
-        )
 
-        # Try generation with up to 2 retries
-        for attempt in range(3):
-            script = run_generation(prompt, segment_type)
-            if script:
-                break
-            if attempt < 2:
-                log(f"  Retrying generation (attempt {attempt + 2}/3)...")
-                time.sleep(3)
+        if (
+            source_context
+            and source_context.source_type == "reddit"
+            and segment_type == "reddit_storytelling"
+            and not _uses_secondary_host_dialogue(show, segment_type)
+        ):
+            candidate = _build_reddit_story_script(source_context)
+            if len(candidate.split()) >= int(min_words * 0.8):
+                script = candidate
+                log("  Using direct Reddit story read-through; skipping LLM generation.")
+            else:
+                log(
+                    f"  Direct story text too short ({len(candidate.split())} words); "
+                    "falling back to LLM generation."
+                )
 
-        if not script:
-            if _uses_secondary_host_dialogue(show, segment_type):
-                script = _fallback_two_host_script(show, segment_type, speaker_labels)
+        if script is None:
+            # Build prompt and generate script
+            prompt = build_generation_prompt(
+                show=show,
+                segment_type=segment_type,
+                topic=topic,
+                speaker_labels=speaker_labels,
+                backend=backend,
+                station_name=station_name,
+                source_context=source_context,
+                word_targets=word_targets,
+            )
+
+            # Try generation with up to 2 retries
+            for attempt in range(3):
+                script = run_generation(prompt, segment_type, word_targets=word_targets)
                 if script:
-                    log("  Using deterministic two-host fallback script.")
+                    break
+                if attempt < 2:
+                    log(f"  Retrying generation (attempt {attempt + 2}/3)...")
+                    time.sleep(3)
+
+            if not script:
+                if _uses_secondary_host_dialogue(show, segment_type):
+                    script = _fallback_two_host_script(show, segment_type, speaker_labels, station_name)
+                    if script:
+                        log("  Using deterministic two-host fallback script.")
+                    else:
+                        log("  Failed to generate script")
+                        return None
                 else:
                     log("  Failed to generate script")
                     return None
-            else:
-                log("  Failed to generate script")
-                return None
 
-    if segment_type in {"news_briefing", "daily_briefing"}:
+    if segment_type == "news_briefing":
         script = _briefing_intro_line(show.name, segment_type) + script
 
     word_count = len(script.split())
@@ -3012,21 +3504,29 @@ def generate_segment(
     # Render audio
     log("  Rendering audio...")
     is_multi_voice = bool(get_segment_type_definition(segment_type).get("multi_voice", False))
+    # For Kokoro, preprocess_for_tts strips speaker labels, so detect from the original script.
+    _detect_source = script if backend == "kokoro" else processed
     if not is_multi_voice and re.search(
         r"^(?:HOST|GUEST|HOST_A|HOST_B|HOSTA|HOSTB|[A-Z][A-Z\s.]+)(?:\s*\([^)]+\))?:",
-        processed,
+        _detect_source,
         re.MULTILINE,
     ):
         is_multi_voice = True
 
     use_minimax_final = backend == "minimax" and long_async_enabled and not is_multi_voice
 
+    # A MiniMax render can end up spoken by Kokoro (validation pass, or fallback when
+    # MiniMax fails). `processed` carries MiniMax-native markup by then — notably
+    # "<#0.5#>" pauses, which Kokoro reads aloud as "number zero point five number".
+    # Re-derive the text for the backend that actually speaks it.
+    kokoro_text = preprocess_for_tts(script, backend="kokoro") if backend == "minimax" else processed
+
     if use_minimax_final:
         validate_voice = primary.get("voice_kokoro", show.voices.get("host", "am_michael"))
         validate_path = output_path.with_suffix(".wav")
         log(f"  Kokoro validation pass first using voice '{validate_voice}'...")
         validation_ok = render_single_voice(
-            processed,
+            kokoro_text,
             validate_path,
             validate_voice,
             backend="kokoro",
@@ -3041,7 +3541,7 @@ def generate_segment(
         async_ok = False
         async_voice = voices.get("host", "Deep_Voice_Man")
         try:
-            from minimax_tts import generate_speech_async
+            from station.minimax_tts import generate_speech_async
             async_ok = generate_speech_async(
                 processed,
                 output_path,
@@ -3061,7 +3561,10 @@ def generate_segment(
             backend_used = "kokoro_validated"
             success = True
     elif is_multi_voice:
-        success = render_multi_voice(processed, output_path, voices, backend=backend)
+        # Always pass the original script — render_multi_voice uses _parse_dialogue_parts
+        # to split by speaker label, then calls preprocess_for_tts on each chunk
+        # individually after voice assignment. All backends need labels present here.
+        success = render_multi_voice(script, output_path, voices, backend=backend)
     elif backend == "minimax":
         host_voice = voices.get("host", "Deep_Voice_Man")
         success = render_single_voice(
@@ -3077,7 +3580,7 @@ def generate_segment(
             fallback_path = output_path.with_suffix(".wav")
             log(f"  MiniMax render failed; falling back to Kokoro voice '{fallback_voice}'")
             success = render_single_voice(
-                processed,
+                kokoro_text,
                 fallback_path,
                 fallback_voice,
                 backend="kokoro",
@@ -3214,23 +3717,31 @@ def generate_for_show(
         iter_source_selection_strategy = base_source_selection_strategy
         selected_source_rule = None
         selected_source_context: SourceContext | None = None
-        _agnostic_types = {"station_id", "show_intro", "show_outro", "news_briefing", "daily_briefing"}
+        _agnostic_types = {"station_id", "show_intro", "show_outro", "news_briefing"}
         _show_seg_types = list(getattr(show, "segment_types", []) or [])
         _all_agnostic = bool(_show_seg_types) and all(s in _agnostic_types for s in _show_seg_types)
         auto_source = (
             not iter_source_type
             and not iter_source_value
-            and requested_segment_type in {"random", "reddit_post", "reddit_storytelling", "youtube"}
+            and requested_segment_type in {"random", "reddit_post", "reddit_storytelling", "jokes", "youtube"}
             and not _all_agnostic
         )
         if auto_source:
             for candidate_rule in _ordered_source_rules_for_show(show, show_id, requested_segment_type):
+                # "random" resolves to a concrete type only after the source is
+                # known; mirror that here so the size filter still applies.
+                _filter_seg = requested_segment_type
+                if _filter_seg == "random" and str(candidate_rule["type"]).lower() in {
+                    "reddit", "reddit_subreddit", "reddit_thread"
+                }:
+                    _filter_seg = "reddit_post"
                 ctx = load_source_context(
                     candidate_rule["type"],
                     candidate_rule["value"],
                     lookback_days=int(candidate_rule["lookback_days"]),
                     selection_strategy=str(candidate_rule["selection_strategy"]),
                     used_source_keys=used_source_keys,
+                    segment_type=_filter_seg,
                 )
                 if ctx:
                     selected_source_rule = candidate_rule
@@ -3258,6 +3769,12 @@ def generate_for_show(
             if not selected_source_context and not iter_source_type and not iter_source_value:
                 non_source_segment_types = [s for s in eligible_segment_types if s not in SOURCE_REQUIRED_SEGMENT_TYPES]
                 if non_source_segment_types:
+                    # If auto_source was attempted but found nothing and all fallback types
+                    # are structural segments, skip — generating intro/outro/station_id as
+                    # a substitute for unavailable source content causes infinite scheduler loops.
+                    if auto_source and all(s in _agnostic_types for s in non_source_segment_types):
+                        log(f"  [{i+1}/{count}] No source content available; skipping structural fallback to prevent overflow.")
+                        continue
                     eligible_segment_types = non_source_segment_types
             st = random.choice(eligible_segment_types)
 

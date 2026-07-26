@@ -722,17 +722,17 @@ sources:
     lookback_days: 1
     selection_strategy: top
     segment_type: ''
-  - type: rss_feed
+  - type: url
     value: https://www.abc.net.au/news/feed/2942460/rss.xml
     lookback_days: 1
     selection_strategy: latest
     segment_type: ''
-  - type: rss_feed
+  - type: url
     value: https://regionriverina.com.au/feed/
     lookback_days: 1
     selection_strategy: latest
     segment_type: ''
-  - type: rss_feed
+  - type: url
     value: https://www.indailysa.com.au/feeds/all
     lookback_days: 1
     selection_strategy: latest
@@ -743,3 +743,24 @@ sources:
     lookback_days: 7
     selection_strategy: latest
     segment_type: ''
+  dark_jokes:
+  - type: joke_api
+    value: https://v2.jokeapi.dev/joke/Dark,Misc
+    lookback_days: 7
+    selection_strategy: latest
+    segment_type: jokes
+  - type: reddit_subreddit
+    value: /r/darkjokes
+    lookback_days: 30
+    selection_strategy: top
+    segment_type: jokes
+  - type: reddit_subreddit
+    value: /r/jokesuncensored
+    lookback_days: 30
+    selection_strategy: top
+    segment_type: jokes
+  - type: reddit_subreddit
+    value: /r/dirtyjokes
+    lookback_days: 30
+    selection_strategy: top
+    segment_type: jokes

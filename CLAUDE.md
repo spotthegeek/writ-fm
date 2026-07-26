@@ -81,10 +81,19 @@ TTS pipeline:
 |----------|---------|
 | `OLLAMA_URL` / `OLLAMA_MODEL` | LLM for script generation |
 | `GOOGLE_TTS_API_KEY` / `GOOGLE_TTS_MODEL` | Google Gemini TTS |
-| `MINIMAX_API_KEY` | MiniMax TTS + music generation |
+| `MINIMAX_API_KEY` | MiniMax TTS + music generation (legacy; kept for fallback) |
+| `WRIT_MUSIC_BACKEND` | Music bumper provider: `lyria` (default) or `minimax` |
+| `GOOGLE_VERTEX_PROJECT` | GCP project ID for Lyria (falls back to `GOOGLE_CLOUD_PROJECT`) |
+| `GOOGLE_VERTEX_LOCATION` | Vertex AI region (default `us-central1`) |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Service-account JSON with `roles/aiplatform.user` |
+| `GOOGLE_VERTEX_ACCESS_TOKEN` | Pre-minted OAuth token, instead of a service account |
 | `ICECAST_PASS` | Icecast source password |
 | `WRIT_CONSUME_SEGMENTS` | `1` = delete after play (prod), `0` = keep (dev) |
 | `WRIT_ADMIN_PORT` | Admin UI port (default 8080) |
+| `REDDIT_CLIENT_ID` | Reddit OAuth app client ID (enables NSFW subreddit access) |
+| `REDDIT_CLIENT_SECRET` | Reddit OAuth app client secret |
+| `REDDIT_USERNAME` | Reddit account username for OAuth |
+| `REDDIT_PASSWORD` | Reddit account password for OAuth |
 
 ## Test Coverage
 
@@ -94,3 +103,13 @@ Regression tests cover the known production failure modes:
 - `test_admin_voice_resolution.py` — admin voice resolution and canonical-only persistence
 - `test_talk_generator_voice_logic.py` — voice/WPM/rendering per TTS backend
 - `test_google_tts.py` — Google TTS retry and timeout behaviour
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

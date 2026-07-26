@@ -147,6 +147,34 @@ _ADMIN_SESSION_DAYS = admin_session_days()
 _ADMIN_COOKIE = "writ_admin_session"
 _ADMIN_SECRET = secrets.token_bytes(32)  # random per-process; restarts invalidate all sessions
 
+if not _ADMIN_AUTH_ENABLED:
+    print("[admin] WARNING: WRIT_ADMIN_PASSWORD is not set — admin UI is disabled. Set it to enable access.")
+
+_NO_AUTH_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Unavailable</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#0f0f0f;color:#f0f0f0;display:flex;align-items:center;justify-content:center;height:100vh}
+.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:36px 40px;width:380px}
+h1{font-size:17px;font-weight:600;margin-bottom:16px;color:#f0f0f0;letter-spacing:-.01em}
+.accent{color:oklch(0.52 0.21 16)}
+p{font-size:13px;color:#999;line-height:1.6;margin-bottom:10px}
+code{background:#111;border:1px solid #2a2a2a;border-radius:4px;padding:2px 6px;font-size:12px;color:#f0f0f0}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1><span class="accent">Crouch</span><span style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin-left:4px;opacity:.7">FM</span> &nbsp;Admin</h1>
+  <p>The admin interface is not configured.</p>
+  <p>Set the <code>WRIT_ADMIN_PASSWORD</code> environment variable and restart the service to enable access.</p>
+</div>
+</body>
+</html>"""
+
 _LOGIN_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -199,7 +227,9 @@ def _verify_admin_token(token: str) -> bool:
 class AdminAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if not _ADMIN_AUTH_ENABLED:
-            return await call_next(request)
+            if request.url.path.startswith("/api/"):
+                return JSONResponse({"error": "Admin not configured. Set WRIT_ADMIN_PASSWORD."}, status_code=503)
+            return HTMLResponse(_NO_AUTH_HTML, status_code=503)
         path = request.url.path
         if path in ("/login", "/logout", "/favicon.ico") or path.startswith("/static/"):
             return await call_next(request)
@@ -1539,14 +1569,16 @@ def get_settings():
     data = load_schedule()
     return {
         "timezone": data.get("timezone", "local"),
-        "station_name": data.get("station_name", "WRIT-FM"),
+        "station_name": data.get("station_name", ""),
         "tagline": data.get("tagline", "AI generated radio"),
     }
 
 
 class SettingsUpdate(BaseModel):
     timezone: str = "local"
-    station_name: str = "WRIT-FM"
+    # Empty rather than a literal name: a blank submit must be rejected, not
+    # silently reset the station to whatever was hardcoded here.
+    station_name: str = ""
     tagline: str = "AI generated radio"
 
 
@@ -1554,7 +1586,10 @@ class SettingsUpdate(BaseModel):
 def update_settings(update: SettingsUpdate):
     data = load_schedule()
     data["timezone"] = _validate_timezone_name(update.timezone)
-    data["station_name"] = (update.station_name or "WRIT-FM").strip() or "WRIT-FM"
+    station_name = (update.station_name or "").strip()
+    if not station_name:
+        raise HTTPException(status_code=400, detail="station_name cannot be empty")
+    data["station_name"] = station_name
     data["tagline"] = update.tagline.strip()
     save_schedule(data)
     return {"ok": True, "timezone": data["timezone"], "station_name": data["station_name"], "tagline": data["tagline"]}
@@ -2375,6 +2410,20 @@ def get_scheduler_log(limit: int = 50):
     return _sched.state.get_log(limit)
 
 
+_disk_cache: dict = {"at": 0.0, "data": {}}
+
+
+@app.get("/api/system/disk")
+def get_system_disk():
+    """Free space and output/ breakdown. Cached — the breakdown stats every file
+    under output/, which is not worth repeating on every UI poll."""
+    now = time.time()
+    if now - _disk_cache["at"] > 60:
+        _disk_cache["data"] = _sched.disk_usage_report()
+        _disk_cache["at"] = now
+    return _disk_cache["data"]
+
+
 @app.get("/api/activity/segments")
 def get_activity_segments(limit: int = 20):
     """Rich per-segment activity: talk segments + music bumpers, newest first."""
@@ -2503,9 +2552,9 @@ class GenerationConfig(BaseModel):
     music: dict = {}
 
 
-_BRIEFING_SHOW_IDS = {"briefing_ai", "briefing_crypto", "briefing_tech", "briefing_news_aus", "briefing_daily"}
+_BRIEFING_SHOW_IDS = {"briefing_ai", "briefing_crypto", "briefing_tech", "briefing_news_aus"}
 _BRIEFING_AUDIO_EXTS = {".wav", ".mp3", ".flac"}
-_BRIEFING_ORDER = ["briefing_ai", "briefing_crypto", "briefing_tech", "briefing_news_aus", "briefing_daily"]
+_BRIEFING_ORDER = ["briefing_ai", "briefing_crypto", "briefing_tech", "briefing_news_aus"]
 
 
 def _briefing_last_generated(show_id: str) -> str | None:

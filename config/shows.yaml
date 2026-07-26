@@ -92,17 +92,17 @@ shows:
       talk:
         max_days: 3
       music:
-        max_days: 14
+        max_days: 60
     generation:
       talk:
         enabled: true
-        min_inventory: '8'
+        min_inventory: 8
         target_inventory: 12
         cadence: continuous
       music:
         enabled: true
         min_inventory: 4
-        target_inventory: '6'
+        target_inventory: 6
         cadence: weekly
     playback_sequence: {}
     tts_backend: kokoro
@@ -130,17 +130,17 @@ shows:
       talk:
         max_days: 3
       music:
-        max_days: 14
+        max_days: 60
     generation:
       talk:
         enabled: true
-        min_inventory: '8'
+        min_inventory: 8
         target_inventory: 12
         cadence: continuous
       music:
         enabled: true
         min_inventory: 4
-        target_inventory: '6'
+        target_inventory: 6
         cadence: weekly
     playback_sequence: {}
     tts_backend: kokoro
@@ -174,17 +174,17 @@ shows:
       talk:
         max_days: 3
       music:
-        max_days: 14
+        max_days: 60
     generation:
       talk:
         enabled: true
-        min_inventory: '8'
-        target_inventory: '12'
+        min_inventory: 8
+        target_inventory: 12
         cadence: continuous
       music:
         enabled: true
         min_inventory: 4
-        target_inventory: '6'
+        target_inventory: 6
         cadence: weekly
     playback_sequence: {}
     tts_backend: kokoro
@@ -210,17 +210,17 @@ shows:
       talk:
         max_days: 3
       music:
-        max_days: 14
+        max_days: 60
     generation:
       talk:
         enabled: true
-        min_inventory: '8'
+        min_inventory: 8
         target_inventory: 12
         cadence: continuous
       music:
         enabled: true
         min_inventory: 4
-        target_inventory: '6'
+        target_inventory: 6
         cadence: weekly
     tts_backend: kokoro
     playback_sequence: {}
@@ -233,11 +233,11 @@ shows:
       voice_kokoro: am_adam
       voice_minimax: Deep_Voice_Man
       voice_google: Kore
-      tts_backend: minimax
+      tts_backend: kokoro
       display_name: Byte
     segment_types:
     - news_briefing
-    tts_backend: minimax
+    tts_backend: kokoro
     content_lifecycle:
       talk:
         max_days: 3
@@ -245,7 +245,7 @@ shows:
       talk:
         enabled: true
         cadence: daily
-        time_after: 05:30
+        time_after: 07:30
         min_inventory: 0
         target_inventory: 1
     guests: []
@@ -261,11 +261,11 @@ shows:
       voice_kokoro: am_adam
       voice_minimax: Deep_Voice_Man
       voice_google: Kore
-      tts_backend: minimax
+      tts_backend: kokoro
       display_name: Byte
     segment_types:
     - news_briefing
-    tts_backend: minimax
+    tts_backend: kokoro
     content_lifecycle:
       talk:
         max_days: 3
@@ -273,7 +273,7 @@ shows:
       talk:
         enabled: true
         cadence: daily
-        time_after: 05:30
+        time_after: 07:30
         min_inventory: 0
         target_inventory: 1
     guests: []
@@ -289,11 +289,11 @@ shows:
       voice_kokoro: am_adam
       voice_minimax: Deep_Voice_Man
       voice_google: Kore
-      tts_backend: minimax
+      tts_backend: kokoro
       display_name: Byte
     segment_types:
     - news_briefing
-    tts_backend: minimax
+    tts_backend: kokoro
     content_lifecycle:
       talk:
         max_days: 3
@@ -301,7 +301,7 @@ shows:
       talk:
         enabled: true
         cadence: daily
-        time_after: 05:30
+        time_after: 07:30
         min_inventory: 0
         target_inventory: 1
     guests: []
@@ -316,11 +316,11 @@ shows:
       voice_kokoro: af_sky
       voice_minimax: Calm_Woman
       voice_google: Zephyr
-      tts_backend: minimax
+      tts_backend: kokoro
       display_name: Matilda
     segment_types:
     - news_briefing
-    tts_backend: minimax
+    tts_backend: kokoro
     content_lifecycle:
       talk:
         max_days: 3
@@ -328,38 +328,7 @@ shows:
       talk:
         enabled: true
         cadence: daily
-        time_after: 05:30
-        min_inventory: 0
-        target_inventory: 1
-    guests: []
-    bumper_style: ambient
-    playback_sequence: {}
-  briefing_daily:
-    name: Daily Briefing
-    description: Consolidated 25-30 min on-demand briefing covering AI, Crypto, Tech,
-      and Australian News.
-    hosts:
-    - id: byte
-      role: primary
-      voice_kokoro: am_adam
-      voice_minimax: Deep_Voice_Man
-      voice_google: Kore
-      tts_backend: google
-      display_name: Byte
-    - id: vector
-      role: co-host
-      tts_backend: google
-    segment_types:
-    - daily_briefing
-    tts_backend: google
-    content_lifecycle:
-      talk:
-        max_days: 3
-    generation:
-      talk:
-        enabled: true
-        cadence: daily
-        time_after: 05:30
+        time_after: 07:30
         min_inventory: 0
         target_inventory: 1
     guests: []
@@ -382,15 +351,57 @@ shows:
       role: primary
       tts_backend: kokoro
     playback_sequence: {}
-    content_lifecycle: {}
+    content_lifecycle:
+      talk:
+        max_days: 3
+      music:
+        max_days: 60
     generation:
       talk:
         enabled: true
-        min_inventory: '8'
+        min_inventory: 8
         target_inventory: 12
         cadence: continuous
       music:
         enabled: true
         min_inventory: 4
-        target_inventory: '6'
+        target_inventory: 6
+        cadence: weekly
+  dark_jokes:
+    name: Dark Jokes
+    description: A dark comedy segment featuring a collection of jokes.
+    tts_backend: kokoro
+    guests: []
+    segment_types:
+    - show_intro
+    - show_outro
+    - station_id
+    - jokes
+    bumper_style: ambient
+    hosts:
+    - id: sudo
+      role: co-host
+      voice_kokoro: af_nova
+      voice_minimax: Wise_Woman
+      voice_google: Zephyr
+      tts_backend: kokoro
+      display_name: sudo
+    playback_sequence: {}
+    content_lifecycle:
+      talk:
+        max_days: 3
+      music:
+        max_days: 60
+    generation:
+      talk:
+        enabled: true
+        # target * (max_days-1) / max_days — keeps the top-up batch to one day's
+        # slice so generation spreads across the expiry window instead of pulsing.
+        min_inventory: 8
+        target_inventory: 12
+        cadence: continuous
+      music:
+        enabled: true
+        min_inventory: 4
+        target_inventory: 8
         cadence: weekly
