@@ -38,10 +38,21 @@ from shared.settings import minimax_music_model, ollama_model, ollama_url
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = PROJECT_ROOT / "config"
-TALK_DIR = PROJECT_ROOT / "output" / "talk_segments"
-BUMPERS_DIR = PROJECT_ROOT / "output" / "music_bumpers"
+OUTPUT_DIR = PROJECT_ROOT / "output"
+TALK_DIR = OUTPUT_DIR / "talk_segments"
+BUMPERS_DIR = OUTPUT_DIR / "music_bumpers"
+SOURCE_CACHE_DIR = OUTPUT_DIR / "source_cache"
+SCRIPTS_DIR = OUTPUT_DIR / "scripts"
+JOBS_DIR = OUTPUT_DIR / "jobs"
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python3"
 AUDIO_EXTS = {".wav", ".mp3", ".flac"}
+
+# Cached source media: yt-dlp downloads that talk_generator has already copied into
+# a segment. 1.1 unlinks these at copy time; this TTL is the backstop for anything
+# that predates it or whose generation died between download and copy.
+SOURCE_CACHE_TTL_DAYS = int(os.environ.get("WRIT_SOURCE_CACHE_TTL_DAYS", "30"))
+JOBS_TTL_DAYS = int(os.environ.get("WRIT_JOBS_TTL_DAYS", "30"))
+CACHED_MEDIA_EXTS = {".mp3", ".m4a", ".webm", ".opus", ".wav", ".part", ".ytdl"}
 
 CADENCE_SECONDS = {
     "continuous": 0,        # generate as soon as inventory drops
@@ -481,6 +492,151 @@ def _cleanup_expired_segments(show_id: str, max_days: int) -> int:
     return deleted
 
 
+def _janitor_sweep(dry_run: bool = False) -> dict:
+    """Enforce retention on everything under output/ that nothing else owns.
+
+    Segment expiry is handled per-show by _cleanup_expired_segments (age of the
+    content). This is the complement: files that no longer belong to anything —
+    cache copies already consumed, sidecars whose audio is gone, stale job records.
+    Without it, `output/` only ever grows; it reached 99% of root in July 2026.
+
+    Deliberately NOT swept: output/scripts/. Those files are the used-source dedupe
+    ledger that talk_generator scans on every generation attempt, so a TTL there
+    would silently let exhausted sources be re-aired. Phase 3.5 replaces the scan
+    with a real index under output/state/, and the TTL becomes safe then.
+
+    Returns a per-category {files, bytes} report. dry_run reports without deleting.
+    """
+    now = time.time()
+    report: dict[str, dict] = {}
+
+    def _sweep(category: str, paths) -> None:
+        files = 0
+        freed = 0
+        for path in paths:
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            if not dry_run:
+                try:
+                    path.unlink()
+                except OSError:
+                    continue
+            files += 1
+            freed += size
+        if files:
+            report[category] = {"files": files, "bytes": freed}
+
+    # 1. Cached source media past its TTL, measured on last touch. The .vtt
+    #    transcripts and info.json stay — they are small and are the record of
+    #    what was fetched.
+    if SOURCE_CACHE_DIR.exists():
+        cutoff = now - SOURCE_CACHE_TTL_DAYS * 86400
+        stale = []
+        for path in SOURCE_CACHE_DIR.rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in CACHED_MEDIA_EXTS:
+                continue
+            try:
+                if max(path.stat().st_mtime, path.stat().st_atime) < cutoff:
+                    stale.append(path)
+            except OSError:
+                continue
+        _sweep("source_cache", stale)
+
+    # 2. Sidecars whose audio no longer exists. Scoped to the two segment trees so
+    #    it can never reach output/scripts/ or the .<show>_source_rotation.json
+    #    rotation state that lives there.
+    orphans = []
+    for root in (TALK_DIR, BUMPERS_DIR):
+        if not root.exists():
+            continue
+        for path in root.rglob("*.json"):
+            name = path.name
+            if name.endswith(".plays.json"):
+                audio = path.with_name(name[: -len(".plays.json")])
+                if not audio.exists():
+                    orphans.append(path)
+            else:
+                stem = path.with_suffix("")
+                if not any(stem.with_suffix(ext).exists() for ext in AUDIO_EXTS):
+                    orphans.append(path)
+    _sweep("orphan_sidecars", orphans)
+
+    # 3. Job records past their TTL.
+    if JOBS_DIR.exists():
+        cutoff = now - JOBS_TTL_DAYS * 86400
+        stale_jobs = []
+        for path in JOBS_DIR.glob("*.json"):
+            try:
+                if path.stat().st_mtime < cutoff:
+                    stale_jobs.append(path)
+            except OSError:
+                continue
+        _sweep("jobs", stale_jobs)
+
+    # 4. Directories left empty by the sweep above.
+    if SOURCE_CACHE_DIR.exists() and not dry_run:
+        removed = 0
+        for path in sorted(SOURCE_CACHE_DIR.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+            if path.is_dir():
+                try:
+                    path.rmdir()
+                    removed += 1
+                except OSError:
+                    pass
+        if removed:
+            report["empty_dirs"] = {"files": removed, "bytes": 0}
+
+    return report
+
+
+def _format_janitor_report(report: dict) -> str:
+    parts = [
+        f"{cat} {vals['files']} file(s) / {vals['bytes'] / 1048576:.1f} MB"
+        for cat, vals in report.items()
+    ]
+    total = sum(v["bytes"] for v in report.values())
+    return f"{', '.join(parts)} — {total / 1048576:.1f} MB total"
+
+
+def disk_usage_report() -> dict:
+    """Free space and an output/ breakdown, for the admin disk gauge (task 1.3)."""
+    import shutil as _shutil
+
+    try:
+        usage = _shutil.disk_usage(str(PROJECT_ROOT))
+    except OSError:
+        return {}
+
+    breakdown = {}
+    if OUTPUT_DIR.exists():
+        for child in sorted(OUTPUT_DIR.iterdir()):
+            if not child.is_dir():
+                continue
+            total = 0
+            for path in child.rglob("*"):
+                try:
+                    if path.is_file():
+                        total += path.stat().st_size
+                except OSError:
+                    continue
+            breakdown[child.name] = total
+
+    free_gb = usage.free / 1073741824
+    return {
+        "total_bytes": usage.total,
+        "used_bytes": usage.used,
+        "free_bytes": usage.free,
+        "percent_used": round(usage.used / usage.total * 100, 1) if usage.total else 0,
+        "output_bytes": sum(breakdown.values()),
+        "output_breakdown": breakdown,
+        # Under 10 GB the next few generation jobs are at risk; under 2 GB the
+        # segment writer starts failing and Icecast drains the queue silently.
+        "state": "critical" if free_gb < 2 else "warning" if free_gb < 10 else "ok",
+    }
+
+
 def _stagger_expiry_count(
     generated: list[datetime],
     now: datetime,
@@ -767,6 +923,24 @@ def run_scheduler(job_registry: dict, check_interval: int = 300):
                             print(f"[scheduler] Cleaned up {n} expired segment(s) for {show_id}")
             except Exception as e:
                 print(f"[scheduler] Cleanup error: {e}")
+
+            try:
+                report = _janitor_sweep()
+                if report:
+                    print(f"[scheduler] Janitor: {_format_janitor_report(report)}")
+            except Exception as e:
+                print(f"[scheduler] Janitor error: {e}")
+
+            try:
+                disk = disk_usage_report()
+                if disk.get("state") in {"warning", "critical"}:
+                    print(
+                        f"[scheduler] DISK {disk['state'].upper()}: "
+                        f"{disk['free_bytes'] / 1073741824:.1f} GB free "
+                        f"({disk['percent_used']}% used)"
+                    )
+            except Exception as e:
+                print(f"[scheduler] Disk check error: {e}")
 
         time.sleep(check_interval)
 

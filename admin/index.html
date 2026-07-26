@@ -538,6 +538,76 @@ const fmtActivityDate = (iso) => {
   return `${months[d.getMonth()]} ${d.getDate()}, ${time}`;
 };
 
+// Disk gauge. Root hit 99% in July 2026 with nothing surfacing it — the streamer
+// keeps playing from its queue for about an hour after writes start failing, so a
+// full disk looks like a healthy station until the queue drains.
+const DISK_STATE_COLOR = { ok: "#22c55e", warning: "#f59e0b", critical: "#ef4444" };
+
+const fmtBytes = (n) => {
+  if (!n && n !== 0) return "—";
+  const gb = n / 1073741824;
+  if (gb >= 1) return `${gb.toFixed(1)} GB`;
+  const mb = n / 1048576;
+  if (mb >= 1) return `${mb.toFixed(0)} MB`;
+  return `${(n / 1024).toFixed(0)} KB`;
+};
+
+const DiskCard = ({ t }) => {
+  const [disk, , , reloadDisk] = useApi("/api/system/disk");
+  useInterval(reloadDisk, 60000);
+
+  if (!disk || !disk.total_bytes) return null;
+  const color = DISK_STATE_COLOR[disk.state] || t.textMuted;
+  const breakdown = Object.entries(disk.output_breakdown || {})
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => b[1] - a[1]);
+  const outputMax = breakdown.length ? breakdown[0][1] : 0;
+
+  return (
+    <Card t={t} style={{ padding: "16px 18px", marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
+        <div style={{ fontSize: 10.5, color: t.textFaint, textTransform: "uppercase", letterSpacing: "0.06em" }}>Disk</div>
+        {disk.state !== "ok" && (
+          <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: `${color}20`, color, fontWeight: 600, textTransform: "uppercase" }}>
+            {disk.state}
+          </span>
+        )}
+        <span style={{ marginLeft: "auto", fontSize: 11, color: t.textFaint, fontFamily: "'DM Mono',monospace" }}>
+          output/ {fmtBytes(disk.output_bytes)}
+        </span>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 24, fontWeight: 600, color, letterSpacing: "-0.02em" }}>{fmtBytes(disk.free_bytes)}</span>
+        <span style={{ fontSize: 12, color: t.textMuted }}>free of {fmtBytes(disk.total_bytes)}</span>
+        <span style={{ marginLeft: "auto", fontSize: 12, color: t.textMuted, fontFamily: "'DM Mono',monospace" }}>{disk.percent_used}% used</span>
+      </div>
+
+      <div style={{ height: 6, background: t.border, borderRadius: 99, overflow: "hidden", marginBottom: breakdown.length ? 14 : 0 }}>
+        <div style={{ height: "100%", width: `${Math.min(100, disk.percent_used)}%`, background: color, borderRadius: 99, transition: "width 0.4s" }} />
+      </div>
+
+      {breakdown.length > 0 && (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <tbody>
+            {breakdown.map(([name, bytes]) => (
+              <tr key={name}>
+                <td style={{ padding: "3px 0", color: t.textMuted, width: 140 }}>{name}</td>
+                <td style={{ padding: "3px 8px" }}>
+                  <div style={{ height: 4, background: t.border, borderRadius: 99, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${outputMax ? (bytes / outputMax) * 100 : 0}%`, background: t.accent, borderRadius: 99 }} />
+                  </div>
+                </td>
+                <td style={{ padding: "3px 0", textAlign: "right", color: t.textFaint, fontFamily: "'DM Mono',monospace", width: 70 }}>{fmtBytes(bytes)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Card>
+  );
+};
+
 const DashboardScreen = ({ t, onNav, npTopic, npChannel, npTitle: npTitleProp, npShow: npShowProp, npType, elapsed, npTotal }) => {
   const [status, , , reloadStatus] = useApi("/api/status");
   const [shows] = useApi("/api/shows");
@@ -592,6 +662,8 @@ const DashboardScreen = ({ t, onNav, npTopic, npChannel, npTitle: npTitleProp, n
           </Card>
         ))}
       </div>
+
+      <DiskCard t={t} />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
         <Card t={t} style={{ padding: "16px 18px" }}>

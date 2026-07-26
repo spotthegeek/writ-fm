@@ -1508,8 +1508,11 @@ def _download_youtube_assets(source_value: str) -> tuple[dict, Path | None, str,
             "-x",
             "--audio-format",
             "mp3",
+            # The Icecast mount re-encodes to 96 kbps, so downloading at yt-dlp's
+            # best (quality 0, ~24 MB/video) buys nothing audible and costs ~5x
+            # the transient disk. Overridable for anyone who disagrees.
             "--audio-quality",
-            "0",
+            os.environ.get("WRIT_YTDLP_AUDIO_QUALITY", "128K"),
             "-o",
             audio_tmpl,
             source_url,
@@ -3323,6 +3326,20 @@ def generate_segment(
 
         output_path = show_dir / f"{segment_type}_{topic_slug}_{timestamp}{source_audio.suffix or '.mp3'}"
         shutil.copy2(source_audio, output_path)
+
+        # The cache copy is redundant once the segment owns the audio, and it is the
+        # single largest source of disk growth (~24 MB per video, never reclaimed).
+        # Drop it only after verifying the copy landed intact. _download_youtube_assets
+        # guards on `.exists()`, so a re-request simply re-downloads.
+        try:
+            if output_path.stat().st_size == source_audio.stat().st_size:
+                freed = source_audio.stat().st_size
+                source_audio.unlink()
+                log(f"  Released cached source audio ({freed / 1048576:.1f} MB): {source_audio.name}")
+            else:
+                log(f"  Cache copy size mismatch; keeping {source_audio.name}")
+        except Exception as e:
+            log(f"  Could not release cached source audio: {e}")
 
         script = source_context.transcript or source_context.source_material or source_context.title or ""
         word_count = len(script.split()) if script else 0

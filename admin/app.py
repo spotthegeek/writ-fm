@@ -2405,6 +2405,20 @@ def get_scheduler_log(limit: int = 50):
     return _sched.state.get_log(limit)
 
 
+_disk_cache: dict = {"at": 0.0, "data": {}}
+
+
+@app.get("/api/system/disk")
+def get_system_disk():
+    """Free space and output/ breakdown. Cached — the breakdown stats every file
+    under output/, which is not worth repeating on every UI poll."""
+    now = time.time()
+    if now - _disk_cache["at"] > 60:
+        _disk_cache["data"] = _sched.disk_usage_report()
+        _disk_cache["at"] = now
+    return _disk_cache["data"]
+
+
 @app.get("/api/activity/segments")
 def get_activity_segments(limit: int = 20):
     """Rich per-segment activity: talk segments + music bumpers, newest first."""
