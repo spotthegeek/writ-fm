@@ -270,6 +270,38 @@ covered unused imports and dead branches — these are whole features.
 - [ ] **4.8** Tidy: `archive/`, `tools/backfill_short_titles.py`, `writ-fm.pid`,
       `SCHEDULE.md`, `WRIT-FM-Screenshot.png`, `CLAUDE_CODE_ISSUE_…md`, and the two stale
       repo copies in `.claude/worktrees/`.
+- [ ] **4.8b** **Reclaim the ~32 GB outside the repo.** Added after Session A, which found
+      that Phase 0's disk problem was mostly *not* in `output/` — see [D1](#deviations).
+      Root is still at **89%** (7.7 GB free) after Phase 0 did everything it could.
+      This is the item that actually fixes it.
+
+      | Path | Size | Status | Verified |
+      |---|---|---|---|
+      | `/root/music-gen.server` | 16 GB (9.6 GB checkpoints) | ACE-Step model + venv | Backend is Lyria — **pair with 4.6** |
+      | `/root/.cache/uv` | 11 GB | uv package cache | Regenerable |
+      | `/root/writ-fm` | 14 GB (5.8 venv / 1.9 output / 1.0 `.git`) | **Stale pre-move copy of this repo** | Untouched since 26 Apr, nothing newer than 1 Jun, no process cwd, both units use `/code/writ-fm` |
+
+      **Sizes do not add up, and that is expected.** Measured separately they total 41 GB;
+      measured in one `du` invocation, which counts each hardlinked inode once, they total
+      **32 GB**. The uv cache hardlinks into the venvs, so 32 GB is the real figure. Deleting
+      all three takes root from 89% to roughly **40%**.
+
+      Cautions, in the order they bite:
+      - **`/root/writ-fm/output/` holds 1.9 GB of its own segments and sidecars.** Confirm
+        nothing there is unique before deleting — it is a different corpus from
+        `/code/writ-fm/output/`, not a copy of it.
+      - `/root/writ-fm/.git` is a full 1 GB history. Confirm it has no commits absent from
+        the live repo (`git log --oneline` against `origin/main`) before removing it.
+      - ACE-Step checkpoints are only dead if 4.6 lands. Do them together or not at all.
+      - Prefer `uv cache prune` (removes unused entries) over `uv cache clean`. Because of
+        the hardlinking above, pruning may free far less than 11 GB — measure, do not assume.
+        The cache is shared with `music-gen.server`, so deleting that first changes the sum.
+      - All three are **root-owned and outside the repo**, so none of this is covered by
+        decision A. Treat it as its own decision.
+
+      *Session A did not touch any of it — out of scope for Phase 0, and deleting another
+      repo copy is not an unattended call. `uv cache prune` was attempted and blocked by the
+      tool sandbox.*
 - [ ] **4.9** Correct `CLAUDE.md`. It still names `config/schedule.yaml` as the config
       authority and describes `api_server.py` as a standalone third service (it is a thread
       inside the streamer). Both send future work to the wrong place. Update the Kokoro note
@@ -398,13 +430,17 @@ remains. The actual top consumers, found only after the deletions:
 | `/root/.cache/uv` | 11 GB | uv package cache. Regenerable |
 | `/root/writ-fm` | 8.4 GB | **A stale second copy of this repo** — its own `.venv` (5.5 GB), `output/` (1.9 GB), `.git` (1 GB) |
 
-`/root/writ-fm` is confirmed dead: untouched since 26 Apr, nothing newer than 1 Jul, no
+`/root/writ-fm` is confirmed dead: untouched since 26 Apr, nothing newer than 1 Jun, no
 process has it as cwd, and both systemd units use `/code/writ-fm`. **None of this was
 deleted** — all three sit outside Phase 0's scope and outside decision A, and deleting
-another repo copy is not a call to make unattended. Together they are ~32 GB, so clearing
-them would take root to roughly 45%. *Recommend folding into Phase 4.8 (tidy), where
-`/root/writ-fm` belongs with the other stale copies, and pairing the ACE-Step checkpoint
-deletion with 4.6.* Note `uv cache prune` was attempted and blocked by the tool sandbox.
+another repo copy is not a call to make unattended.
+
+➡ **Now tracked as [task 4.8b](#phase-4--delete-what-is-dead)**, with per-path sizes,
+verification status and cautions. Together they are **~32 GB** (not the 41 GB the
+per-directory figures suggest — the uv cache hardlinks into the venvs, so a single `du`
+invocation counts the shared inodes once). Clearing all three takes root from 89% to
+roughly **40%**. `uv cache prune` was attempted in Session A and blocked by the tool
+sandbox.
 
 **D2 — Phase 0 counts.** 0.1 was 308 mp3s = **6.78 GB** (plan said ~7.3 GB), plus one stray
 17 MB `.webm` left beside its own mp3, deleted with it. 0.2 was exactly 7,684 files as
