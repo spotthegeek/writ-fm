@@ -7,8 +7,11 @@
 ## Working state
 
 > **Current phase:** Phases 0–2 complete (Session A). Phase 3a + 3b complete (Session B,
-> 2026-07-26) and **soaking** — Phase 3c/3d is next, after a day of observation.
-> **Last updated:** 2026-07-26
+> 2026-07-26), soaked cleanly for 15h — Phase **3c/3d/3e** is next and ready now.
+> **Last updated:** 2026-07-27
+> **⏳ Time-boxed:** [3e](#3e--make-the-archive-a-reserve-not-the-default) wants to land by
+> **2026-07-29**, before `talesfromtechsupport`'s current segments expire and it tops up from
+> the archive a second time.
 > **Plan status:** approved, all six decisions settled — see [Decision log](#decision-log). No phase is blocked on input.
 >
 > **Read [Deviations](#deviations) before starting Phase 3c or 4.** Findings that change later
@@ -46,7 +49,7 @@ enforces this only fires on the main session.
 | 0 | Reclaim the disk | ⚠ Done, target not met | — |
 | 1 | Stop it refilling | ☑ Done | — |
 | 2 | Fix the on-air name | ☑ Done | — |
-| 3 | End the content starvation | ◐ 3a + 3b done, soaking | 3c/3d — *ready now* |
+| 3 | End the content starvation | ◐ 3a + 3b done, soaked clean | 3c/3d/**3e** — *ready now, 3e by 29 Jul* |
 | 4 | Delete what is dead | ☐ Not started | Phase 3 |
 | 5 | Make supply visible | ☐ Not started | — |
 | 6 | Programming improvements | ☐ Not started | Phase 3 |
@@ -260,13 +263,52 @@ Largest phase, and the one most worth splitting across sessions — 3a/3b, soak 
 - [ ] **3.8** Clear the `briefing_daily` orphan — the show no longer exists in `shows.yaml`
       but the scheduler has tried it 63 times.
 
+### 3e — Make the archive a reserve, not the default
+
+*Added 2026-07-27, after Session B's soak showed 3.2 working too well. See
+[D20](#deviations). Not in the original plan.*
+
+3.2 reaches into `top`/`all` whenever the show's recency window is dry — which on a slow
+subreddit is *every* generation, not an exceptional one. Over the first 15 hours
+`talesfromtechsupport` generated 11 segments, **all** from posts dated 2014-07-24 to
+2017-09-28 (median 9.3 years old), aired as though current. The show went from starving to
+being an archive channel. These three tasks make the archive the reserve it was meant to be.
+
+- [ ] **3.10** Gate the archive fallback on genuine scarcity. Fire it only when the show is
+      at or below a **scarcity floor** (suggest 3), not merely below `min_inventory: 8`.
+      Above the floor, return **cold** and generate nothing — the existing segments keep
+      airing, which is the better outcome. Depends on 3.7: "cold above the floor" is a normal
+      state the scheduler currently has no way to represent, which is why this belongs with
+      3d rather than in Phase 6.
+- [ ] **3.11** Retention floor on expiry. `_cleanup_expired_segments()`
+      (`admin/scheduler.py:482`) must not delete a show below the same floor.
+      **3.10 and 3.11 only work as a pair** — 3.10 alone lets the show drain to zero while
+      the generator declines to refill it; 3.11 alone just delays the same archive top-up.
+- [ ] **3.12** Pass the source post's age into the prompt, so reserve material is placed in
+      time ("back in 2016") instead of implied-current. Worth doing even once 3.10 makes it
+      rare. This supersedes the Phase 6 note added for [D18](#deviations).
+
+**Config decision to make when this lands:** whether the floor is per-show. For
+`talesfromtechsupport` and `nosleep` archive material is timeless and only needs dating; for
+`sysadmin` and `UFOs` a three-year-old thread is stale in substance, not just in framing. A
+per-show floor — or a plain archive on/off — is probably the right knob rather than one
+global setting.
+
+> ⏳ **Deadline: 2026-07-29.** `talesfromtechsupport`'s current 12 segments were generated
+> 2026-07-26 against `max_days: 3`, so they expire around the 29th and the show tops up from
+> the archive again. Landing 3e before then means this never recurs; after, it is a second
+> batch of decade-old content. Do **not** try to fix the existing batch by flushing it — that
+> drops the show to 1 and pulls in *more* archive material.
+
 ### Tests to add
 - [ ] **3.9** Index/scan equivalence; listing pagination; used-set expiry boundary; backoff
       escalation.
       **Half done.** `tests/test_source_widening.py` (22 tests) covers listing pagination and
       the used-set expiry boundary, plus the archive fallbacks and the preserved PullPush
-      path. **Still owed by Session C:** index/scan equivalence (3.5) and backoff escalation
-      (3.6). Suite is now **166 tests**.
+      path. **Still owed by Session C:** index/scan equivalence (3.5), backoff escalation
+      (3.6), and the 3e scarcity/retention floor — including the pair invariant, that a show
+      between the floor and `min_inventory` neither generates archive material nor loses
+      segments to expiry. Suite is now **166 tests**.
 - [ ] **3.V** **Verify:** failure count per day drops an order of magnitude. All five on-air
       shows sit at or above `min_inventory: 8` for a full week. `talesfromtechsupport`
       climbs off 1.
@@ -612,6 +654,34 @@ listener would notice. Nothing was changed for it — out of scope here, and dec
 repetition — but **Phase 6 should consider passing the post's age into the prompt** so the
 host can say "a few years back" instead of implying it is this week.
 
+**D20 — 3.2 worked, and that is the problem. Recorded after the 15-hour soak (2026-07-27).**
+The archive fallback is not an exceptional path on a slow subreddit — it is the *only* path.
+In the first 15h36m `talesfromtechsupport` generated 11 segments, every one from a post dated
+**2014-07-24 to 2017-09-28** (median 9.3 years old), read on air as though current. `nosleep`
+over the same period drew 6 posts all **1 day** old, so this is a property of slow sources,
+not of the change. Supply-side results were otherwise clean: 0 generation failures in 15.6
+hours (against 16 in the 2 hours before), 14 jobs, 20 segments, 25 distinct sources, no
+duplicate selections, no service restarts, one transient `Ollama error: timed out` that
+self-recovered.
+
+The causal chain is `max_days: 3` expiry → inventory below `min_inventory: 8` → scheduler
+tops up to target 12 (`admin/scheduler.py:824`, `should_run = inventory <= minimum and
+inventory < target`) → recency window dry → archive.
+
+*A tempting fix that does not work:* "never expire a segment unless a new one replaces it."
+Expiry is what creates the inventory gap, and that gap is the **only** thing that triggers
+generation. With no expiry, `should_run` is never true, the show freezes at 12 segments and
+never picks up genuinely-new posts either — so nothing ever qualifies as the replacement.
+Gating the *archive* rather than the *expiry* reaches the same outcome with a far smaller
+change; the retention floor is then needed only to stop the show draining while the generator
+declines. ➡ **Now tracked as [3e](#3e--make-the-archive-a-reserve-not-the-default), with a
+2026-07-29 deadline.**
+
+*Repetition was also measured and deliberately accepted:* 137 talk plays / 52 unique over 12
+hours, `sysadmin` median `play_count` 12 and `alien_theory` 17, both because they never dip
+below `min_inventory` and so never generate. The operator is comfortable with this and will
+address it by raising rotation targets. **Not a task; do not "fix" it.**
+
 **D19 — Deployment shape, unchanged from Session A.** Work was done on branch
 `worktree-session-b-phase-3a-3b` (draft PR **#3**, `gh` works now — D10's note that it is not
 installed is out of date). The change was then applied to `/code/writ-fm`'s working tree as
@@ -719,17 +789,38 @@ Deviations, and revise the later session prompts in the appendix if anything you
 learned changes them.
 ```
 
-### Session C — Phase 3c + 3d
+### Session C — Phase 3c + 3d + 3e
 
-*Revised after Session B.*
+*Revised 2026-07-27, after Session B's soak added Phase 3e.*
 
 ```
 Read docs/plans/2026-07-26-improvement-plan.md. Decisions A–F are settled and binding.
-Read the Deviations section first — Sessions A and B have both run, and D12–D19 change
+Read the Deviations section first — Sessions A and B have both run, and D12–D20 change
 what this session is walking into.
 
-Execute Phase 3c (3.5), 3d (3.6–3.8) and the rest of the tests in 3.9. Do not start
-Phase 4.
+Execute Phase 3c (3.5), 3d (3.6–3.8), 3e (3.10–3.12) and the rest of the tests in 3.9.
+Do not start Phase 4.
+
+3e is new, is the reason this session is time-boxed, and is the part that matters most
+to what a listener actually hears. Read its section in full before starting. Summary:
+3.2 (Session B) made the archive fallback fire on every generation for a slow
+subreddit, so talesfromtechsupport now airs posts from 2014-2017 as though they were
+current. 3.10 gates the archive on a scarcity floor, 3.11 stops expiry dropping a show
+below that floor, 3.12 dates the material in the prompt.
+
+- 3.10 and 3.11 MUST land together. 3.10 alone drains a show to zero while the
+  generator declines to refill it; 3.11 alone just delays the same archive top-up.
+  If you can only land one thing this session, land the 3.10+3.11 pair, not 3.5.
+- Do 3.7 before 3.10 — the gate needs a way to say "cold, and that is fine".
+- LAND 3e BY 2026-07-29. talesfromtechsupport's current 12 segments expire around then
+  (max_days: 3) and the show will top up from the archive again. Do NOT try to fix the
+  existing batch by flushing it: that drops the show to 1 segment and pulls in more
+  archive material, not less.
+- There is a config decision inside 3e — whether the scarcity floor is per-show. Ask me
+  rather than picking one; for talesfromtechsupport and nosleep archive material is
+  timeless, for sysadmin and UFOs it is stale in substance.
+- On-air repetition (137 plays / 52 unique in 12h) is ACCEPTED and is not a task.
+  I will address it by raising rotation targets. Do not "fix" it.
 
 Notes:
 - 3.5 has a mandatory invariant: the new output/state/ index must reproduce exactly
@@ -907,13 +998,10 @@ The linear clock currently carries five shows — nosleep, sysadmin, alien_theor
 talesfromtechsupport, youtube-ai — which is what 6.2's top-of-hour briefing slot has
 to fit around.
 
-One programming problem Phase 3 created and deliberately left, per deviation D18:
-shows now draw on subreddit archives when the recent window is dry, so a 2017 post
-can air read as though it happened this week. Harmless for nosleep and
-talesfromtechsupport; wrong for sysadmin, UFOs and EBEs. Consider passing the post's
-age into the prompt so the host can place it ("a few years back") rather than imply
-it is current. Small change, real quality gain, and it belongs in this phase rather
-than in Phase 3.
+The archive-content problem that deviation D18 first routed to this phase has since
+moved to Phase 3e (tasks 3.10-3.12) — the soak showed it was a supply-behaviour bug,
+not a programming-quality one. If Session C did its job, nothing is owed here; if 3.12
+slipped, dating archive material in the prompt is still worth picking up.
 
 When done: tick the checkboxes, update Working state and Progress, record
 Deviations, and revise the later session prompts in the appendix if anything you
