@@ -4,12 +4,14 @@ Root reached 99% in July 2026 because nothing under output/ had a retention
 policy except per-show segment age. The janitor is the fix, and it deletes
 files — so the tests here are mostly about what it must NOT touch:
 
-- output/scripts/ is the used-source dedupe ledger until Phase 3.5 replaces it.
-  Sweeping it would silently let exhausted sources be re-aired.
+- output/scripts/ holds script records (expirable since 3.5 moved the dedupe
+  ledger to output/state/, but only past a TTL >= the re-air window) alongside
+  .<show>_source_rotation.json live state, which is never touched.
 - .vtt transcripts and info.json are the record of what was fetched; only the
   cached media beside them is disposable.
 - A sidecar whose audio still exists belongs to a live segment.
 """
+import importlib
 import sys
 import time
 from pathlib import Path
@@ -72,15 +74,43 @@ def test_leaves_recent_cached_media_alone(out):
     assert fresh.exists(), "media inside the TTL is still in use"
 
 
-def test_never_touches_the_dedupe_ledger(out):
-    """output/scripts/ is load-bearing until Phase 3.5. Nothing may sweep it."""
-    old_script = write(out / "scripts" / "talk_reddit_post_20260101_000000.json", "{}", age_days=365)
+def test_expires_scripts_only_past_the_ttl(out):
+    """3.5 moved the dedupe ledger to output/state/, so script records became
+    expirable — but only past the TTL, which cannot be set below the re-air
+    window (a rebuilt index reads these files)."""
+    old_script = write(out / "scripts" / "talk_reddit_post_20250101_000000.json", "{}", age_days=365)
+    recent_script = write(out / "scripts" / "talk_reddit_post_20260701_000000.json", "{}", age_days=10)
+
+    report = scheduler._janitor_sweep()
+
+    assert not old_script.exists(), "a year-old script record is past every TTL"
+    assert recent_script.exists(), "a 10-day-old script is well inside the re-air window"
+    assert report["scripts"]["files"] == 1
+
+
+def test_scripts_ttl_can_never_undercut_the_reair_window(monkeypatch):
+    """A TTL shorter than the window would silently un-use a source still inside
+    it, which is the whole reason 1.2 deferred this sweep."""
+    monkeypatch.setenv("WRIT_SCRIPTS_TTL_DAYS", "7")
+    monkeypatch.setenv("WRIT_SOURCE_REUSE_DAYS", "90")
+    importlib.reload(scheduler)
+    try:
+        assert scheduler.SCRIPTS_TTL_DAYS >= scheduler.SOURCE_REUSE_DAYS == 90
+    finally:
+        monkeypatch.undo()
+        importlib.reload(scheduler)
+
+
+def test_never_touches_rotation_state(out):
+    """`.<show>_source_rotation.json` shares the directory but is live state, not
+    a script record. There is a forked pair, so do not assume one file per show."""
     rotation = write(out / "scripts" / ".youtube-ai_source_rotation.json", "{}", age_days=365)
+    forked = write(out / "scripts" / ".youtube_ai_source_rotation.json", "{}", age_days=365)
 
     scheduler._janitor_sweep()
 
-    assert old_script.exists(), "sweeping the ledger would let used sources re-air"
-    assert rotation.exists(), "rotation state is not a sidecar"
+    assert rotation.exists(), "rotation state is not a script record"
+    assert forked.exists(), "the forked rotation file is state too"
 
 
 def test_removes_orphan_sidecars_only(out):
