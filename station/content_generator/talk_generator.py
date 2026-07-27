@@ -40,7 +40,7 @@ import tempfile
 import time
 import warnings
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import unescape
 from pathlib import Path
 import re
@@ -516,6 +516,14 @@ REDDIT_USER_AGENT = os.environ.get(
 )
 REDDIT_TIMEOUT_SECONDS = int(os.environ.get("WRIT_REDDIT_TIMEOUT", "10"))
 REDDIT_COMMENT_LIMIT = int(os.environ.get("WRIT_REDDIT_COMMENT_LIMIT", "6"))
+# The fetch window used to be a single 25-post listing page while the dedupe
+# window was forever, so a slow subreddit emptied within weeks. Reddit caps a
+# listing page at 100; paging past that reaches ~400 posts before giving up.
+REDDIT_LISTING_PAGE_SIZE = int(os.environ.get("WRIT_REDDIT_LISTING_PAGE_SIZE", "100"))
+REDDIT_MAX_LISTING_PAGES = int(os.environ.get("WRIT_REDDIT_MAX_PAGES", "4"))
+# How deep into a YouTube channel/playlist to look. The old 12 was smaller than
+# a week of uploads on an active channel and smaller than nothing on a quiet one.
+YOUTUBE_COLLECTION_DEPTH = int(os.environ.get("WRIT_YOUTUBE_COLLECTION_DEPTH", "50"))
 REDDIT_CLIENT_ID = os.environ.get("REDDIT_CLIENT_ID", "")
 REDDIT_CLIENT_SECRET = os.environ.get("REDDIT_CLIENT_SECRET", "")
 REDDIT_USERNAME = os.environ.get("REDDIT_USERNAME", "")
@@ -825,11 +833,56 @@ def _canonical_source_key(source_type: str, source_value: str) -> str:
     return f"{source_type}:{source_value.rstrip('/')}"
 
 
+_SCRIPT_TIMESTAMP_RE = re.compile(r"_(\d{8})_(\d{6})$")
+
+
+def _source_reuse_window_days() -> int:
+    """How long used source material stays off-limits, in days.
+
+    Decision B of the 2026-07-26 improvement plan: 90 days. At one to two
+    listeners the repetition cost is near zero, and it is the difference
+    between a subreddit being a finite source and an effectively infinite one.
+    0 disables expiry, restoring the old dedupe-forever behaviour.
+    """
+    try:
+        return max(0, int(os.environ.get("WRIT_SOURCE_REUSE_DAYS", "90")))
+    except (TypeError, ValueError):
+        return 90
+
+
+def _script_is_within_window(path: Path, cutoff_stamp: str, cutoff_epoch: float) -> bool:
+    """Whether a script sidecar is recent enough to still count as "used".
+
+    Script filenames end in `_YYYYMMDD_HHMMSS` written off `station_now()`, and
+    that format sorts lexicographically, so the age test is a string compare
+    rather than a parsed date for every file in the directory. Anything named
+    differently falls back to mtime.
+    """
+    match = _SCRIPT_TIMESTAMP_RE.search(path.stem)
+    if match:
+        return match.group(1) + match.group(2) >= cutoff_stamp
+    try:
+        return path.stat().st_mtime >= cutoff_epoch
+    except OSError:
+        return False
+
+
 def _used_source_keys_for_show(show_id: str) -> set[str]:
     used: set[str] = set()
     if not SCRIPTS_DIR.exists():
         return used
+    window_days = _source_reuse_window_days()
+    cutoff_stamp = ""
+    cutoff_epoch = 0.0
+    if window_days:
+        cutoff_stamp = (station_now() - timedelta(days=window_days)).strftime("%Y%m%d%H%M%S")
+        cutoff_epoch = time.time() - window_days * 86400
     for path in SCRIPTS_DIR.glob("talk_*.json"):
+        # Anything older than the re-air window is no longer "used". The check
+        # is on the filename, so an expired record costs a regex rather than a
+        # read and a json.loads.
+        if cutoff_stamp and not _script_is_within_window(path, cutoff_stamp, cutoff_epoch):
+            continue
         try:
             meta = json.loads(path.read_text())
         except Exception:
@@ -1152,6 +1205,78 @@ def _fetch_reddit_subreddit_context(source_value: str) -> SourceContext:
         return _reddit_context_from_listing_post(chosen)
 
 
+def _reddit_listing_url(subreddit: str, sort: str, t: str = "") -> str:
+    url = f"{_reddit_listing_base()}/r/{subreddit}/{sort}.json?limit={REDDIT_LISTING_PAGE_SIZE}"
+    if sort == "top" and t:
+        url += f"&t={t}"
+    return url
+
+
+def _reddit_listing_page(url: str, after: str | None = None) -> tuple[list[dict], str | None]:
+    """Fetch one page of a Reddit listing.
+
+    Returns the page's post dicts and the cursor for the next page (None when
+    the listing has no more)."""
+    page_url = f"{url}&after={urllib.parse.quote(after)}" if after else url
+    payload = json.loads(_fetch_url_reddit(page_url).decode("utf-8", errors="ignore"))
+    data = payload.get("data", {}) if isinstance(payload, dict) else {}
+    posts = [(child or {}).get("data", {}) for child in (data.get("children") or [])]
+    return [post for post in posts if isinstance(post, dict) and post], (data.get("after") or None)
+
+
+def _usable_listing_posts(
+    raw_posts: list[dict],
+    *,
+    cutoff: float,
+    allow_nsfw: bool,
+) -> tuple[list[dict], int]:
+    """Drop stickied, NSFW-when-not-allowed, untitled and too-old posts.
+
+    Returns the survivors and how many were dropped for being older than
+    `cutoff` — the caller uses that to decide whether paging further is
+    pointless on a chronological listing."""
+    usable: list[dict] = []
+    stale = 0
+    for data in raw_posts:
+        if data.get("stickied") or (not allow_nsfw and data.get("over_18")):
+            continue
+        created = data.get("created_utc")
+        if cutoff and isinstance(created, (int, float)) and created < cutoff:
+            stale += 1
+            continue
+        if not _clean_text_block(data.get("title", "")):
+            continue
+        usable.append(data)
+    return usable, stale
+
+
+def _choose_unused_listing_post(
+    posts: list[dict],
+    *,
+    used_source_keys: set[str],
+    min_source_words: int,
+    count_comments: bool,
+    shuffle: bool = False,
+) -> tuple[dict | None, int]:
+    """First post that is neither already used nor too small to fill the
+    segment. Returns it with the number skipped for being too small."""
+    candidates = posts[:]
+    if shuffle:
+        random.shuffle(candidates)
+    too_small = 0
+    for post in candidates:
+        permalink = f"{_reddit_thread_base()}{post.get('permalink', '')}"
+        if _canonical_source_key("reddit_thread", permalink) in used_source_keys:
+            continue
+        # Padding a thin post out to the segment's minimum runtime makes the
+        # model repeat itself, so skip it rather than pay for a thread fetch.
+        if min_source_words and _listing_post_source_words(post, count_comments) < min_source_words:
+            too_small += 1
+            continue
+        return post, too_small
+    return None, too_small
+
+
 def _fetch_reddit_subreddit_context_with_strategy(
     source_value: str,
     lookback_days: int = 7,
@@ -1167,7 +1292,7 @@ def _fetch_reddit_subreddit_context_with_strategy(
         "popular": "hot",
         "random": "new",
     }.get(strategy, "new")
-    url = f"{_reddit_listing_base()}/r/{subreddit}/{sort}.json?limit=25"
+    t = ""
     if sort == "top":
         if lookback_days <= 1:
             t = "day"
@@ -1177,73 +1302,112 @@ def _fetch_reddit_subreddit_context_with_strategy(
             t = "month"
         else:
             t = "year"
-        url += f"&t={t}"
 
     cutoff = time.time() - max(1, int(lookback_days)) * 86400
     allow_nsfw = _reddit_allow_nsfw()
-    posts: list[dict] = []
+    used_source_keys = used_source_keys or set()
+    min_source_words = _min_source_words_for(segment_type)
+    count_comments = _segment_counts_comments(segment_type)
+
+    seen_ids: set[str] = set()
+    stats = {"scanned": 0, "too_small": 0}
+
+    def _scan(base_url: str, scan_cutoff: float, chronological: bool) -> dict | None:
+        """Page through a listing, stopping at the first usable post."""
+        after: str | None = None
+        for page in range(max(1, REDDIT_MAX_LISTING_PAGES)):
+            raw, after = _reddit_listing_page(base_url, after)
+            if not raw:
+                break
+            stats["scanned"] += len(raw)
+            usable, stale = _usable_listing_posts(raw, cutoff=scan_cutoff, allow_nsfw=allow_nsfw)
+            fresh = []
+            for post in usable:
+                post_id = str(post.get("id") or post.get("permalink") or "")
+                if post_id and post_id in seen_ids:
+                    continue
+                if post_id:
+                    seen_ids.add(post_id)
+                fresh.append(post)
+            chosen, too_small = _choose_unused_listing_post(
+                fresh,
+                used_source_keys=used_source_keys,
+                min_source_words=min_source_words,
+                count_comments=count_comments,
+                shuffle=(strategy == "random"),
+            )
+            stats["too_small"] += too_small
+            if chosen is not None:
+                if page:
+                    log(f"  r/{subreddit}: found an unused post on listing page {page + 1}")
+                return chosen
+            if not after:
+                break
+            # On a newest-first listing an all-stale page means every later
+            # page is older still — paging on only burns requests.
+            if chronological and scan_cutoff and stale and not usable:
+                break
+        return None
+
+    chosen: dict | None = None
+    listing_blocked = False
     try:
-        try:
-            payload = json.loads(_fetch_url_reddit(url).decode("utf-8", errors="ignore"))
-        except Exception as exc:
-            fallback_url = f"{_reddit_listing_base()}/r/{subreddit}/hot.json?limit=25"
-            log(f"Reddit listing fetch blocked for {url}; retrying hot listing: {exc}")
-            payload = json.loads(_fetch_url_reddit(fallback_url).decode("utf-8", errors="ignore"))
-        children = payload.get("data", {}).get("children", [])
-        for child in children:
-            data = (child or {}).get("data", {})
-            if data.get("stickied") or (not allow_nsfw and data.get("over_18")):
-                continue
-            created = data.get("created_utc")
-            if isinstance(created, (int, float)) and created < cutoff:
-                continue
-            title = _clean_text_block(data.get("title", ""))
-            if not title:
-                continue
-            posts.append(data)
+        chosen = _scan(_reddit_listing_url(subreddit, sort, t), cutoff, chronological=(sort == "new"))
     except Exception as exc:
-        log(f"Reddit listing API failed for r/{subreddit}; using PullPush fallback: {exc}")
+        log(f"Reddit {sort} listing blocked for r/{subreddit}; retrying hot listing: {exc}")
+        try:
+            chosen = _scan(_reddit_listing_url(subreddit, "hot"), cutoff, chronological=False)
+        except Exception as exc2:
+            log(f"Reddit listing API failed for r/{subreddit}; using PullPush fallback: {exc2}")
+            listing_blocked = True
+
+    if chosen is None and not listing_blocked:
+        # The show's recency window is dry. A subreddit with fifteen years of
+        # archive is not exhausted after six weeks, so reach into it before
+        # reporting failure.
+        log(
+            f"  r/{subreddit}: nothing unused within {lookback_days} day(s) "
+            f"after {stats['scanned']} post(s); widening to top/all."
+        )
+        try:
+            chosen = _scan(_reddit_listing_url(subreddit, "top", "all"), 0.0, chronological=False)
+        except Exception as exc:
+            log(f"  r/{subreddit} archive listing failed: {exc}")
+
+    if chosen is None and listing_blocked:
         posts = _pullpush_fetch_subreddit_posts(
             subreddit,
             lookback_days=lookback_days,
             selection_strategy=selection_strategy,
         )
-    if not posts:
-        raise RuntimeError(f"No usable posts found for r/{subreddit}")
-    used_source_keys = used_source_keys or set()
-    # Skip posts too small to fill this segment type's minimum runtime — padding
-    # a thin post out to length makes the model repeat itself.
-    min_source_words = _min_source_words_for(segment_type)
-    count_comments = _segment_counts_comments(segment_type)
-    too_small = 0
+        stats["scanned"] += len(posts)
+        usable, _ = _usable_listing_posts(posts, cutoff=0.0, allow_nsfw=allow_nsfw)
+        chosen, too_small = _choose_unused_listing_post(
+            usable,
+            used_source_keys=used_source_keys,
+            min_source_words=min_source_words,
+            count_comments=count_comments,
+            shuffle=(strategy == "random"),
+        )
+        stats["too_small"] += too_small
 
-    candidates = posts[:]
-    if strategy == "random":
-        random.shuffle(candidates)
-    chosen = None
-    for post in candidates:
-        permalink = f"{_reddit_thread_base()}{post.get('permalink', '')}"
-        if _canonical_source_key("reddit_thread", permalink) in used_source_keys:
-            continue
-        if min_source_words:
-            size = _listing_post_source_words(post, count_comments)
-            if size < min_source_words:
-                too_small += 1
-                continue
-        chosen = post
-        break
-    if too_small:
+    if stats["too_small"]:
         log(
-            f"  Skipped {too_small} r/{subreddit} post(s) under "
+            f"  Skipped {stats['too_small']} r/{subreddit} post(s) under "
             f"{min_source_words} usable words for {segment_type or 'segment'}"
         )
     if chosen is None:
-        if too_small:
+        if not stats["scanned"]:
+            raise RuntimeError(f"No usable posts found for r/{subreddit}")
+        if stats["too_small"]:
             raise RuntimeError(
                 f"No r/{subreddit} post large enough for {segment_type or 'segment'} "
                 f"(need {min_source_words}+ usable words)"
             )
-        raise RuntimeError(f"No unused posts found for r/{subreddit}")
+        raise RuntimeError(
+            f"No unused posts found for r/{subreddit} "
+            f"({stats['scanned']} scanned, including the archive)"
+        )
     permalink = f"{_reddit_thread_base()}{chosen.get('permalink', '')}"
     try:
         return _fetch_reddit_thread_context(permalink)
@@ -1549,6 +1713,31 @@ def _download_youtube_assets(source_value: str) -> tuple[dict, Path | None, str,
     return info, audio_path if audio_path and audio_path.exists() else None, transcript, video_id
 
 
+def _youtube_entry_url(entry: dict) -> str:
+    """Watch URL for a flat-playlist entry, or "" when it carries no id."""
+    vid = entry.get("id") or entry.get("url") or entry.get("webpage_url") or ""
+    if not isinstance(vid, str) or not vid:
+        return ""
+    return vid if vid.startswith("http") else f"https://www.youtube.com/watch?v={vid}"
+
+
+def _youtube_entry_is_recent(entry: dict, cutoff: float) -> bool:
+    """True when an entry is inside the lookback window, or carries no date.
+
+    Flat-playlist entries frequently have neither field; treating those as
+    recent preserves the previous behaviour of not filtering them out."""
+    timestamp = entry.get("timestamp")
+    if isinstance(timestamp, (int, float)):
+        return timestamp >= cutoff
+    upload_date = entry.get("upload_date")
+    if isinstance(upload_date, str) and re.fullmatch(r"\d{8}", upload_date):
+        try:
+            return datetime.strptime(upload_date, "%Y%m%d").timestamp() >= cutoff
+        except ValueError:
+            return True
+    return True
+
+
 def _select_youtube_video_url_from_collection(
     source_value: str,
     lookback_days: int = 7,
@@ -1556,70 +1745,63 @@ def _select_youtube_video_url_from_collection(
     used_source_keys: set[str] | None = None,
 ) -> str:
     source_url = _youtube_collection_url(_normalize_youtube_source(source_value))
-    fetch_args = [
+    meta = _run_yt_dlp([
         "--flat-playlist",
         "--dump-single-json",
         "--skip-download",
-    ]
-    if selection_strategy.strip().lower() == "random":
-        fetch_args += ["--playlist-end", "25"]
-    else:
-        fetch_args += ["--playlist-end", "12"]
-    fetch_args.append(source_url)
-    meta = _run_yt_dlp(fetch_args, timeout=240)
+        "--playlist-end",
+        str(max(1, YOUTUBE_COLLECTION_DEPTH)),
+        source_url,
+    ], timeout=240)
     if meta.returncode != 0 or not meta.stdout.strip():
         raise RuntimeError(meta.stderr.strip() or "yt-dlp playlist fetch failed")
     payload = json.loads(meta.stdout)
     entries = payload.get("entries", []) if isinstance(payload, dict) else []
     cutoff = time.time() - max(1, int(lookback_days)) * 86400
-    candidates: list[dict] = []
+    catalogue: list[dict] = []
+    recent: list[dict] = []
     for entry in entries:
         if not isinstance(entry, dict):
             continue
         if entry.get("ie_key") == "YoutubeTab":
             continue
-        title = _clean_text_block(entry.get("title", ""))
-        if not title:
+        if not _clean_text_block(entry.get("title", "")):
             continue
-        timestamp = entry.get("timestamp")
-        upload_date = entry.get("upload_date")
-        if isinstance(timestamp, (int, float)) and timestamp < cutoff:
-            continue
-        if isinstance(upload_date, str) and re.fullmatch(r"\d{8}", upload_date):
-            try:
-                dt = datetime.strptime(upload_date, "%Y%m%d").timestamp()
-                if dt < cutoff:
-                    continue
-            except Exception:
-                pass
-        candidates.append(entry)
-    if not candidates:
+        catalogue.append(entry)
+        if _youtube_entry_is_recent(entry, cutoff):
+            recent.append(entry)
+    if not catalogue:
         raise RuntimeError("No usable YouTube entries found")
     used_source_keys = used_source_keys or set()
-    chosen = None
-    if (selection_strategy or "latest").strip().lower() == "random":
-        shuffled = candidates[:]
-        random.shuffle(shuffled)
-        for entry in shuffled:
-            vid = entry.get("id") or entry.get("url") or entry.get("webpage_url") or ""
-            url = vid if isinstance(vid, str) and vid.startswith("http") else f"https://www.youtube.com/watch?v={vid}" if vid else ""
+    shuffle = (selection_strategy or "latest").strip().lower() == "random"
+
+    def _first_unused(pool: list[dict]) -> dict | None:
+        ordered = pool[:]
+        if shuffle:
+            random.shuffle(ordered)
+        for entry in ordered:
+            url = _youtube_entry_url(entry)
             if url and _canonical_source_key("youtube_video", url) not in used_source_keys:
-                chosen = entry
-                break
-    else:
-        for entry in candidates:
-            vid = entry.get("id") or entry.get("url") or entry.get("webpage_url") or ""
-            url = vid if isinstance(vid, str) and vid.startswith("http") else f"https://www.youtube.com/watch?v={vid}" if vid else ""
-            if url and _canonical_source_key("youtube_video", url) not in used_source_keys:
-                chosen = entry
-                break
+                return entry
+        return None
+
+    chosen = _first_unused(recent)
+    if chosen is None and len(catalogue) > len(recent):
+        # The recency window is what starves youtube-ai: four channels on
+        # lookback_days=1 that do not upload daily. A channel's back catalogue
+        # is still unaired material, so use it before failing.
+        log(
+            f"  YouTube: nothing unused in the last {lookback_days} day(s) "
+            f"({len(recent)} of {len(catalogue)} entries); widening to the back catalogue."
+        )
+        chosen = _first_unused(catalogue)
     if chosen is None:
-        raise RuntimeError("No unused YouTube entries found")
-    vid = chosen.get("id") or chosen.get("url") or chosen.get("webpage_url") or ""
-    if isinstance(vid, str) and vid.startswith("http"):
-        return vid
-    if isinstance(vid, str) and vid:
-        return f"https://www.youtube.com/watch?v={vid}"
+        raise RuntimeError(
+            f"No unused YouTube entries found ({len(catalogue)} scanned, including the back catalogue)"
+        )
+    url = _youtube_entry_url(chosen)
+    if url:
+        return url
     raise RuntimeError("Could not resolve a YouTube video URL from the collection")
 
 
