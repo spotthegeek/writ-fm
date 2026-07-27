@@ -13,6 +13,8 @@
 > current batch still expires around then, but the archive is now gated at a floor of 3 — the
 > top-up comes from the recency window, or the show reports cold and keeps airing what it
 > has. It cannot quietly become an archive channel a second time.
+> **Deployed** 2026-07-27 01:56 UTC (PR #6 merged, both services restarted clean) and the
+> archive gate verified against the live subreddit — see [D26](#deviations).
 > **Still owed:** [3.V](#tests-to-add)'s week of soak — re-check **2026-08-02**.
 > **Plan status:** approved, all six decisions settled — see [Decision log](#decision-log). No phase is blocked on input.
 >
@@ -811,10 +813,31 @@ file 4.10 predicts.
 underscore one is the fake), and auditing the remaining tests that patch scheduler paths
 individually. The prevention is in place; the cleanup is not.
 
-**D26 — Deployment.** Work was done on branch `worktree-session-c-phase-3c-3d-3e`, PR
-**#6**. Unlike Sessions A and B there was no uncommitted deploy to reconcile —
-`/code/writ-fm` was clean on `main` as promised, and the flow was
-branch → PR → merge → `git pull` → restart, exactly as the session prompt described.
+**D26 — Deployment, and the gate verified against the live subreddit.**
+Branch `worktree-session-c-phase-3cde`, PR **#6**, merged 2026-07-27 01:55 UTC. Unlike
+Sessions A and B there was no uncommitted deploy to reconcile — `/code/writ-fm` was clean on
+`main` as promised, and the flow was branch → PR → merge → `git pull` → restart exactly as
+described. Both services restarted clean; no streamer errors, no generation failures.
+
+Four things were confirmed *on the running station*, not just in tests:
+
+1. **The invariant holds in production.** Re-run against the deployed code and the real
+   `output/state/`: all ten shows match the scan exactly, 168 ms cold (the bootstrap scan) →
+   **0.09–0.31 ms warm**. The ten index files are owned by `claude`, per [D11](#deviations).
+2. **The suite no longer touches `output/`.** `pytest` run inside `/code/writ-fm` left
+   `output/scripts/` and `output/state/` byte-identical — the [D25](#deviations) hazard is
+   closed, not just theoretically fixed.
+3. **The janitor's two guards both fired on the first pass**, removing 8 directories:
+   `briefing_daily` (3.8's orphan) plus dawn_chorus, midnight_signal, sonic_archaeology and
+   the_groove_lab across both trees. `crosswire`, `listener_hours` and `signal_report` were
+   *kept* despite being equally empty, because they are still in `shows.yaml`.
+4. **The 3e gate does what D20 needed, on r/talesfromtechsupport itself.** With the show's
+   real 75-key ledger and the archive held back, it scanned **200 live posts**, found nothing
+   unused in the 7-day window, declined to reach the archive, and raised a message the
+   scheduler classifies as cold. With the archive open it selected a **2018-01-16** post —
+   arriving with `Posted: 2018-01-17 (January 2018, about 9 years ago)` attached. Yesterday's
+   code would have aired that post as current in the first case. *The dateline renders in
+   station time (UTC+9:30), so a post made late on the 16th UTC is correctly dated the 17th.*
 
 ---
 
