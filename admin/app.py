@@ -2379,6 +2379,9 @@ def get_scheduler_status():
         talk_cfg = {**_sched.DEFAULT_TALK_CONFIG, **(gen.get("talk") or {})}
         music_cfg = {**_sched.DEFAULT_MUSIC_CONFIG, **(gen.get("music") or {})}
         last_fail = _sched.state.last_failure_per_show.get(show_id, {})
+        last_cold = _sched.state.last_cold_per_show.get(show_id, {})
+        talk_backoff, talk_backoff_left = _sched.state.backoff_state(show_id, "talk")
+        music_backoff, music_backoff_left = _sched.state.backoff_state(show_id, "music")
         show_status[show_id] = {
             "talk": {
                 **talk_cfg,
@@ -2386,7 +2389,12 @@ def get_scheduler_status():
                 "last_run": _sched.state.last_run(show_id, "talk") and
                             _sched.state.last_run(show_id, "talk").isoformat(),
                 "last_failure": last_fail.get("talk") and last_fail["talk"].isoformat(),
-                "in_backoff": _sched.state.in_failure_backoff(show_id, "talk"),
+                # "cold" is a source with nothing new — a normal state, and not a
+                # failure. Surfaced separately so a starving show reads as starving.
+                "last_cold": last_cold.get("talk") and last_cold["talk"].isoformat(),
+                "in_backoff": bool(talk_backoff),
+                "backoff_kind": talk_backoff,
+                "backoff_seconds_left": talk_backoff_left,
             },
             "music": {
                 **music_cfg,
@@ -2394,7 +2402,10 @@ def get_scheduler_status():
                 "last_run": _sched.state.last_run(show_id, "music") and
                             _sched.state.last_run(show_id, "music").isoformat(),
                 "last_failure": last_fail.get("music") and last_fail["music"].isoformat(),
-                "in_backoff": _sched.state.in_failure_backoff(show_id, "music"),
+                "last_cold": last_cold.get("music") and last_cold["music"].isoformat(),
+                "in_backoff": bool(music_backoff),
+                "backoff_kind": music_backoff,
+                "backoff_seconds_left": music_backoff_left,
             },
         }
 
@@ -2650,6 +2661,10 @@ def regenerate_briefing(show_id: str):
     with _sched.state._lock:
         _sched.state.last_run_per_show.get(show_id, {}).pop("talk", None)
         _sched.state.last_failure_per_show.get(show_id, {}).pop("talk", None)
+        _sched.state.last_cold_per_show.get(show_id, {}).pop("talk", None)
+        # Also clear the escalating backoff ladder, or a show that has climbed to
+        # the 12-hour rung would ignore the operator's explicit retry.
+        _sched.state.backoff_per_show.get(show_id, {}).pop("talk", None)
 
     _invalidate_inventory_cache("segments")
 

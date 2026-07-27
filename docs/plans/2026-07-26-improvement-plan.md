@@ -6,19 +6,21 @@
 
 ## Working state
 
-> **Current phase:** Phases 0–2 complete (Session A). Phase 3a + 3b complete (Session B,
-> 2026-07-26), soaked cleanly for 15h — Phase **3c/3d/3e** is next and ready now.
+> **Current phase:** **Phase 3 is complete.** Phases 0–2 (Session A), 3a + 3b (Session B),
+> 3c + 3d + 3e (Session C, 2026-07-27). Phase **4** is next and unblocked.
 > **Last updated:** 2026-07-27
-> **⏳ Time-boxed:** [3e](#3e--make-the-archive-a-reserve-not-the-default) wants to land by
-> **2026-07-29**, before `talesfromtechsupport`'s current segments expire and it tops up from
-> the archive a second time.
+> **⏳ Time-box met:** 3e landed 2026-07-27, ahead of the 29th. `talesfromtechsupport`'s
+> current batch still expires around then, but the archive is now gated at a floor of 3 — the
+> top-up comes from the recency window, or the show reports cold and keeps airing what it
+> has. It cannot quietly become an archive channel a second time.
+> **Still owed:** [3.V](#tests-to-add)'s week of soak — re-check **2026-08-02**.
 > **Plan status:** approved, all six decisions settled — see [Decision log](#decision-log). No phase is blocked on input.
 >
-> **Read [Deviations](#deviations) before starting Phase 3c or 4.** Findings that change later
+> **Read [Deviations](#deviations) before starting Phase 4.** Findings that change later
 > work: the disk problem is mostly *outside* `output/` (Phase 0 could not reach its target);
 > `config/hosts.yaml` overrides `persona.py` at import — a class of override that Phase 4
-> should assume exists elsewhere; and 3.5's index-vs-scan invariant must now be asserted
-> **with the 90-day window applied to both sides** ([D14](#deviations)).
+> should assume exists elsewhere; and **4.10 is now half done, with its remaining scope
+> changed** ([D25](#deviations)).
 
 **How to use this file.** One session per phase (0+1+2 can share one — they are small and land
 together). Open a session with:
@@ -49,8 +51,8 @@ enforces this only fires on the main session.
 | 0 | Reclaim the disk | ⚠ Done, target not met | — |
 | 1 | Stop it refilling | ☑ Done | — |
 | 2 | Fix the on-air name | ☑ Done | — |
-| 3 | End the content starvation | ◐ 3a + 3b done, soaked clean | 3c/3d/**3e** — *ready now, 3e by 29 Jul* |
-| 4 | Delete what is dead | ☐ Not started | Phase 3 |
+| 3 | End the content starvation | ☑ Done — 3a–3e | *3.V soak re-check 2 Aug* |
+| 4 | Delete what is dead | ☐ Not started | — *unblocked* |
 | 5 | Make supply visible | ☐ Not started | — |
 | 6 | Programming improvements | ☐ Not started | Phase 3 |
 | 7 | Finish the rebrand | ☐ Not started | — |
@@ -234,7 +236,7 @@ Largest phase, and the one most worth splitting across sessions — 3a/3b, soak 
       dedupe-forever). **Its effect today is small — see [D12](#deviations).**
 
 ### 3c — Make the hot path cheap
-- [ ] **3.5** Replace `_used_source_keys_for_show()` (`talk_generator.py:828`) — currently
+- [x] **3.5** Replace `_used_source_keys_for_show()` (`talk_generator.py:828`) — currently
       globs and `json.loads` every file in `output/scripts/` on **every** attempt, ~11
       attempts per failing job — with a single per-show index under `output/state/`.
       Append on write, prune by the 3b window.
@@ -253,15 +255,33 @@ Largest phase, and the one most worth splitting across sessions — 3a/3b, soak 
       call**, and the scheduler makes ~11 of them per failing job. That is the real number to
       beat, not the plan's original 9,903-file figure.
       Unblocks the scripts-TTL deferred from 1.2.
+      **Done.** Per-show `output/state/used_sources_<show>.json` holding `{key: stamp}`,
+      bootstrapped from a full scan the first time a show is seen and appended to at every
+      script write via `_write_script_record()`. **Invariant asserted against the live corpus
+      before switching: exact match on all 10 shows, 0 keys either way, both sides windowed**
+      — see [D21](#deviations). **148 ms → 0.2 ms per call.** The `output/scripts/` TTL is now
+      in `_janitor_sweep()` at 180 days, floored at the re-air window.
 
 ### 3d — Fail quietly
-- [ ] **3.6** Make `FAILURE_BACKOFF_SECONDS` escalate (30 min → 1 h → 4 h → 12 h) instead of
+- [x] **3.6** Make `FAILURE_BACKOFF_SECONDS` escalate (30 min → 1 h → 4 h → 12 h) instead of
       staying flat, resetting on success.
-- [ ] **3.7** Distinguish *cold* (source legitimately has nothing new) from *failed*
+      Done: `FAILURE_BACKOFF_STEPS = (1800, 3600, 14400, 43200)`, holding at the top rung.
+      Cold gets its own longer, quieter ladder — `COLD_BACKOFF_STEPS = (14400, 43200, 86400)`
+      — and a change of kind restarts the streak, so a source that was broken and is now
+      merely cold does not inherit twelve hours of silence.
+- [x] **3.7** Distinguish *cold* (source legitimately has nothing new) from *failed*
       (something broke) in the scheduler log and state. Both currently read as
       `Generation failed (exit 1)`, which is why two months of starvation looked like noise.
-- [ ] **3.8** Clear the `briefing_daily` orphan — the show no longer exists in `shows.yaml`
+      Done: the runner keeps the child's output and classifies on the Session B markers
+      (`COLD_OUTPUT_MARKERS`). Cold logs `Sources cold — nothing new to generate` at `warn`,
+      records `last_cold_per_show`, and never touches `last_failure_per_show`. Both reach the
+      admin scheduler-status endpoint as `last_cold` / `backoff_kind` / `backoff_seconds_left`.
+- [x] **3.8** Clear the `briefing_daily` orphan — the show no longer exists in `shows.yaml`
       but the scheduler has tried it 63 times.
+      **Already fixed before this session started — see [D22](#deviations).** What remained
+      was residue: an empty `output/talk_segments/briefing_daily/` plus eleven other empty
+      directories for retired shows. The janitor now removes empty segment directories whose
+      show is absent from the schedule — both guards required, so a live show cannot lose one.
 
 ### 3e — Make the archive a reserve, not the default
 
@@ -274,25 +294,43 @@ subreddit is *every* generation, not an exceptional one. Over the first 15 hours
 2017-09-28 (median 9.3 years old), aired as though current. The show went from starving to
 being an archive channel. These three tasks make the archive the reserve it was meant to be.
 
-- [ ] **3.10** Gate the archive fallback on genuine scarcity. Fire it only when the show is
+- [x] **3.10** Gate the archive fallback on genuine scarcity. Fire it only when the show is
       at or below a **scarcity floor** (suggest 3), not merely below `min_inventory: 8`.
       Above the floor, return **cold** and generate nothing — the existing segments keep
       airing, which is the better outcome. Depends on 3.7: "cold above the floor" is a normal
       state the scheduler currently has no way to represent, which is why this belongs with
       3d rather than in Phase 6.
-- [ ] **3.11** Retention floor on expiry. `_cleanup_expired_segments()`
+      Done: `WRIT_ARCHIVE_SCARCITY_FLOOR = 3`, station-wide. The scheduler passes
+      `WRIT_ALLOW_ARCHIVE=0/1` into the generator, which skips the `top`/`all` pass and raises
+      a message containing `archive held back` — itself a cold marker, so 3.7 classifies it
+      without a second mechanism. Default is open, so a hand-run or admin-triggered
+      generation still gets everything available. **Reddit only; the YouTube back catalogue
+      is deliberately left ungated — see [D23](#deviations).**
+- [x] **3.11** Retention floor on expiry. `_cleanup_expired_segments()`
       (`admin/scheduler.py:482`) must not delete a show below the same floor.
       **3.10 and 3.11 only work as a pair** — 3.10 alone lets the show drain to zero while
       the generator declines to refill it; 3.11 alone just delays the same archive top-up.
-- [ ] **3.12** Pass the source post's age into the prompt, so reserve material is placed in
+      Done: `_cleanup_expired_segments()` exempts the newest `ARCHIVE_SCARCITY_FLOOR`
+      segments — the same constant both halves key off — and still expires everything above
+      them, so the inventory gap that triggers generation is preserved. The pair invariant is
+      one named test:
+      `test_between_floor_and_minimum_the_show_neither_drains_nor_airs_the_archive`.
+- [x] **3.12** Pass the source post's age into the prompt, so reserve material is placed in
       time ("back in 2016") instead of implied-current. Worth doing even once 3.10 makes it
       rare. This supersedes the Phase 6 note added for [D18](#deviations).
+      Done: `_source_age_phrases()` adds `Posted: 2016-03-14 (March 2016, about 10 years ago)`
+      to the source material and an explicit "place it in time, do not imply it happened this
+      week" line to the SOURCE-SPECIFIC INSTRUCTIONS block. Silent under 30 days — almost
+      everything airs within days of being posted, and a dateline on that is noise.
+      `source_created_utc` is now written to the script sidecar, so what aired can be audited.
 
-**Config decision to make when this lands:** whether the floor is per-show. For
-`talesfromtechsupport` and `nosleep` archive material is timeless and only needs dating; for
-`sysadmin` and `UFOs` a three-year-old thread is stale in substance, not just in framing. A
-per-show floor — or a plain archive on/off — is probably the right knob rather than one
-global setting.
+**Config decision — settled 2026-07-27 by the operator.** The floor is **not** per-show:
+one station-wide `WRIT_ARCHIVE_SCARCITY_FLOOR = 3` applies to every show, so none of them can
+drain toward empty. The per-show knob is a plain on/off,
+`generation.talk.archive_fallback: true|false` in `shows.yaml`, defaulting **true** — a show
+whose archive material is stale in substance rather than only in framing can set it false and
+go cold at any inventory instead. Nothing is set to false today; 3.12's dating is carrying
+`sysadmin` and `alien_theory` for now.
 
 > ⏳ **Deadline: 2026-07-29.** `talesfromtechsupport`'s current 12 segments were generated
 > 2026-07-26 against `max_days: 3`, so they expire around the 29th and the show tops up from
@@ -301,7 +339,7 @@ global setting.
 > drops the show to 1 and pulls in *more* archive material.
 
 ### Tests to add
-- [ ] **3.9** Index/scan equivalence; listing pagination; used-set expiry boundary; backoff
+- [x] **3.9** Index/scan equivalence; listing pagination; used-set expiry boundary; backoff
       escalation.
       **Half done.** `tests/test_source_widening.py` (22 tests) covers listing pagination and
       the used-set expiry boundary, plus the archive fallbacks and the preserved PullPush
@@ -309,6 +347,13 @@ global setting.
       (3.6), and the 3e scarcity/retention floor — including the pair invariant, that a show
       between the floor and `min_inventory` neither generates archive material nor loses
       segments to expiry. Suite is now **166 tests**.
+      **Complete.** Session C added `tests/test_supply_gating.py` (45 tests): index/scan
+      equivalence — including the D14 windowing trap stated as its own named test so a later
+      session does not re-make it — the index surviving deletion of the scripts it was built
+      from, both backoff ladders, the cold/failed classifier, the archive gate end to end, the
+      retention floor, the 3.10/3.11 pair invariant, and 3.12's dating. `tests/conftest.py`
+      now sandboxes `SCRIPTS_DIR`/`STATE_DIR` suite-wide ([D25](#deviations)). Suite is
+      **213 tests**, all green.
 - [ ] **3.V** **Verify:** failure count per day drops an order of magnitude. All five on-air
       shows sit at or above `min_inventory: 8` for a full week. `talesfromtechsupport`
       climbs off 1.
@@ -318,6 +363,10 @@ global setting.
       above `min_inventory: 8` (nosleep 12, sysadmin 13, alien_theory 9,
       talesfromtechsupport 8, youtube-ai 10). **Re-check around 2026-08-02**, alongside
       Phase 1's `df` check.
+      *Session C adds a third indicator for that check:* **no segment on air whose
+      `source_created_utc` is more than 30 days old, unless the show was at or below 3
+      segments when it was generated.** That is 3e working, and the sidecar now records the
+      field needed to check it. `talesfromtechsupport` is the one to look at.
 
 ---
 
@@ -694,6 +743,79 @@ checkout holding its own copy (fixed in PR #4, now in `.gitignore`). And discard
 tree's uncommitted deploy *before* the pull succeeds leaves production briefly running the
 old code — reconcile in the other order, or verify the pull can fast-forward first.
 
+### Session C (Phases 3c, 3d, 3e) — 2026-07-27
+
+**D21 — The 3.5 invariant holds exactly, and the win is much larger than the plan expected.**
+Asserted against the live corpus *before* switching over, with the 90-day window applied to
+both sides as [D14](#deviations) requires. All ten shows matched with **zero keys either
+way** — nosleep 297, sysadmin 325, alien_theory 325, youtube-ai 238, talesfromtechsupport 75,
+dark_jokes 6, the three live briefings 2/2/1, briefing_news_aus 0. Corpus is **2,249
+`talk_*.json` records** (the plan's "~2,224") in a directory of 2,261 files; the other 11 are
+rotation state and one is `.gitkeep`.
+
+D14's spurious difference reproduces exactly as warned, and is now a named test rather than
+a paragraph: full-history minus windowed is nosleep 19, sysadmin 69, alien_theory 42,
+youtube-ai **54** (the plan said 56), talesfromtechsupport 0.
+
+**Cost: ~148 ms → ~0.2 ms per call**, 600–1100×. Much larger than "worth doing" because the
+scan cost is dominated by 2,249 `json.loads` calls, and the index replaces all of them with
+one. At ~11 calls per failing job that is 1.6 s of wall-clock per job returned.
+
+*Two properties a later session should not undo:* the index is bootstrapped from a full scan
+whenever it is missing or unparseable, which is what makes it safe to delete; and
+`_write_script_record()` catches every exception from indexing, because a segment that exists
+but is unindexed costs one possible repeat, while a segment lost to an indexing error costs
+the airtime.
+
+**D22 — 3.8 was already fixed before this session, by work Session A snapshotted.**
+`briefing_daily` left `config/shows.yaml` in the uncommitted working-tree state that commit
+`ba6ac0e` captured, and `admin/app.py` had already dropped it from `_BRIEFING_SHOW_IDS`. The
+last scheduler attempt in the journal is **Jul 25 12:04**, before Session A restarted the
+admin on the 26th; there have been none since. The 63 attempts the plan counts were real, and
+they had already stopped. All that remained was residue: an empty
+`output/talk_segments/briefing_daily/`, plus **eleven other empty directories** for shows
+that never air (crosswire, listener_hours, signal_report, dawn_chorus, midnight_signal,
+sonic_archaeology, the_groove_lab, across both `talk_segments/` and `music_bumpers/`). The
+janitor now removes empty segment directories whose show is absent from the schedule — both
+guards required, so a live show at zero inventory can never lose its directory. **This also
+does 4.11's cleanup for free** once those shows leave `shows.yaml`.
+
+**D23 — The archive gate is Reddit-only, deliberately.**
+3.10 gates the `top`/`all` pass in `_fetch_reddit_subreddit_context_with_strategy`. The
+YouTube back-catalogue pass added by 3.3 is **not** gated, because it is not the same thing:
+it reaches at most `WRIT_YOUTUBE_COLLECTION_DEPTH = 50` entries deep, which on an active AI
+channel is a few months, not the decade D20 measured on r/talesfromtechsupport. Gating it
+would push `youtube-ai` cold for no listener benefit — [D16](#deviations) already records two
+of its four channels as exhausted at that depth. Its cold message is still classifiable by
+3.7, so a genuinely dry channel is visible either way. **If a future session finds youtube-ai
+airing months-old videos, gate it there rather than lowering the depth** — the depth is what
+keeps the show supplied.
+
+**D24 — 3.12 does not apply to `youtube-ai` at all, and that is structural.**
+The `youtube` segment type is a direct audio ingest ([D15](#deviations)) — the video's own
+audio becomes the segment, with no LLM prompt to date the material in. There is nowhere for
+`_source_age_phrases()` to attach. Anything that wants to place a YouTube segment in time has
+to be spoken by the surrounding host segment, not by the segment itself. Relevant to Phase 6.
+
+**D25 — 4.10 is now half done, and the half that is left is different.**
+The plan describes 4.10 as tidiness. 3.5 turned it into a correctness hazard: `output/state/`
+is now the used-source ledger, so a `pytest` run in `/code/writ-fm` could write a fake key
+into a live show's index and make the generator skip a source it had never used. Session C
+therefore added an autouse fixture to `tests/conftest.py` sandboxing **both** `SCRIPTS_DIR`
+and `STATE_DIR` suite-wide, and confirmed the suite now leaves `output/` untouched. Verified
+by reproduction first: before the fixture, a full run created `output/state/used_sources_nosleep.json`
+and `output/scripts/.youtube_ai_source_rotation.json` — the second being exactly the forked
+file 4.10 predicts.
+➡ **What 4.10 still owes:** removing the two forked rotation files in the live
+`output/scripts/` (`.youtube-ai_` and `.youtube_ai_` — the show id is `youtube-ai`, so the
+underscore one is the fake), and auditing the remaining tests that patch scheduler paths
+individually. The prevention is in place; the cleanup is not.
+
+**D26 — Deployment.** Work was done on branch `worktree-session-c-phase-3c-3d-3e`, PR
+**#6**. Unlike Sessions A and B there was no uncommitted deploy to reconcile —
+`/code/writ-fm` was clean on `main` as promised, and the flow was
+branch → PR → merge → `git pull` → restart, exactly as the session prompt described.
+
 ---
 
 ## Explicitly out of scope
@@ -796,7 +918,7 @@ learned changes them.
 
 ### Session C — Phase 3c + 3d + 3e
 
-*Revised 2026-07-27, after Session B's soak added Phase 3e.*
+*Executed 2026-07-27. Kept for the record; see [D21–D26](#deviations) for what it met.*
 
 ```
 Read docs/plans/2026-07-26-improvement-plan.md. Decisions A–F are settled and binding.
@@ -883,11 +1005,12 @@ learned changes them.
 
 ### Session D — Phase 4
 
-*Revised after Session A.*
+*Revised after Session C. Phase 3 is complete, so this phase is fully unblocked.*
 
 ```
 Read docs/plans/2026-07-26-improvement-plan.md. Decisions A–F are settled and binding.
-Read the Deviations section first — Phase 3 may have changed what is live.
+Read the Deviations section first — Sessions A, B and C have all run, and D21–D26
+change what this session is walking into. Phase 3 is complete.
 
 Execute Phase 4 only.
 
@@ -923,16 +1046,30 @@ Task 4.9 (correcting CLAUDE.md) is not optional cleanup — the file currently t
 every new session that config/schedule.yaml is the config authority and that
 api_server.py is a standalone service. Both are wrong.
 
-Task 4.8 says "the two stale repo copies in .claude/worktrees/". There are now four
-(imperative-watching-iverson, vibevoice-backend, Session A's and Session B's). Check
-none is in use before removing any, and do not remove a worktree whose PR is still
-open and unmerged — #3 was Session B's.
+Task 4.8 says "the two stale repo copies in .claude/worktrees/". There are now five
+(imperative-watching-iverson, vibevoice-backend, and one each from Sessions A, B and
+C). Check none is in use before removing any, and do not remove a worktree whose PR
+is still open and unmerged.
 
-For 4.10: tests/test_source_widening.py (Session B) already sandboxes itself by
-monkeypatching SCRIPTS_DIR onto tmp_path. Follow that shape when you move the patch
-into conftest.py, and check it does not fight the suite-wide fixture.
+4.10's prevention is already done and its remaining scope has changed — read D25
+before touching it. Session C added the suite-wide conftest.py fixture (it sandboxes
+STATE_DIR as well as SCRIPTS_DIR, because output/state/ is now the used-source
+ledger and a stray test write there is a correctness bug, not untidiness). What is
+left is CLEANUP: delete the two forked rotation files in the live output/scripts/
+(.youtube-ai_ and .youtube_ai_ — the show id is `youtube-ai`, so the underscore one
+is the fake), and audit the tests that still patch scheduler paths individually.
 
-Verify with the full test suite (166 tests as of Session B), a clean restart of both
+4.11 got easier: the janitor now removes empty per-show segment directories once the
+show leaves the schedule, so moving the 8 dead shows to shows.disabled.yaml cleans up
+output/ on its own within the hour. Do not hand-delete those directories first.
+
+Two things Session C added that are NOT dead, in case a verifier flags them:
+output/state/ (the used-source index — deleting it is safe but costs a rebuild scan),
+and talk_generator._used_source_keys_by_scan(), which has no production caller by
+design. It is the reference implementation the 3.9 equivalence test asserts the index
+against, and deleting it would remove the only check that the index is correct.
+
+Verify with the full test suite (213 tests as of Session C), a clean restart of both
 services, and `graphify update .`.
 
 When done: tick the checkboxes, update Working state and Progress, record
@@ -942,7 +1079,7 @@ learned changes them.
 
 ### Session E — Phase 5
 
-*Revised after Session A.*
+*Revised after Session C.*
 
 ```
 Read docs/plans/2026-07-26-improvement-plan.md. Decisions A–F are settled and binding.
@@ -958,14 +1095,23 @@ Any subagent exploring code must run `graphify query` before grepping — the en
 hook only fires on the main session.
 
 5.1 is the one that matters. Everything it needs is already computed inside the
-generator and thrown away. Session B added two things worth surfacing there: which
-sources are COLD rather than failing (@nateherk and @BoxminingAI are cold right
-now), and whether a selection came from the show's recency window or from the
-archive fallback — the second is the leading indicator that a source is running
-out, well before it fails.
+generator and thrown away — but less than before, so check what exists before
+building it. Session C's 3.7 already models cold-vs-failed and exposes it on
+/api/scheduler/status per show as last_cold, backoff_kind and backoff_seconds_left;
+consume that rather than inventing a second mechanism. What is still thrown away is
+the leading indicator: whether a selection came from the recency window or from the
+archive, which tells you a source is running out well before it goes cold. The
+generator now writes source_created_utc into every script sidecar, so "how old was
+the material we aired" is answerable from disk without new instrumentation.
 
 Counting trap for 5.2, per deviation D15: youtube-ai's segments are .mp3 and every
 other show's are .wav. Count both, or youtube-ai reads as 0 when it is full.
+
+Second trap for 5.2's trend line: since 3.11 a show's inventory floors at 3 rather
+than draining to 0, and since 3.10 a show sitting between 3 and min_inventory is
+SUPPOSED to sit there generating nothing. A panel that reads "below minimum" as an
+alarm will cry wolf on the healthy state. Alarm on inventory at or below 3 while the
+backoff kind is cold — that is a show genuinely running out.
 
 Task 5.4 (disk gauge) is ALREADY DONE — it landed as 1.3 in Session A. Do not
 rebuild it. Follow its shape for the new panels: a cached endpoint in admin/app.py
@@ -982,7 +1128,7 @@ learned changes them.
 
 ### Session F — Phase 6
 
-*Revised after Session A.*
+*Revised after Session C.*
 
 ```
 Read docs/plans/2026-07-26-improvement-plan.md. Decisions A–F are settled and binding.
@@ -1008,10 +1154,16 @@ The linear clock currently carries five shows — nosleep, sysadmin, alien_theor
 talesfromtechsupport, youtube-ai — which is what 6.2's top-of-hour briefing slot has
 to fit around.
 
-The archive-content problem that deviation D18 first routed to this phase has since
-moved to Phase 3e (tasks 3.10-3.12) — the soak showed it was a supply-behaviour bug,
-not a programming-quality one. If Session C did its job, nothing is owed here; if 3.12
-slipped, dating archive material in the prompt is still worth picking up.
+The archive-content problem that deviation D18 first routed to this phase moved to
+Phase 3e and is DONE — 3.12 landed in Session C, so Reddit material older than 30 days
+now reaches the host with its date and an instruction to place it in time. Nothing is
+owed here for Reddit.
+
+One piece of it could NOT be done there and is genuinely this phase's, per D24: the
+`youtube` segment type is a direct audio ingest, so a YouTube segment has no prompt to
+date the material in. If a months-old video airs as though it were this week, the fix
+has to be spoken by the surrounding host segment — which is 6.1/6.2 territory, not the
+generator's.
 
 When done: tick the checkboxes, update Working state and Progress, record
 Deviations, and revise the later session prompts in the appendix if anything you

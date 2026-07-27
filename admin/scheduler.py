@@ -52,6 +52,13 @@ AUDIO_EXTS = {".wav", ".mp3", ".flac"}
 # that predates it or whose generation died between download and copy.
 SOURCE_CACHE_TTL_DAYS = int(os.environ.get("WRIT_SOURCE_CACHE_TTL_DAYS", "30"))
 JOBS_TTL_DAYS = int(os.environ.get("WRIT_JOBS_TTL_DAYS", "30"))
+
+# Script records. Safe to expire only since 3.5 moved the used-source ledger into
+# output/state/, and only while the TTL stays at or above the re-air window: the
+# index is rebuilt from a scan of this directory if it is ever lost, so a shorter
+# TTL would silently un-use a source that is still inside its window.
+SOURCE_REUSE_DAYS = max(0, int(os.environ.get("WRIT_SOURCE_REUSE_DAYS", "90")))
+SCRIPTS_TTL_DAYS = max(int(os.environ.get("WRIT_SCRIPTS_TTL_DAYS", "180")), SOURCE_REUSE_DAYS)
 CACHED_MEDIA_EXTS = {".mp3", ".m4a", ".webm", ".opus", ".wav", ".part", ".ytdl"}
 
 CADENCE_SECONDS = {
@@ -62,13 +69,56 @@ CADENCE_SECONDS = {
     "monthly":    2592000,
 }
 
-FAILURE_BACKOFF_SECONDS = 1800  # 30 min cooldown after a failed generation
+# A broken source is worth retrying soon, then progressively less often. The
+# ladder advances on each consecutive failure and resets on the first success,
+# so a transient Ollama timeout costs 30 minutes while a genuinely broken source
+# stops asking every half hour forever.
+FAILURE_BACKOFF_STEPS = (1800, 3600, 14400, 43200)  # 30 min → 1 h → 4 h → 12 h
+FAILURE_BACKOFF_SECONDS = FAILURE_BACKOFF_STEPS[0]  # first step; kept for callers
+
+# "Cold" is a source with nothing new, which is not a fault. Retrying it hard
+# buys nothing — a subreddit does not age in five minutes — so it gets its own
+# long, quiet ladder. Scarcity overrides it: see _check_and_generate.
+COLD_BACKOFF_STEPS = (14400, 43200, 86400)  # 4 h → 12 h → 24 h
+
+# At or below this many talk segments a show is genuinely scarce and may reach
+# into the source's archive. Above it, a dry recency window is reported cold and
+# nothing is generated: the segments already on disk keep airing, which sounds
+# better than a decade-old thread read as though it were this week. Station-wide
+# by operator decision — the per-show knob is `archive_fallback`, below.
+ARCHIVE_SCARCITY_FLOOR = int(os.environ.get("WRIT_ARCHIVE_SCARCITY_FLOOR", "3"))
+
+# Substrings the generator prints when a source is legitimately out of new
+# material. Written in Session B to be classifiable; classify on them rather
+# than re-deriving the state.
+COLD_OUTPUT_MARKERS = (
+    "including the archive",         # No unused posts found for r/X (N scanned, including the archive)
+    "including the back catalogue",  # No unused YouTube entries found (50 scanned, ...)
+    "archive held back",             # above the scarcity floor, so the archive was not consulted
+)
+
+
+def _output_looks_cold(lines: list[str]) -> bool:
+    """Whether a failed generation ran out of material rather than breaking."""
+    return any(marker in line for line in lines for marker in COLD_OUTPUT_MARKERS)
+
+
+def _backoff_seconds(kind: str, streak: int) -> int:
+    """How long to wait after `streak` consecutive events of this kind."""
+    steps = COLD_BACKOFF_STEPS if kind == "cold" else FAILURE_BACKOFF_STEPS
+    return steps[min(max(streak, 1), len(steps)) - 1]
 
 DEFAULT_TALK_CONFIG = {
     "enabled": False,
     "min_inventory": 5,
     "target_inventory": 15,
     "cadence": "continuous",
+    # Whether this show may air material from its source's back catalogue once
+    # it hits the scarcity floor. On for shows whose material is timeless
+    # (r/nosleep, r/talesfromtechsupport); a show where a three-year-old thread
+    # is stale in substance rather than only in framing can set this false and
+    # go cold instead.
+    "archive_fallback": True,
 }
 
 DEFAULT_MUSIC_CONFIG = {
@@ -119,6 +169,9 @@ class SchedulerState:
         self.last_check: datetime | None = None
         self.last_run_per_show: dict[str, dict] = {}  # show_id → {talk: dt, music: dt}
         self.last_failure_per_show: dict[str, dict] = {}  # show_id → {talk: dt, music: dt}
+        self.last_cold_per_show: dict[str, dict] = {}  # show_id → {talk: dt, music: dt}
+        # show_id → {talk|music: {"kind": "failed"|"cold", "streak": int, "at": dt}}
+        self.backoff_per_show: dict[str, dict] = {}
         self.log: list[dict] = []  # recent activity log, newest first
         self.active_jobs: dict[str, dict] = {}  # job_id → info
         self.recent_jobs: list[dict] = []  # recent job history, newest first
@@ -148,11 +201,42 @@ class SchedulerState:
                 self.last_run_per_show[show_id] = {}
             self.last_run_per_show[show_id][content_type] = _station_now()
 
-    def record_failure(self, show_id: str, content_type: str):
+    def _advance_backoff(self, show_id: str, content_type: str, kind: str) -> int:
+        """Move this show/type one rung up its ladder and return the wait in seconds.
+
+        A change of kind restarts the streak: a source that was failing and is
+        now merely cold has had its problem fixed, and vice versa."""
+        with self._lock:
+            slot = self.backoff_per_show.setdefault(show_id, {})
+            previous = slot.get(content_type) or {}
+            streak = int(previous.get("streak", 0)) + 1 if previous.get("kind") == kind else 1
+            slot[content_type] = {"kind": kind, "streak": streak, "at": _station_now()}
+        return _backoff_seconds(kind, streak)
+
+    def record_failure(self, show_id: str, content_type: str) -> int:
+        """Record a broken generation. Returns the backoff now in force."""
         with self._lock:
             if show_id not in self.last_failure_per_show:
                 self.last_failure_per_show[show_id] = {}
             self.last_failure_per_show[show_id][content_type] = _station_now()
+        return self._advance_backoff(show_id, content_type, "failed")
+
+    def record_cold(self, show_id: str, content_type: str) -> int:
+        """Record a source with nothing new. Returns the backoff now in force.
+
+        Deliberately does *not* touch last_failure_per_show — cold is a normal
+        state, and two months of it reading as failure is what hid the
+        starvation in the first place."""
+        with self._lock:
+            if show_id not in self.last_cold_per_show:
+                self.last_cold_per_show[show_id] = {}
+            self.last_cold_per_show[show_id][content_type] = _station_now()
+        return self._advance_backoff(show_id, content_type, "cold")
+
+    def record_success(self, show_id: str, content_type: str):
+        """Clear the ladder. A source that produced something is healthy again."""
+        with self._lock:
+            self.backoff_per_show.get(show_id, {}).pop(content_type, None)
 
     def last_run(self, show_id: str, content_type: str) -> datetime | None:
         with self._lock:
@@ -162,11 +246,23 @@ class SchedulerState:
         with self._lock:
             return self.last_failure_per_show.get(show_id, {}).get(content_type)
 
+    def last_cold(self, show_id: str, content_type: str) -> datetime | None:
+        with self._lock:
+            return self.last_cold_per_show.get(show_id, {}).get(content_type)
+
+    def backoff_state(self, show_id: str, content_type: str) -> tuple[str, int]:
+        """(kind, seconds remaining). kind is "" when nothing is in force."""
+        with self._lock:
+            entry = (self.backoff_per_show.get(show_id, {}) or {}).get(content_type)
+        if not entry:
+            return "", 0
+        kind = str(entry.get("kind") or "failed")
+        wait = _backoff_seconds(kind, int(entry.get("streak", 1)))
+        elapsed = (_station_now() - entry["at"]).total_seconds()
+        return (kind, int(wait - elapsed)) if elapsed < wait else ("", 0)
+
     def in_failure_backoff(self, show_id: str, content_type: str) -> bool:
-        fail_time = self.last_failure(show_id, content_type)
-        if fail_time is None:
-            return False
-        return (_station_now() - fail_time).total_seconds() < FAILURE_BACKOFF_SECONDS
+        return bool(self.backoff_state(show_id, content_type)[0])
 
     def snapshot(self) -> dict:
         with self._lock:
@@ -180,6 +276,17 @@ class SchedulerState:
                 "last_failure_per_show": {
                     sid: {ct: dt.isoformat() for ct, dt in fails.items()}
                     for sid, fails in self.last_failure_per_show.items()
+                },
+                "last_cold_per_show": {
+                    sid: {ct: dt.isoformat() for ct, dt in colds.items()}
+                    for sid, colds in self.last_cold_per_show.items()
+                },
+                "backoff_per_show": {
+                    sid: {
+                        ct: {**entry, "at": entry["at"].isoformat()}
+                        for ct, entry in slots.items()
+                    }
+                    for sid, slots in self.backoff_per_show.items()
                 },
                 "active_jobs": dict(self.active_jobs),
                 "recent_jobs": list(self.recent_jobs[:20]),
@@ -284,15 +391,23 @@ def _build_generation_env() -> dict:
     return env
 
 
-def _run_talk_generation(show_id: str, count: int, job_registry: dict, env: dict, cache_invalidator: Callable[[str | None], None] | None = None, job_id: str | None = None):
-    """Generate talk segments for a show in a background thread."""
+def _run_talk_generation(show_id: str, count: int, job_registry: dict, env: dict, cache_invalidator: Callable[[str | None], None] | None = None, job_id: str | None = None, allow_archive: bool = True):
+    """Generate talk segments for a show in a background thread.
+
+    `allow_archive` is the 3.10 gate: False tells the generator that this show is
+    above the scarcity floor and should report cold rather than reach into the
+    source's back catalogue. It defaults True so a hand-run generation, where the
+    operator has explicitly asked for content, still gets everything available."""
     gen_script = PROJECT_ROOT / "station" / "content_generator" / "talk_generator.py"
     cmd = [str(VENV_PYTHON), str(gen_script), "--show", show_id, "--count", str(count)]
+    env = {**env, "WRIT_ALLOW_ARCHIVE": "1" if allow_archive else "0"}
     if job_id is None:
         job_id = f"sched-talk-{show_id}-{int(time.time())}"
     state.add_log(show_id, "talk", f"Generating {count} segment(s) (job {job_id})", job_id=job_id)
     state.active_jobs[job_id] = {"show_id": show_id, "type": "talk", "count": count,
                                   "started": _station_now().isoformat(), "status": "running"}
+
+    output_lines: list[str] = []
 
     def _jlog(msg: str):
         ts = _station_now().strftime("%H:%M:%S")
@@ -321,11 +436,18 @@ def _run_talk_generation(show_id: str, count: int, job_registry: dict, env: dict
         for line in proc.stdout:
             line = line.rstrip()
             if line:
+                output_lines.append(line)
                 _jlog(line)
         proc.wait(timeout=1800)
         if proc.returncode == 0:
             state.add_log(show_id, "talk", f"Generation complete ({count} requested)", job_id=job_id)
             final_status = "completed"
+        elif _output_looks_cold(output_lines):
+            # Not a fault: the sources have nothing this show has not already
+            # aired. Logged as its own state so a starving show is visible as
+            # starving instead of hiding inside the failure count.
+            state.add_log(show_id, "talk", "Sources cold — nothing new to generate", "warn", job_id=job_id)
+            final_status = "cold"
         else:
             state.add_log(show_id, "talk", f"Generation failed (exit {proc.returncode})", "error", job_id=job_id)
             final_status = "failed"
@@ -350,8 +472,14 @@ def _run_talk_generation(show_id: str, count: int, job_registry: dict, env: dict
 
     _jlog(f"Generation {'complete' if final_status == 'completed' else final_status}.")
     state.record_run(show_id, "talk")
-    if final_status in ("failed", "error", "timeout"):
-        state.record_failure(show_id, "talk")
+    if final_status == "completed":
+        state.record_success(show_id, "talk")
+    elif final_status == "cold":
+        wait = state.record_cold(show_id, "talk")
+        _jlog(f"Sources cold; next attempt in {wait // 3600}h{(wait % 3600) // 60:02d}m.")
+    elif final_status in ("failed", "error", "timeout"):
+        wait = state.record_failure(show_id, "talk")
+        _jlog(f"Backing off {wait // 60} min before retrying.")
     if job_id in job_registry:
         job_registry[job_id]["status"] = final_status
         job_registry[job_id]["completed_at"] = _station_now().isoformat()
@@ -429,8 +557,11 @@ def _run_music_generation(show_id: str, count: int, bumper_style: str, job_regis
 
     _jlog(f"Generation {'complete' if final_status == 'completed' else final_status}.")
     state.record_run(show_id, "music")
-    if final_status in ("failed", "error", "timeout"):
-        state.record_failure(show_id, "music")
+    if final_status == "completed":
+        state.record_success(show_id, "music")
+    elif final_status in ("failed", "error", "timeout"):
+        wait = state.record_failure(show_id, "music")
+        _jlog(f"Backing off {wait // 60} min before retrying.")
     if job_id in job_registry:
         job_registry[job_id]["status"] = final_status
         job_registry[job_id]["completed_at"] = _station_now().isoformat()
@@ -479,13 +610,30 @@ def _delete_segment(f: Path) -> None:
                 pass
 
 
-def _cleanup_expired_segments(show_id: str, max_days: int) -> int:
-    """Delete talk segments (audio + sidecar .json + .plays.json) older than max_days.
-    Returns count of audio files deleted."""
+def _cleanup_expired_segments(show_id: str, max_days: int, floor: int | None = None) -> int:
+    """Delete talk segments (audio + sidecar .json + .plays.json) older than max_days,
+    never taking the show below the scarcity floor. Returns audio files deleted.
+
+    The floor is half of the 3.10/3.11 pair and only works with the other half.
+    3.10 declines to top a show up from the archive while it is above the floor;
+    without this, expiry would walk the show straight down through the floor to
+    zero while the generator stood back. Keeping the newest `floor` segments means
+    an over-floor show holds steady on slightly older material — which is what a
+    listener wants — instead of going quiet or airing a 2014 thread.
+
+    Expiry is still what creates the inventory gap that triggers generation, so
+    this deliberately keeps expiring everything above the floor."""
+    if floor is None:
+        floor = ARCHIVE_SCARCITY_FLOOR
     now = _station_now()
     cutoff = timedelta(days=max_days)
+    segments = _segment_times(show_id, now)  # oldest first
+    # Newest `floor` segments are exempt; everything older is fair game.
+    protected = {path for _, path in segments[max(0, len(segments) - floor):]} if floor > 0 else set()
     deleted = 0
-    for generated_at, f in _segment_times(show_id, now):
+    for generated_at, f in segments:
+        if f in protected:
+            continue
         if now - generated_at > cutoff:
             _delete_segment(f)
             deleted += 1
@@ -500,10 +648,11 @@ def _janitor_sweep(dry_run: bool = False) -> dict:
     cache copies already consumed, sidecars whose audio is gone, stale job records.
     Without it, `output/` only ever grows; it reached 99% of root in July 2026.
 
-    Deliberately NOT swept: output/scripts/. Those files are the used-source dedupe
-    ledger that talk_generator scans on every generation attempt, so a TTL there
-    would silently let exhausted sources be re-aired. Phase 3.5 replaces the scan
-    with a real index under output/state/, and the TTL becomes safe then.
+    output/scripts/ is swept since 3.5 moved the dedupe ledger to output/state/ —
+    but only the `talk_*.json` records, and only past a TTL that cannot be set
+    below the re-air window. The `.<show>_source_rotation.json` files in the same
+    directory are live rotation state, not script records, and are never touched
+    (the glob excludes them; do not widen it to `*.json`).
 
     Returns a per-category {files, bytes} report. dry_run reports without deleting.
     """
@@ -563,7 +712,21 @@ def _janitor_sweep(dry_run: bool = False) -> dict:
                     orphans.append(path)
     _sweep("orphan_sidecars", orphans)
 
-    # 3. Job records past their TTL.
+    # 3. Script records past their TTL. `talk_*.json` only — the rotation-state
+    #    dotfiles alongside them are live state, and there is a forked pair
+    #    (.youtube-ai_ / .youtube_ai_), so do not assume one file per show.
+    if SCRIPTS_DIR.exists() and SCRIPTS_TTL_DAYS > 0:
+        cutoff = now - SCRIPTS_TTL_DAYS * 86400
+        stale_scripts = []
+        for path in SCRIPTS_DIR.glob("talk_*.json"):
+            try:
+                if path.stat().st_mtime < cutoff:
+                    stale_scripts.append(path)
+            except OSError:
+                continue
+        _sweep("scripts", stale_scripts)
+
+    # 4. Job records past their TTL.
     if JOBS_DIR.exists():
         cutoff = now - JOBS_TTL_DAYS * 86400
         stale_jobs = []
@@ -575,7 +738,32 @@ def _janitor_sweep(dry_run: bool = False) -> dict:
                 continue
         _sweep("jobs", stale_jobs)
 
-    # 4. Directories left empty by the sweep above.
+    # 5. Empty segment directories belonging to shows that are no longer in the
+    #    schedule. briefing_daily still had one months after it left shows.yaml.
+    #    Two guards, because a directory is cheap and re-creating one is not:
+    #    the show must be absent from the config, and the directory must be empty.
+    if not dry_run:
+        try:
+            live_shows = set(_load_schedule().get("shows", {}))
+        except Exception:
+            live_shows = None  # config unreadable — leave everything alone
+        removed_shows = 0
+        if live_shows:
+            for root in (TALK_DIR, BUMPERS_DIR):
+                if not root.exists():
+                    continue
+                for path in root.iterdir():
+                    if not path.is_dir() or path.name in live_shows:
+                        continue
+                    try:
+                        path.rmdir()  # fails harmlessly unless the directory is empty
+                        removed_shows += 1
+                    except OSError:
+                        continue
+        if removed_shows:
+            report["retired_show_dirs"] = {"files": removed_shows, "bytes": 0}
+
+    # 6. Directories left empty by the sweep above.
     if SOURCE_CACHE_DIR.exists() and not dry_run:
         removed = 0
         for path in sorted(SOURCE_CACHE_DIR.rglob("*"), key=lambda p: len(p.parts), reverse=True):
@@ -800,9 +988,6 @@ def _check_and_generate(job_registry: dict):
         # ── Talk segments ──────────────────────────────────────────
         talk_cfg = {**DEFAULT_TALK_CONFIG, **(gen_cfg.get("talk") or {})}
         if talk_cfg["enabled"]:
-            if state.in_failure_backoff(show_id, "talk"):
-                continue
-
             # Skip if a generation job is already running for this show
             already_running = any(
                 j.get("show_id") == show_id and j.get("type") == "talk"
@@ -812,6 +997,19 @@ def _check_and_generate(job_registry: dict):
                 continue
 
             inventory = _count_inventory(TALK_DIR, show_id)
+            scarce = inventory <= ARCHIVE_SCARCITY_FLOOR
+
+            backoff_kind, backoff_left = state.backoff_state(show_id, "talk")
+            if backoff_kind:
+                # A cold source stays quiet — until the show falls to the
+                # scarcity floor, which is a new condition and the one case
+                # where reaching into the archive is the right answer.
+                if not (backoff_kind == "cold" and scarce):
+                    continue
+                state.add_log(show_id, "talk",
+                    f"Inventory {inventory} at the scarcity floor — retrying a cold source "
+                    f"{backoff_left // 60} min early, archive open", "warn")
+
             target = int(talk_cfg["target_inventory"])
             minimum = int(talk_cfg["min_inventory"])
             cadence = talk_cfg.get("cadence", "continuous")
@@ -830,11 +1028,15 @@ def _check_and_generate(job_registry: dict):
                 needed = max(1, target - inventory)
 
             if should_run and needed > 0:
+                # 3.10: the archive is a reserve. It opens only at the scarcity
+                # floor, and only for shows that allow it at all.
+                allow_archive = scarce and bool(talk_cfg.get("archive_fallback", True))
+                reserve = "" if allow_archive else ", archive held back"
                 state.add_log(show_id, "talk",
-                    f"Inventory {inventory}, cadence={cadence} → generating {needed}")
+                    f"Inventory {inventory}, cadence={cadence} → generating {needed}{reserve}")
                 t = threading.Thread(
                     target=_run_talk_generation,
-                    args=(show_id, needed, job_registry, env, _inventory_invalidator),
+                    args=(show_id, needed, job_registry, env, _inventory_invalidator, None, allow_archive),
                     daemon=True,
                 )
                 t.start()

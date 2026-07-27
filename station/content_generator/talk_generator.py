@@ -68,6 +68,7 @@ SCHEDULE_PATH = PROJECT_ROOT / "config"
 SEGMENT_TYPES_PATH = PROJECT_ROOT / "config" / "segment_types.yaml"
 OUTPUT_DIR = PROJECT_ROOT / "output" / "talk_segments"
 SCRIPTS_DIR = PROJECT_ROOT / "output" / "scripts"
+STATE_DIR = PROJECT_ROOT / "output" / "state"
 SOURCE_CACHE_DIR = PROJECT_ROOT / "output" / "source_cache"
 YOUTUBE_CACHE_DIR = SOURCE_CACHE_DIR / "youtube"
 
@@ -560,6 +561,7 @@ class SourceContext:
     duration_seconds: float | None = None
     audio_path: str = ""
     transcript_source: str = ""
+    source_created_utc: float | None = None
 
 
 # =============================================================================
@@ -850,6 +852,50 @@ def _source_reuse_window_days() -> int:
         return 90
 
 
+_SOURCE_CURRENT_DAYS = 30  # anything newer than this needs no dating
+
+
+def _source_age_phrases(created_utc) -> tuple[str, str]:
+    """(dateline, instruction) placing a source post in time.
+
+    Both empty for anything inside the last month — that reads as current and
+    saying so would be noise. Older than that the host is told when it happened,
+    because a 2016 thread narrated in the present tense is the single most
+    audible tell that a segment came out of the archive (D18/D20)."""
+    if not isinstance(created_utc, (int, float)) or created_utc <= 0:
+        return "", ""
+    try:
+        posted = datetime.fromtimestamp(float(created_utc), tz=station_now().tzinfo)
+    except (OverflowError, OSError, ValueError):
+        return "", ""
+    days = (station_now() - posted).days
+    if days < _SOURCE_CURRENT_DAYS:
+        return "", ""
+    when = posted.strftime("%B %Y")
+    if days < 365:
+        months = max(1, round(days / 30))
+        span = f"about {months} month{'s' if months > 1 else ''} ago"
+    else:
+        years = days / 365
+        span = "about a year ago" if years < 1.5 else f"about {round(years)} years ago"
+    return (
+        f"Posted: {posted.strftime('%Y-%m-%d')} ({when}, {span})",
+        f"This post is from {when}, {span} — it is not current. Place it in time as you "
+        f"tell it (\"back in {posted.strftime('%Y')}\", \"a few years ago now\"). Do not "
+        f"imply it happened this week, and do not invent a present-day follow-up.",
+    )
+
+
+def _archive_fallback_allowed() -> bool:
+    """Whether this run may reach past the recency window into a source's archive.
+
+    The scheduler sets `WRIT_ALLOW_ARCHIVE=0` for a show that is above the
+    scarcity floor, or that has the archive switched off entirely. Default is
+    open: a hand-run generation is an explicit request for content, and so is a
+    manual job from the admin UI."""
+    return str(os.environ.get("WRIT_ALLOW_ARCHIVE", "1")).strip().lower() not in {"0", "false", "no"}
+
+
 def _script_is_within_window(path: Path, cutoff_stamp: str, cutoff_epoch: float) -> bool:
     """Whether a script sidecar is recent enough to still count as "used".
 
@@ -867,16 +913,73 @@ def _script_is_within_window(path: Path, cutoff_stamp: str, cutoff_epoch: float)
         return False
 
 
-def _used_source_keys_for_show(show_id: str) -> set[str]:
+def _window_cutoff_stamp(window_days: int) -> tuple[str, float]:
+    """The station-local `YYYYMMDDHHMMSS` string, and epoch, the window starts at.
+
+    Empty string when `window_days` is 0 (dedupe forever). Station-local because
+    script filenames are written with `station_now()` — parsing them against the
+    system clock puts the boundary 9.5 hours out on this box (D13)."""
+    if not window_days:
+        return "", 0.0
+    return (
+        (station_now() - timedelta(days=window_days)).strftime("%Y%m%d%H%M%S"),
+        time.time() - window_days * 86400,
+    )
+
+
+def _script_stamp(path: Path) -> str:
+    """A script record's station-local `YYYYMMDDHHMMSS` stamp.
+
+    From the `_YYYYMMDD_HHMMSS` filename suffix where present, else formatted
+    from mtime in the station timezone so the two compare identically."""
+    match = _SCRIPT_TIMESTAMP_RE.search(path.stem)
+    if match:
+        return match.group(1) + match.group(2)
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return "00000000000000"
+    tz = station_now().tzinfo
+    return datetime.fromtimestamp(mtime, tz=tz).strftime("%Y%m%d%H%M%S")
+
+
+def _scan_used_source_stamps(show_id: str) -> dict[str, str]:
+    """Full unwindowed scan of `output/scripts/` — every source key this show has
+    used, mapped to the stamp of the most recent script that used it.
+
+    This is the original ledger implementation, kept as the index's bootstrap and
+    as the reference the equivalence test asserts against."""
+    stamps: dict[str, str] = {}
+    if not SCRIPTS_DIR.exists():
+        return stamps
+    for path in SCRIPTS_DIR.glob("talk_*.json"):
+        try:
+            meta = json.loads(path.read_text())
+        except Exception:
+            continue
+        if str(meta.get("show_id", "")).strip() != show_id:
+            continue
+        source_type = str(meta.get("source_type") or "").strip().lower()
+        source_value = str(meta.get("source_value") or "").strip()
+        key = _canonical_source_key(source_type, source_value)
+        if not key:
+            continue
+        stamp = _script_stamp(path)
+        if stamp > stamps.get(key, ""):
+            stamps[key] = stamp
+    return stamps
+
+
+def _used_source_keys_by_scan(show_id: str) -> set[str]:
+    """The pre-3.5 hot path: glob and `json.loads` every script in the directory.
+
+    Superseded by the index for production use, but retained as the reference
+    implementation the 3.9 equivalence test compares the index against."""
     used: set[str] = set()
     if not SCRIPTS_DIR.exists():
         return used
     window_days = _source_reuse_window_days()
-    cutoff_stamp = ""
-    cutoff_epoch = 0.0
-    if window_days:
-        cutoff_stamp = (station_now() - timedelta(days=window_days)).strftime("%Y%m%d%H%M%S")
-        cutoff_epoch = time.time() - window_days * 86400
+    cutoff_stamp, cutoff_epoch = _window_cutoff_stamp(window_days)
     for path in SCRIPTS_DIR.glob("talk_*.json"):
         # Anything older than the re-air window is no longer "used". The check
         # is on the filename, so an expired record costs a regex rather than a
@@ -895,6 +998,110 @@ def _used_source_keys_for_show(show_id: str) -> set[str]:
         if key:
             used.add(key)
     return used
+
+
+_USED_INDEX_VERSION = 1
+
+
+def _used_index_path(show_id: str) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", show_id or "unknown")
+    return STATE_DIR / f"used_sources_{safe}.json"
+
+
+def _read_used_index(show_id: str) -> dict[str, str] | None:
+    """The show's `{key: stamp}` index, or None when it has not been built yet."""
+    path = _used_index_path(show_id)
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("version") != _USED_INDEX_VERSION:
+        return None
+    keys = payload.get("keys")
+    if not isinstance(keys, dict):
+        return None
+    return {str(k): str(v) for k, v in keys.items() if k}
+
+
+def _write_used_index(show_id: str, stamps: dict[str, str]) -> None:
+    """Persist the index atomically, dropping anything past the re-air window.
+
+    Pruning here rather than only at read keeps the file from growing forever.
+    With the window disabled (`WRIT_SOURCE_REUSE_DAYS=0`) nothing is dropped —
+    dedupe-forever needs the whole history."""
+    cutoff_stamp, _ = _window_cutoff_stamp(_source_reuse_window_days())
+    if cutoff_stamp:
+        stamps = {k: v for k, v in stamps.items() if v >= cutoff_stamp}
+    payload = {
+        "version": _USED_INDEX_VERSION,
+        "show_id": show_id,
+        "updated_at": station_iso_now(),
+        "keys": stamps,
+    }
+    path = _used_index_path(show_id)
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, indent=2, sort_keys=True))
+        tmp.replace(path)
+    except OSError as exc:
+        log(f"  Could not write used-source index for {show_id}: {exc}")
+
+
+def _used_source_keys_for_show(show_id: str) -> set[str]:
+    """Source keys this show may not re-use yet, within the re-air window.
+
+    Backed by a per-show index under `output/state/`, bootstrapped from a full
+    scan of `output/scripts/` the first time a show is seen and appended to on
+    every script write. The window is applied at read as well as at write, so
+    shortening `WRIT_SOURCE_REUSE_DAYS` takes effect without a rebuild."""
+    stamps = _read_used_index(show_id)
+    if stamps is None:
+        stamps = _scan_used_source_stamps(show_id)
+        _write_used_index(show_id, stamps)
+    cutoff_stamp, _ = _window_cutoff_stamp(_source_reuse_window_days())
+    if not cutoff_stamp:
+        return set(stamps)
+    return {key for key, stamp in stamps.items() if stamp >= cutoff_stamp}
+
+
+def _record_used_source(show_id: str, source_type: str, source_value: str, stamp: str) -> None:
+    """Append one just-written script's source to the show's index.
+
+    Cheap by design: the index is the hot path's only read, so keeping it current
+    at write time is what makes the scan unnecessary. A show whose index does not
+    exist yet is bootstrapped from the scan first, so the append never creates a
+    half-populated ledger."""
+    key = _canonical_source_key(source_type, source_value)
+    if not key:
+        return
+    stamps = _read_used_index(show_id)
+    if stamps is None:
+        stamps = _scan_used_source_stamps(show_id)
+    if stamp > stamps.get(key, ""):
+        stamps[key] = stamp
+    _write_used_index(show_id, stamps)
+
+
+def _write_script_record(meta_path: Path, meta: dict) -> None:
+    """Write a script record and index its source in one step.
+
+    Both callers used to just `json.dump` here; the index would silently drift if
+    a third one did the same, so the write goes through this."""
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
+    try:
+        _record_used_source(
+            str(meta.get("show_id") or "").strip(),
+            str(meta.get("source_type") or "").strip().lower(),
+            str(meta.get("source_value") or "").strip(),
+            _script_stamp(meta_path),
+        )
+    except Exception as exc:
+        # A segment that exists but is unindexed costs one possible repeat; a
+        # segment lost to an indexing error costs the airtime. Never the latter.
+        # The index rebuilds from the scripts themselves if it is deleted.
+        log(f"  Could not index source for {meta.get('show_id')}: {exc}")
 
 
 def _source_rule_sort_key(rule: dict) -> tuple:
@@ -1042,10 +1249,14 @@ def _fetch_reddit_thread_context(source_value: str) -> SourceContext:
                 f"{_truncate(linked_text, 3500)}"
             )
 
+    created_utc = post_data.get("created_utc")
+    dateline, age_instruction = _source_age_phrases(created_utc)
+
     source_material_parts = [
         f"Subreddit: r/{subreddit}" if subreddit else "",
         f"Thread title: {title}",
         f"Posted by: {author}",
+        *([dateline] if dateline else []),
         f"Score: {score} | Comments: {comment_count}",
         f"Permalink: {permalink}",
         "",
@@ -1063,6 +1274,8 @@ def _fetch_reddit_thread_context(source_value: str) -> SourceContext:
         if story_mode else
         "Balance retelling with commentary. Treat the post as the spine of the segment, then fold in the comments as a live chorus of reaction."
     )
+    if age_instruction:
+        format_instructions = f"{format_instructions} {age_instruction}"
 
     return SourceContext(
         source_type="reddit",
@@ -1075,6 +1288,7 @@ def _fetch_reddit_thread_context(source_value: str) -> SourceContext:
         format_instructions=format_instructions,
         subreddit=subreddit,
         story_mode=story_mode,
+        source_created_utc=float(created_utc) if isinstance(created_utc, (int, float)) else None,
     )
 
 
@@ -1100,10 +1314,14 @@ def _reddit_context_from_listing_post(post_data: dict) -> SourceContext:
                 f"{_truncate(linked_text, 3500)}"
             )
 
+    created_utc = post_data.get("created_utc")
+    dateline, age_instruction = _source_age_phrases(created_utc)
+
     source_material_parts = [
         f"Subreddit: r/{subreddit}" if subreddit else "",
         f"Thread title: {title}",
         f"Posted by: {author}",
+        *([dateline] if dateline else []),
         f"Score: {score} | Comments: {comment_count}",
         f"Permalink: {permalink}" if permalink else "",
         "",
@@ -1120,6 +1338,8 @@ def _reddit_context_from_listing_post(post_data: dict) -> SourceContext:
         "Balance retelling with commentary. Treat the post title and body as the spine of the segment. "
         "If Reddit comments are unavailable, do not invent them; reflect on the post itself and any linked material."
     )
+    if age_instruction:
+        format_instructions = f"{format_instructions} {age_instruction}"
 
     return SourceContext(
         source_type="reddit",
@@ -1132,6 +1352,7 @@ def _reddit_context_from_listing_post(post_data: dict) -> SourceContext:
         format_instructions=format_instructions,
         subreddit=subreddit,
         story_mode=story_mode,
+        source_created_utc=float(created_utc) if isinstance(created_utc, (int, float)) else None,
     )
 
 
@@ -1363,16 +1584,25 @@ def _fetch_reddit_subreddit_context_with_strategy(
 
     if chosen is None and not listing_blocked:
         # The show's recency window is dry. A subreddit with fifteen years of
-        # archive is not exhausted after six weeks, so reach into it before
-        # reporting failure.
-        log(
-            f"  r/{subreddit}: nothing unused within {lookback_days} day(s) "
-            f"after {stats['scanned']} post(s); widening to top/all."
-        )
-        try:
-            chosen = _scan(_reddit_listing_url(subreddit, "top", "all"), 0.0, chronological=False)
-        except Exception as exc:
-            log(f"  r/{subreddit} archive listing failed: {exc}")
+        # archive is not exhausted after six weeks — but on a slow subreddit
+        # that is true on *every* generation, and reaching in every time turns
+        # the show into an archive channel (D20). So it opens only when the show
+        # is genuinely scarce; otherwise report cold and let what is on disk air.
+        if _archive_fallback_allowed():
+            log(
+                f"  r/{subreddit}: nothing unused within {lookback_days} day(s) "
+                f"after {stats['scanned']} post(s); widening to top/all."
+            )
+            try:
+                chosen = _scan(_reddit_listing_url(subreddit, "top", "all"), 0.0, chronological=False)
+            except Exception as exc:
+                log(f"  r/{subreddit} archive listing failed: {exc}")
+        else:
+            log(
+                f"  r/{subreddit}: nothing unused within {lookback_days} day(s) "
+                f"after {stats['scanned']} post(s); archive held back "
+                f"(show is above the scarcity floor)."
+            )
 
     if chosen is None and listing_blocked:
         posts = _pullpush_fetch_subreddit_posts(
@@ -1403,6 +1633,11 @@ def _fetch_reddit_subreddit_context_with_strategy(
             raise RuntimeError(
                 f"No r/{subreddit} post large enough for {segment_type or 'segment'} "
                 f"(need {min_source_words}+ usable words)"
+            )
+        if not _archive_fallback_allowed():
+            raise RuntimeError(
+                f"No unused posts found for r/{subreddit} "
+                f"({stats['scanned']} scanned; archive held back above the scarcity floor)"
             )
         raise RuntimeError(
             f"No unused posts found for r/{subreddit} "
@@ -3556,6 +3791,7 @@ def generate_segment(
             "source_title": source_context.title,
             "source_subreddit": source_context.subreddit,
             "source_story_mode": bool(source_context.story_mode),
+            "source_created_utc": source_context.source_created_utc if source_context else None,
             "source_audio_path": source_context.audio_path,
             "transcript_source": source_context.transcript_source,
             "tts_backend": backend_used,
@@ -3563,8 +3799,7 @@ def generate_segment(
             "backend_origin": "local" if backend_used == "kokoro" else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
             "generated_at": station_iso_now(),
         }
-        with open(meta_path, "w") as f:
-            json.dump(meta, f, indent=2)
+        _write_script_record(meta_path, meta)
 
         _yt_channel = source_context.channel if source_context else ""
         sidecar = output_path.with_suffix(".json")
@@ -3811,13 +4046,13 @@ def generate_segment(
         "source_title": source_context.title if source_context else "",
         "source_subreddit": source_context.subreddit if source_context else "",
         "source_story_mode": bool(source_context.story_mode) if source_context else False,
+        "source_created_utc": source_context.source_created_utc if source_context else None,
         "tts_backend": backend_used,
         "audio_backend": backend_used,
         "backend_origin": "local" if backend_used == "kokoro" else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
         "generated_at": station_iso_now(),
     }
-    with open(meta_path, "w") as f:
-        json.dump(meta, f, indent=2)
+    _write_script_record(meta_path, meta)
 
     # Write a lightweight sidecar next to the audio file for the admin library
     _sc_channel = source_context.channel if source_context else ""

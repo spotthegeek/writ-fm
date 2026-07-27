@@ -330,6 +330,9 @@ def _write_script(scripts_dir, show_id: str, permalink: str, when: datetime) -> 
 @pytest.fixture
 def scripts_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(tg, "SCRIPTS_DIR", tmp_path)
+    # Since 3.5 the ledger reads from an index under output/state/, bootstrapped
+    # from these scripts. Redirect it too, or the tests read the live station's.
+    monkeypatch.setattr(tg, "STATE_DIR", tmp_path / "state")
     return tmp_path
 
 
