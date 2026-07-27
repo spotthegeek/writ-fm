@@ -442,6 +442,11 @@ covered unused imports and dead branches — these are whole features.
 - [ ] **4.11** Retire the 8 shows that never air: signal_report, crosswire, listener_hours,
       midnight_signal, dawn_chorus, sonic_archaeology, the_groove_lab, dark_jokes. Only
       dark_jokes still generates — into a void. *Per decision D.*
+      **Only 4 of the 8 are still in `shows.yaml`** (checked 2026-07-27): signal_report,
+      crosswire, listener_hours, dark_jokes. midnight_signal, dawn_chorus, sonic_archaeology
+      and the_groove_lab left the config at some point before Session A and exist only as
+      names in this plan — their `output/` directories were swept by the janitor on
+      2026-07-27. Retire the four that remain; do not go looking for the other four.
 - [ ] **4.V** **Verify:** full test suite green. Services restart clean.
       `graphify update .` to re-sync the graph.
 
@@ -1082,9 +1087,13 @@ left is CLEANUP: delete the two forked rotation files in the live output/scripts
 (.youtube-ai_ and .youtube_ai_ — the show id is `youtube-ai`, so the underscore one
 is the fake), and audit the tests that still patch scheduler paths individually.
 
-4.11 got easier: the janitor now removes empty per-show segment directories once the
-show leaves the schedule, so moving the 8 dead shows to shows.disabled.yaml cleans up
-output/ on its own within the hour. Do not hand-delete those directories first.
+4.11 is smaller than it reads: only FOUR of its eight shows are still in shows.yaml —
+signal_report, crosswire, listener_hours, dark_jokes. The other four (midnight_signal,
+dawn_chorus, sonic_archaeology, the_groove_lab) left the config before Session A and
+their output/ directories were swept on 2026-07-27. Retire the four that remain.
+It also got easier: the janitor now removes empty per-show segment directories once a
+show leaves the schedule, so the move to shows.disabled.yaml cleans up output/ on its
+own within the hour. Do not hand-delete those directories first.
 
 Two things Session C added that are NOT dead, in case a verifier flags them:
 output/state/ (the used-source index — deleting it is safe but costs a rebuild scan),
@@ -1094,6 +1103,13 @@ against, and deleting it would remove the only check that the index is correct.
 
 Verify with the full test suite (213 tests as of Session C), a clean restart of both
 services, and `graphify update .`.
+
+Deploying: /code/writ-fm is CLEAN on main and should be left that way. The flow is
+branch → PR → merge → `git pull` in /code/writ-fm → restart both services yourself.
+Merging is the step that actually ships — a merged PR that has not been pulled is not
+deployed, and an unmerged one is not deployed at all. If your harness will not let you
+merge, say so early rather than at the end; this phase deletes code, so landing it
+half-deployed is worse than not starting.
 
 When done: tick the checkboxes, update Working state and Progress, record
 Deviations, and revise the later session prompts in the appendix if anything you
