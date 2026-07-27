@@ -686,8 +686,13 @@ address it by raising rotation targets. **Not a task; do not "fix" it.**
 `worktree-session-b-phase-3a-3b` (draft PR **#3**, `gh` works now — D10's note that it is not
 installed is out of date). The change was then applied to `/code/writ-fm`'s working tree as
 an uncommitted diff and both services restarted, because production runs that tree directly.
-`main` is untouched. Merging the PR and resetting the working tree is the tidy-up whenever
-someone wants it.
+*Updated 2026-07-27:* that tidy-up has been done — **PR #3 is merged** and `/code/writ-fm`
+is clean on `main`. Two lessons from doing it, worth having before the next deploy:
+`git add -A` in a worktree swept `graphify-out/` back into the repo, which commit `0f2bf6b`
+had deliberately untracked, and a tracked `graphify-out/` then **blocks `git pull`** in any
+checkout holding its own copy (fixed in PR #4, now in `.gitignore`). And discarding the live
+tree's uncommitted deploy *before* the pull succeeds leaves production briefly running the
+old code — reconcile in the other order, or verify the pull can fast-forward first.
 
 ---
 
@@ -859,12 +864,17 @@ Notes:
   starving, say so rather than tuning the new knobs
   (WRIT_REDDIT_MAX_PAGES, WRIT_YOUTUBE_COLLECTION_DEPTH, WRIT_SOURCE_REUSE_DAYS).
 - Restart services yourself. Production runs /code/writ-fm's working tree directly,
-  so a change only takes effect once it is applied there — see D19.
+  so a change only takes effect once that tree has it — see D19.
 
-Working state: the suite is 166 tests (144 + Session B's 22 in
-tests/test_source_widening.py) and all should stay green. gh is installed and
-authenticated. Session B's work is on branch worktree-session-b-phase-3a-3b
-(draft PR #3) and applied uncommitted to /code/writ-fm.
+Working state: /code/writ-fm is CLEAN on main (Session B merged as PR #3, plus PR #4
+untracking graphify-out/). No uncommitted deploy to reconcile this time — the flow is
+branch → PR → merge → `git pull` in /code/writ-fm → restart. The suite is 166 tests
+(144 + Session B's 22 in tests/test_source_widening.py) and all should stay green.
+gh is installed and authenticated.
+
+Two live sources of truth for your before/after numbers: the station has been running
+Phase 3a/3b since 2026-07-26 09:20 UTC with 0 generation failures, and
+`journalctl -u writ-fm-admin.service` still holds the pre-change failures for contrast.
 
 When done: tick the checkboxes, update Working state and Progress, record
 Deviations, and revise the later session prompts in the appendix if anything you
