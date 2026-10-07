@@ -8,8 +8,10 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import socket
 import subprocess
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -258,6 +260,32 @@ def _llm_shorten(text: str, max_chars: int) -> str:
     return text[: max_chars - 1] + "…"
 
 
+# Printed when Ollama cannot be reached at all. admin/scheduler.py classifies a
+# failed run on this exact text: an LLM host that is down for a while (a render
+# on the Mac stops Ollama for its duration) is not a broken source, and must not
+# walk the failure ladder up to a 12-hour backoff.
+LLM_UNAVAILABLE_MARKER = "LLM backend unavailable"
+
+# Once Ollama has been found unreachable, later calls in the same run go straight
+# to the fallbacks instead of each waiting out a connect timeout of their own.
+OLLAMA_UNAVAILABLE_RECHECK_SECONDS = 300
+_ollama_unavailable_since: float | None = None
+
+
+def _ollama_unreachable(exc: BaseException) -> bool:
+    """Whether an Ollama call failed because the server was not there to answer.
+
+    True for refused or timed-out connects, DNS failure, a connection dropped
+    mid-request (the server was stopped under us) and a 502/503/504 from a proxy.
+    False for a slow model (a read timeout after connecting) and for any other
+    HTTP error — a 404 for a missing model is a configuration fault, not an outage."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in (502, 503, 504)
+    if isinstance(exc, urllib.error.URLError):
+        return True
+    return isinstance(exc, ConnectionError)
+
+
 def run_claude(
     prompt: str,
     *,
@@ -272,7 +300,11 @@ def run_claude(
 ) -> str | None:
     # 1. Try Ollama (if configured)
     import json
+    global _ollama_unavailable_since
     ollama_url = os.environ.get("OLLAMA_URL")
+    if ollama_url and _ollama_unavailable_since is not None:
+        if time.monotonic() - _ollama_unavailable_since < OLLAMA_UNAVAILABLE_RECHECK_SECONDS:
+            ollama_url = None
     if ollama_url:
         ollama_model = os.environ.get("OLLAMA_MODEL") or default_ollama_model()
         try:
@@ -303,12 +335,17 @@ def run_claude(
             )
             with urllib.request.urlopen(req, timeout=timeout) as response:
                 result = json.loads(response.read().decode('utf-8'))
+                _ollama_unavailable_since = None
                 if "response" in result:
                     script = clean_claude_output(result["response"], strip_quotes=strip_quotes)
                     if len(script) > min_length:
                         return script
         except Exception as e:
-            log(f"Ollama error: {e}")
+            if _ollama_unreachable(e):
+                _ollama_unavailable_since = time.monotonic()
+                log(f"{LLM_UNAVAILABLE_MARKER}: Ollama at {ollama_url} did not answer ({e})")
+            else:
+                log(f"Ollama error: {e}")
 
     # 2. Try Claude
     args = ["claude", "-p", prompt]

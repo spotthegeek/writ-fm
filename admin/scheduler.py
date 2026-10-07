@@ -81,6 +81,17 @@ FAILURE_BACKOFF_SECONDS = FAILURE_BACKOFF_STEPS[0]  # first step; kept for calle
 # long, quiet ladder. Scarcity overrides it: see _check_and_generate.
 COLD_BACKOFF_STEPS = (14400, 43200, 86400)  # 4 h → 12 h → 24 h
 
+# "Unavailable" is the LLM host not answering — most often a render on the Mac,
+# which stops Ollama for its duration. Nothing is wrong with the show, so it gets
+# a short flat retry instead of the failure ladder: escalating to 12 hours would
+# leave every show frozen for half a day after a two-hour render.
+UNAVAILABLE_BACKOFF_STEPS = (600,)  # 10 min, every time
+
+# Printed by station/content_generator/helpers.py (LLM_UNAVAILABLE_MARKER).
+UNAVAILABLE_OUTPUT_MARKERS = (
+    "LLM backend unavailable",
+)
+
 # At or below this many talk segments a show is genuinely scarce and may reach
 # into the source's archive. Above it, a dry recency window is reported cold and
 # nothing is generated: the segments already on disk keep airing, which sounds
@@ -103,9 +114,17 @@ def _output_looks_cold(lines: list[str]) -> bool:
     return any(marker in line for line in lines for marker in COLD_OUTPUT_MARKERS)
 
 
+def _output_looks_unavailable(lines: list[str]) -> bool:
+    """Whether a failed generation failed because the LLM host was unreachable."""
+    return any(marker in line for line in lines for marker in UNAVAILABLE_OUTPUT_MARKERS)
+
+
 def _backoff_seconds(kind: str, streak: int) -> int:
     """How long to wait after `streak` consecutive events of this kind."""
-    steps = COLD_BACKOFF_STEPS if kind == "cold" else FAILURE_BACKOFF_STEPS
+    steps = {
+        "cold": COLD_BACKOFF_STEPS,
+        "unavailable": UNAVAILABLE_BACKOFF_STEPS,
+    }.get(kind, FAILURE_BACKOFF_STEPS)
     return steps[min(max(streak, 1), len(steps)) - 1]
 
 DEFAULT_TALK_CONFIG = {
@@ -170,7 +189,7 @@ class SchedulerState:
         self.last_run_per_show: dict[str, dict] = {}  # show_id → {talk: dt, music: dt}
         self.last_failure_per_show: dict[str, dict] = {}  # show_id → {talk: dt, music: dt}
         self.last_cold_per_show: dict[str, dict] = {}  # show_id → {talk: dt, music: dt}
-        # show_id → {talk|music: {"kind": "failed"|"cold", "streak": int, "at": dt}}
+        # show_id → {talk|music: {"kind": "failed"|"cold"|"unavailable", "streak": int, "at": dt}}
         self.backoff_per_show: dict[str, dict] = {}
         self.log: list[dict] = []  # recent activity log, newest first
         self.active_jobs: dict[str, dict] = {}  # job_id → info
@@ -232,6 +251,12 @@ class SchedulerState:
                 self.last_cold_per_show[show_id] = {}
             self.last_cold_per_show[show_id][content_type] = _station_now()
         return self._advance_backoff(show_id, content_type, "cold")
+
+    def record_unavailable(self, show_id: str, content_type: str) -> int:
+        """Record a run that failed because the LLM host was down. Returns the backoff.
+
+        Like cold, this does not touch last_failure_per_show: the show is fine."""
+        return self._advance_backoff(show_id, content_type, "unavailable")
 
     def record_success(self, show_id: str, content_type: str):
         """Clear the ladder. A source that produced something is healthy again."""
@@ -442,6 +467,9 @@ def _run_talk_generation(show_id: str, count: int, job_registry: dict, env: dict
         if proc.returncode == 0:
             state.add_log(show_id, "talk", f"Generation complete ({count} requested)", job_id=job_id)
             final_status = "completed"
+        elif _output_looks_unavailable(output_lines):
+            state.add_log(show_id, "talk", "LLM host unavailable — retrying shortly", "warn", job_id=job_id)
+            final_status = "unavailable"
         elif _output_looks_cold(output_lines):
             # Not a fault: the sources have nothing this show has not already
             # aired. Logged as its own state so a starving show is visible as
@@ -477,6 +505,9 @@ def _run_talk_generation(show_id: str, count: int, job_registry: dict, env: dict
     elif final_status == "cold":
         wait = state.record_cold(show_id, "talk")
         _jlog(f"Sources cold; next attempt in {wait // 3600}h{(wait % 3600) // 60:02d}m.")
+    elif final_status == "unavailable":
+        wait = state.record_unavailable(show_id, "talk")
+        _jlog(f"LLM host unavailable; next attempt in {wait // 60} min.")
     elif final_status in ("failed", "error", "timeout"):
         wait = state.record_failure(show_id, "talk")
         _jlog(f"Backing off {wait // 60} min before retrying.")
@@ -515,6 +546,8 @@ def _run_music_generation(show_id: str, count: int, bumper_style: str, job_regis
             "status": "running", "log": [],
             "created_at": _station_now().isoformat(), "completed_at": None,
         }
+    output_lines: list[str] = []
+
     _jlog(f"Starting: show={show_id} count={count}")
 
     try:
@@ -528,11 +561,15 @@ def _run_music_generation(show_id: str, count: int, bumper_style: str, job_regis
         for line in proc.stdout:
             line = line.rstrip()
             if line:
+                output_lines.append(line)
                 _jlog(line)
         proc.wait(timeout=3600)
         if proc.returncode == 0:
             state.add_log(show_id, "music", "Bumper generation complete", job_id=job_id)
             final_status = "completed"
+        elif _output_looks_unavailable(output_lines):
+            state.add_log(show_id, "music", "LLM host unavailable — retrying shortly", "warn", job_id=job_id)
+            final_status = "unavailable"
         else:
             state.add_log(show_id, "music", f"Bumper generation failed (exit {proc.returncode})", "error", job_id=job_id)
             final_status = "failed"
@@ -559,6 +596,9 @@ def _run_music_generation(show_id: str, count: int, bumper_style: str, job_regis
     state.record_run(show_id, "music")
     if final_status == "completed":
         state.record_success(show_id, "music")
+    elif final_status == "unavailable":
+        wait = state.record_unavailable(show_id, "music")
+        _jlog(f"LLM host unavailable; next attempt in {wait // 60} min.")
     elif final_status in ("failed", "error", "timeout"):
         wait = state.record_failure(show_id, "music")
         _jlog(f"Backing off {wait // 60} min before retrying.")
