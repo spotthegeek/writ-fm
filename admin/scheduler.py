@@ -140,6 +140,35 @@ DEFAULT_TALK_CONFIG = {
     "archive_fallback": True,
 }
 
+# The nightly window (WRIT_GEN_WINDOW="03:00-05:00", station-local). mac01 serves the LLM and the
+# voices and cannot also hold the career corpus's 27B or an H3 render, so scheduled talk generation
+# runs only inside this window: one show at a time (crouch-tts renders one request at a time), shows
+# that keep stock first, the daily briefings last so they are the freshest thing made. Unset means
+# generate around the clock, as before. Manual generation from the admin page is not affected.
+WINDOW_BRIEFING_RESERVE_MIN = int(os.environ.get("WRIT_GEN_WINDOW_BRIEFING_RESERVE_MIN", "45"))
+WINDOW_CHECK_INTERVAL = 30
+
+
+def _generation_window() -> tuple[int, int] | None:
+    raw = os.environ.get("WRIT_GEN_WINDOW", "").strip()
+    if not raw:
+        return None
+    try:
+        start, end = (int(h) * 60 + int(m) for h, m in (part.strip().split(":") for part in raw.split("-")))
+    except Exception:
+        print(f"[scheduler] Ignoring malformed WRIT_GEN_WINDOW={raw!r} (want HH:MM-HH:MM)")
+        return None
+    return start, end
+
+
+def _window_minutes_left(window: tuple[int, int], now: datetime) -> int | None:
+    """Minutes until the window closes, or None outside it. Handles windows that cross midnight."""
+    start, end = window
+    minute = now.hour * 60 + now.minute
+    inside = start <= minute < end if start <= end else (minute >= start or minute < end)
+    return (end - minute) % 1440 if inside else None
+
+
 DEFAULT_MUSIC_CONFIG = {
     "enabled": False,
     "min_inventory": 3,
@@ -1022,12 +1051,25 @@ def _check_and_generate(job_registry: dict):
     shows = data.get("shows", {})
     env = _build_generation_env()
 
-    for show_id, show in shows.items():
+    window = _generation_window()
+    window_left = _window_minutes_left(window, _station_now()) if window else None
+    talk_busy = window is not None and any(j.get("type") == "talk" for j in state.active_jobs.values())
+    stock_needed = False          # a stock-keeping show still wants a top-up this window
+    items = list(shows.items())
+    if window:
+        # Stock-keeping (continuous) shows first and the daily ones (the briefings) last, except in the
+        # window's final minutes, when the briefings go first so they are never squeezed out.
+        briefings_first = window_left is not None and window_left <= WINDOW_BRIEFING_RESERVE_MIN
+        items.sort(key=lambda kv: ({**DEFAULT_TALK_CONFIG, **((kv[1].get("generation") or {}).get("talk") or {})}
+                   .get("cadence", "continuous") == "continuous") == briefings_first)
+
+    for show_id, show in items:
         gen_cfg = show.get("generation", {})
 
         # ── Talk segments ──────────────────────────────────────────
         talk_cfg = {**DEFAULT_TALK_CONFIG, **(gen_cfg.get("talk") or {})}
-        if talk_cfg["enabled"]:
+        talk_held = window is not None and (window_left is None or talk_busy)
+        if talk_cfg["enabled"] and not talk_held:
             # Skip if a generation job is already running for this show
             already_running = any(
                 j.get("show_id") == show_id and j.get("type") == "talk"
@@ -1055,12 +1097,24 @@ def _check_and_generate(job_registry: dict):
             cadence = talk_cfg.get("cadence", "continuous")
             time_after = talk_cfg.get("time_after") or None
 
-            if cadence == "continuous":
+            if cadence == "continuous" and window:
+                # Once a night, so fill to target rather than waiting for the minimum.
+                should_run = inventory < target
+                needed = target - inventory
+                stock_needed = stock_needed or should_run
+            elif cadence == "continuous":
                 # Top up once inventory reaches the minimum. This is `<=`, not `<`:
                 # a show sitting exactly ON its minimum with nothing expiring can
                 # never fall below it, and used to stall there forever.
                 should_run = inventory <= minimum and inventory < target
                 needed = target - inventory
+            elif window:
+                # Daily shows run once per day inside the window (time_after does not apply), after
+                # the stock-keeping shows, or in the window's last minutes so they are never squeezed out.
+                should_run = _cadence_ok(show_id, "talk", cadence, "00:00") and (
+                    not stock_needed or window_left <= WINDOW_BRIEFING_RESERVE_MIN
+                )
+                needed = max(1, target - inventory)
             else:
                 # Time-based (daily/weekly/…): cadence drives generation, not inventory.
                 # Always produce at least 1; never exceed target.
@@ -1080,6 +1134,8 @@ def _check_and_generate(job_registry: dict):
                     daemon=True,
                 )
                 t.start()
+                if window:
+                    talk_busy = True      # one talk job at a time inside the window
 
         # ── Music bumpers ──────────────────────────────────────────
         music_cfg = {**DEFAULT_MUSIC_CONFIG, **(gen_cfg.get("music") or {})}
@@ -1184,7 +1240,10 @@ def run_scheduler(job_registry: dict, check_interval: int = 300):
             except Exception as e:
                 print(f"[scheduler] Disk check error: {e}")
 
-        time.sleep(check_interval)
+        # Inside the window, check often so serial jobs follow each other without idle gaps.
+        window = _generation_window()
+        in_window = window is not None and _window_minutes_left(window, _station_now()) is not None
+        time.sleep(min(check_interval, WINDOW_CHECK_INTERVAL) if in_window else check_interval)
 
 
 def start_scheduler(
