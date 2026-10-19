@@ -306,7 +306,6 @@ def _source_size_words(source_context, count_comments: bool = True) -> int:
 
 
 _COMMENT_WORD_ALLOWANCE = 15   # rough usable words contributed per comment
-_MAX_COUNTED_COMMENTS = 40
 
 
 def _min_source_words_for(segment_type: str) -> int:
@@ -339,7 +338,10 @@ def _listing_post_source_words(data: dict, count_comments: bool = False) -> int:
             n_comments = int(data.get("num_comments") or 0)
         except (TypeError, ValueError):
             n_comments = 0
-        words += min(n_comments, _MAX_COUNTED_COMMENTS) * _COMMENT_WORD_ALLOWANCE
+        # Count only the comments a thread fetch keeps (REDDIT_COMMENT_LIMIT). Crediting
+        # up to 40 made busy link posts look big, then fail the real size gate after the
+        # fetch: r/sysadmin's top posts were rejected four in a row on 2026-10-19.
+        words += min(n_comments, REDDIT_COMMENT_LIMIT) * _COMMENT_WORD_ALLOWANCE
     return words
 
 
