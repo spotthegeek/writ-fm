@@ -2932,6 +2932,27 @@ def _kokoro_speed_from_wpm(wpm: int | float | None, baseline_wpm: float = 130.0)
         value = baseline_wpm
     return max(0.75, min(1.35, value / baseline_wpm))
 
+def _canonical_dialogue_script(script: str, speaker_labels: dict[str, str] | None) -> str:
+    """Rewrite speaker labels that use the hosts' names as HOST_A / HOST_B.
+
+    The prompt asks for HOST_A:/HOST_B:, but Gemma 4 writes the names it was given ("ROOT:",
+    "SUDO:"). Those still split into turns, but the voice map only knows the HOST labels, so every
+    turn fell back to the host voice: both hosts were read by one voice (sysadmin, 2026-10-19/20)."""
+    labels = speaker_labels or {}
+    key = lambda v: re.sub(r"[^a-z0-9]", "", str(v or "").lower())
+    names = {key(labels.get("primary_host_name")): "HOST_A", key(labels.get("secondary_host_name")): "HOST_B"}
+    names.pop("", None)
+    if not names:
+        return script
+
+    def swap(m: re.Match) -> str:
+        role = names.get(key(m.group("name")))
+        return f"{m.group('lead')}{role}{m.group('rest')}" if role else m.group(0)
+
+    return re.sub(r"(?m)^(?P<lead>\s*)(?P<name>[A-Za-z][A-Za-z0-9 _.'-]{0,40}?)(?P<rest>\s*(?:\([^)]*\))?:)",
+                  swap, script)
+
+
 def _parse_dialogue_parts(script: str) -> list[tuple[str, str]]:
     segments = re.split(_DIALOGUE_MARKER_PATTERN, script)
     parts: list[tuple[str, str]] = []
@@ -4009,7 +4030,7 @@ def generate_segment(
         # Always pass the original script — render_multi_voice uses _parse_dialogue_parts
         # to split by speaker label, then calls preprocess_for_tts on each chunk
         # individually after voice assignment. All backends need labels present here.
-        success = render_multi_voice(script, output_path, voices, backend=backend)
+        success = render_multi_voice(_canonical_dialogue_script(script, speaker_labels), output_path, voices, backend=backend)
     elif backend == "minimax":
         host_voice = voices.get("host", "Deep_Voice_Man")
         success = render_single_voice(
@@ -4053,7 +4074,7 @@ def generate_segment(
         fb_path = output_path.with_suffix(".mp3" if fallback_backend == "minimax" else ".wav")
         log(f"  {backend} render failed; falling back to {fallback_backend} voice '{fb_voices.get('host')}'")
         if is_multi_voice:
-            success = render_multi_voice(script, fb_path, fb_voices, backend=fallback_backend)
+            success = render_multi_voice(_canonical_dialogue_script(script, _fb_labels), fb_path, fb_voices, backend=fallback_backend)
         else:
             success = render_single_voice(
                 preprocess_for_tts(script, backend=fallback_backend),
