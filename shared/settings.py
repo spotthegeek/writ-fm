@@ -54,6 +54,20 @@ def ollama_model() -> str:
     return os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
 
 
+def ollama_think() -> bool | None:
+    """OLLAMA_THINK: the model's reasoning mode when a caller does not choose one.
+
+    Unset leaves it to the model (qwen3.x must keep thinking on for long scripts, or it
+    loops). "false" is for models such as Gemma 4, which otherwise spend the whole
+    num_predict budget on hidden thinking and return an empty response."""
+    value = os.environ.get("OLLAMA_THINK", "").strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
 def minimax_music_model() -> str:
     return os.environ.get("MINIMAX_MUSIC_MODEL", DEFAULT_MINIMAX_MUSIC_MODEL)
 

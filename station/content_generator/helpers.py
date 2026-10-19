@@ -18,6 +18,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from shared.settings import ollama_model as default_ollama_model
+from shared.settings import ollama_think as default_ollama_think
 from station.time_utils import station_now
 
 DEFAULT_NEWS_FEEDS = (
@@ -326,6 +327,9 @@ def run_claude(
             # so short utility calls pass think=False. Long-form script calls must NOT: with
             # reasoning disabled the model runs to the num_predict cap and loops badly
             # (measured 6.7k-7.9k words against a 1200-2200 target, one 12-gram repeated 94x).
+            # A caller's explicit choice wins; otherwise OLLAMA_THINK, if set, applies.
+            if think is None:
+                think = default_ollama_think()
             if think is not None:
                 payload["think"] = think
             req = urllib.request.Request(
