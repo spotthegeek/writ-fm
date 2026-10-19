@@ -1526,7 +1526,8 @@ def _fetch_reddit_subreddit_context_with_strategy(
 
     cutoff = time.time() - max(1, int(lookback_days)) * 86400
     allow_nsfw = _reddit_allow_nsfw()
-    used_source_keys = used_source_keys or set()
+    if used_source_keys is None:
+        used_source_keys = set()
     min_source_words = _min_source_words_for(segment_type)
     count_comments = _segment_counts_comments(segment_type)
 
@@ -1699,7 +1700,8 @@ def _fetch_reddit_bundle(
 ) -> SourceContext | None:
     """Fetch multiple Reddit posts and bundle them as a single SourceContext for joke segments."""
     _, subreddit = _normalize_reddit_source(source_value)
-    used_source_keys = used_source_keys or set()
+    if used_source_keys is None:
+        used_source_keys = set()
 
     # Try listing API first (full selftext, current posts), fall back to PullPush
     posts = _bundle_listing_posts(subreddit, lookback_days, selection_strategy)
@@ -2007,7 +2009,8 @@ def _select_youtube_video_url_from_collection(
             recent.append(entry)
     if not catalogue:
         raise RuntimeError("No usable YouTube entries found")
-    used_source_keys = used_source_keys or set()
+    if used_source_keys is None:
+        used_source_keys = set()
     shuffle = (selection_strategy or "latest").strip().lower() == "random"
 
     def _first_unused(pool: list[dict]) -> dict | None:
@@ -3617,7 +3620,9 @@ def generate_segment(
     # Bundle segment types fetch multiple posts from a subreddit in one shot
     seg_def = get_segment_type_definition(segment_type)
     _bundle_n_min = int(seg_def.get("items_per_segment_min", 0))
-    if _bundle_n_min > 1 and source_type in {"reddit_subreddit", "reddit"} and source_value:
+    # A bundle chosen during source selection is used as-is rather than re-fetched.
+    _have_bundle = source_context is not None and source_context.source_type == "reddit_subreddit"
+    if _bundle_n_min > 1 and source_type in {"reddit_subreddit", "reddit"} and source_value and not _have_bundle:
         _bundle_n_max = max(_bundle_n_min, int(seg_def.get("items_per_segment_max", _bundle_n_min)))
         source_context = _fetch_reddit_bundle(
             source_value,
@@ -3661,6 +3666,12 @@ def generate_segment(
                 f"  Source too small for {segment_type}: {_have} usable words "
                 f"(need {_min_src}+) — skipping rather than padding."
             )
+            # Remember the rejection for the rest of this run; otherwise the next
+            # segment's selection picks the same post and fails the same way.
+            if used_source_keys is not None:
+                _rejected_key = _canonical_source_key(source_context.source_type, source_context.source_value)
+                if _rejected_key:
+                    used_source_keys.add(_rejected_key)
             return None
 
     if segment_type == "reddit_storytelling":
@@ -4151,15 +4162,32 @@ def generate_for_show(
                 if _filter_seg == "random" and str(candidate_rule["type"]).lower() in {
                     "reddit", "reddit_subreddit", "reddit_thread"
                 }:
-                    _filter_seg = "reddit_post"
-                ctx = load_source_context(
-                    candidate_rule["type"],
-                    candidate_rule["value"],
-                    lookback_days=int(candidate_rule["lookback_days"]),
-                    selection_strategy=str(candidate_rule["selection_strategy"]),
-                    used_source_keys=used_source_keys,
-                    segment_type=_filter_seg,
-                )
+                    # Judge the source by the segment the rule will actually make: a
+                    # jokes rule judged as reddit_post needs 220+ words and never passes.
+                    _filter_seg = str(candidate_rule.get("segment_type") or "reddit_post")
+                _rule_def = get_segment_type_definition(_filter_seg) if _filter_seg != "random" else {}
+                _rule_n_min = int(_rule_def.get("items_per_segment_min", 0) or 0)
+                if _rule_n_min > 1 and str(candidate_rule["type"]).lower() == "reddit_subreddit":
+                    # Bundle types need several posts, so test for the bundle here: a
+                    # subreddit too thin for one falls through to the next rule instead
+                    # of failing the segment after it has been chosen.
+                    ctx = _fetch_reddit_bundle(
+                        candidate_rule["value"],
+                        lookback_days=int(candidate_rule["lookback_days"]),
+                        selection_strategy=str(candidate_rule["selection_strategy"]),
+                        used_source_keys=used_source_keys,
+                        n_min=_rule_n_min,
+                        n_max=max(_rule_n_min, int(_rule_def.get("items_per_segment_max", _rule_n_min) or _rule_n_min)),
+                    )
+                else:
+                    ctx = load_source_context(
+                        candidate_rule["type"],
+                        candidate_rule["value"],
+                        lookback_days=int(candidate_rule["lookback_days"]),
+                        selection_strategy=str(candidate_rule["selection_strategy"]),
+                        used_source_keys=used_source_keys,
+                        segment_type=_filter_seg,
+                    )
                 if ctx:
                     selected_source_rule = candidate_rule
                     selected_source_context = ctx
