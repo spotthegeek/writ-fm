@@ -1856,6 +1856,13 @@ def ensure_voice_samples_api(body: dict | None = None):
 @app.get("/api/voice-samples/audio/{backend}/{voice}")
 def stream_voice_sample(backend: str, voice: str):
     path = sample_path(backend, voice)
+    if not path.exists() and backend in {"breeze", "qwen"}:
+        # crouch-tts voices are designed on mac01 and can be added or redesigned at any time,
+        # so their samples are made on first play rather than in advance (about 5-15 s).
+        try:
+            path = ensure_voice_sample(backend, voice)
+        except Exception as e:
+            raise HTTPException(503, f"Could not make a {backend} sample for {voice}: {e}")
     if not path.exists():
         raise HTTPException(404, f"Voice sample not found for {backend}:{voice}")
     return FileResponse(str(path), media_type=sample_media_type(path))
