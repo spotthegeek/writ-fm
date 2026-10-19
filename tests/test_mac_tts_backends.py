@@ -109,3 +109,17 @@ def test_host_save_carries_breeze_voice_and_keeps_measured_paces():
     assert data["voice_breeze"] == "hank" and "speaking_pace_wpm_breeze" not in data
     merged = {**{"speaking_pace_wpm_breeze": 141, "tts_backend": "breeze"}, **data}
     assert merged["speaking_pace_wpm_breeze"] == 141 and merged["tts_backend"] == "breeze"
+
+
+def test_a_missing_breeze_sample_is_made_on_first_play(monkeypatch, tmp_path):
+    from admin import app as admin_app
+    made = []
+    target = tmp_path / "silas.wav"
+
+    def fake_ensure(backend, voice):
+        made.append((backend, voice)); target.write_bytes(WAV); return target
+
+    monkeypatch.setattr(admin_app, "sample_path", lambda b, v: tmp_path / "missing.wav")
+    monkeypatch.setattr(admin_app, "ensure_voice_sample", fake_ensure)
+    resp = admin_app.stream_voice_sample("breeze", "silas")
+    assert made == [("breeze", "silas")] and resp.path == str(target)
