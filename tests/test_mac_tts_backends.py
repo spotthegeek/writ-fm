@@ -123,3 +123,27 @@ def test_a_missing_breeze_sample_is_made_on_first_play(monkeypatch, tmp_path):
     monkeypatch.setattr(admin_app, "ensure_voice_sample", fake_ensure)
     resp = admin_app.stream_voice_sample("breeze", "silas")
     assert made == [("breeze", "silas")] and resp.path == str(target)
+
+
+def test_named_speaker_labels_map_to_host_roles():
+    labels = {"primary_host_name": "root", "secondary_host_name": "Sudo"}
+    script = "ROOT: [sigh] DNS again.\n\nSUDO: It's always DNS.\nROOT (dryly): Always."
+    out = tg._canonical_dialogue_script(script, labels)
+    assert out.splitlines()[0].startswith("HOST_A:") and out.splitlines()[2].startswith("HOST_B:")
+    assert out.splitlines()[3].startswith("HOST_A (dryly):")
+    parts = tg._parse_dialogue_parts(out)
+    assert [p[0] for p in parts] == ["HOST_A", "HOST_B", "HOST_A"]
+
+
+def test_dialogue_with_named_labels_uses_both_voices(monkeypatch, tmp_path):
+    used = []
+    monkeypatch.setattr(tg, "_local_render_speech", lambda backend, text, path, voice, speed=1.0: used.append(voice) or Path(path).write_bytes(WAV) or True)
+    monkeypatch.setattr(tg.subprocess, "run", lambda *a, **k: type("R", (), {"returncode": 0, "stderr": ""})())
+    script = tg._canonical_dialogue_script("ROOT: One.\nSUDO: Two.", {"primary_host_name": "root", "secondary_host_name": "sudo"})
+    tg.render_multi_voice(script, tmp_path / "x.wav", {"host": "hank", "guest": "jasper"}, backend="breeze")
+    assert used == ["hank", "jasper"]
+
+
+def test_labels_already_in_role_form_are_untouched():
+    script = "HOST_A: Hi.\nHOST_B: Hello."
+    assert tg._canonical_dialogue_script(script, {"primary_host_name": "root", "secondary_host_name": "sudo"}) == script
