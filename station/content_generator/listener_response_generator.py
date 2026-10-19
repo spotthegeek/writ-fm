@@ -33,7 +33,7 @@ os.environ.pop("CLAUDECODE", None)
 from station.content_generator.helpers import log, preprocess_for_tts, run_claude
 from station.content_generator.persona import build_host_prompt, get_host, resolve_station_name
 from shared.hosts import assignment_voice, primary_host_assignment
-from shared.settings import default_voice_for_backend
+from shared.settings import default_voice_for_backend, default_tts_backend
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCHEDULE_PATH = PROJECT_ROOT / "config"
@@ -207,7 +207,7 @@ def process_messages(max_batch: int = MAX_BATCH) -> int:
         show_description = resolved.description
         primary = primary_host_assignment(resolved, roster_lookup=get_host)
         host_id = primary.get("id", resolved.host)
-        backend = primary.get("tts_backend", getattr(resolved, "tts_backend", "kokoro"))
+        backend = primary.get("tts_backend", getattr(resolved, "tts_backend", "") or default_tts_backend())
         voice = assignment_voice(primary, backend, role="host", roster_lookup=get_host)
     except Exception as e:
         log(f"Schedule error, using defaults: {e}")
@@ -215,7 +215,8 @@ def process_messages(max_batch: int = MAX_BATCH) -> int:
         show_name = "Midnight Signal"
         show_description = "Philosophy and late-night transmissions."
         host_id = "liminal_operator"
-        voice = default_voice_for_backend("kokoro", "host")
+        backend = default_tts_backend()
+        voice = default_voice_for_backend(backend, "host")
 
     log(f"Current show: {show_name} (host: {host_id}, voice: {voice})")
 
@@ -248,7 +249,7 @@ def process_messages(max_batch: int = MAX_BATCH) -> int:
         log(f"  Generated {word_count} words")
 
         # Prepare TTS
-        processed = preprocess_for_tts(script)
+        processed = preprocess_for_tts(script, backend=backend)
 
         # Output path
         show_dir = OUTPUT_DIR / show_id
@@ -257,7 +258,7 @@ def process_messages(max_batch: int = MAX_BATCH) -> int:
         output_path = show_dir / f"listener_response_{timestamp}.wav"
 
         log("  Rendering audio...")
-        if render_single_voice(processed, output_path, voice):
+        if render_single_voice(processed, output_path, voice, backend=backend):
             duration = get_duration(output_path)
             duration_str = f"{int(duration // 60)}:{int(duration % 60):02d}" if duration else "?"
             log(f"  Created: {output_path.name} ({duration_str})")

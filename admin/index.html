@@ -474,6 +474,8 @@ const LibRow = ({ item, t, shows, onDelete, opts, onRegen }) => {
                   <select value={regenBackend} onChange={e => { setRegenBackend(e.target.value); setRegenVoice(""); }}
                     style={{ height: 28, padding: "0 8px", borderRadius: 6, border: `1px solid ${t.inputBorder}`, background: t.inputBg, color: t.text, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans',sans-serif", outline: "none" }}>
                     <option value="">Show default TTS</option>
+                    <option value="breeze">Breeze (mac01)</option>
+                    <option value="qwen">Qwen3-TTS (mac01)</option>
                     <option value="kokoro">Kokoro (local)</option>
                     <option value="minimax">MiniMax</option>
                     <option value="google">Google</option>
@@ -522,8 +524,8 @@ const LibColHead = ({ t }) => (
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 const SEG_TYPE_LABEL = { reddit_storytelling: "Storytelling", reddit_post: "Reddit", news_briefing: "Briefing", youtube: "YouTube", deep_dive: "Deep Dive", panel: "Panel", interview: "Interview", story: "Story", news_analysis: "Analysis", listener_mailbag: "Mailbag", show_intro: "Intro", show_outro: "Outro", station_id: "Station ID", music_bumper: "Music" };
-const TTS_LABEL = { kokoro: "Kokoro", kokoro_fallback: "Kokoro", google: "Google TTS", minimax: "MiniMax", youtube_ingest: "YouTube", "music-gen": "MusicGen", "ace-step": "MusicGen" };
-const TTS_COLOR = { kokoro: "#3b82f6", kokoro_fallback: "#3b82f6", google: "#22c55e", minimax: "#a855f7", youtube_ingest: "#ef4444", "music-gen": "#f97316", "ace-step": "#f97316" };
+const TTS_LABEL = { breeze: "Breeze", breeze_fallback: "Breeze", qwen: "Qwen3-TTS", qwen_fallback: "Qwen3-TTS", kokoro: "Kokoro", kokoro_fallback: "Kokoro", google: "Google TTS", minimax: "MiniMax", youtube_ingest: "YouTube", "music-gen": "MusicGen", "ace-step": "MusicGen" };
+const TTS_COLOR = { breeze: "#0ea5e9", breeze_fallback: "#0ea5e9", qwen: "#14b8a6", qwen_fallback: "#14b8a6", kokoro: "#3b82f6", kokoro_fallback: "#3b82f6", google: "#22c55e", minimax: "#a855f7", youtube_ingest: "#ef4444", "music-gen": "#f97316", "ace-step": "#f97316" };
 
 const fmtActivityDate = (iso) => {
   if (!iso) return "";
@@ -1185,13 +1187,10 @@ const GenerateScreen = ({ t, setStatus, shows }) => {
 
   const backendVoices = (backend) => {
     if (!opts) return [];
-    if (backend === "kokoro") return opts.kokoro_voices || [];
-    if (backend === "minimax") return opts.minimax_voices || [];
-    if (backend === "google") return opts.google_voices || [];
-    return [];
+    return opts[`${backend}_voices`] || [];
   };
 
-  const effectiveBackend = form.tts_backend || selectedShow?.tts_backend || "kokoro";
+  const effectiveBackend = form.tts_backend || selectedShow?.tts_backend || "breeze";
   const voices = backendVoices(effectiveBackend);
 
   return (
@@ -1272,6 +1271,8 @@ const GenerateScreen = ({ t, setStatus, shows }) => {
                 <Label t={t}>TTS Backend</Label>
                 <Select t={t} value={form.tts_backend} onChange={e => setForm(f => ({ ...f, tts_backend: e.target.value, host_voice: "" }))}>
                   <option value="">Use show default</option>
+                  <option value="breeze">Breeze (mac01)</option>
+                  <option value="qwen">Qwen3-TTS (mac01)</option>
                   <option value="kokoro">Kokoro (local)</option>
                   <option value="minimax">MiniMax (cloud)</option>
                   <option value="google">Google Gemini (cloud)</option>
@@ -1567,7 +1568,7 @@ const ShowModal = ({ show, t, onClose, onSaved, segmentTypes, hosts }) => {
     id: show?.id || "",
     name: show?.name || "",
     description: show?.description || "",
-    tts_backend: show?.tts_backend || "kokoro",
+    tts_backend: show?.tts_backend || "breeze",
     bumper_style: show?.bumper_style || "ambient",
     segment_types: show?.segment_types || [],
     generation: show?.generation || { talk: { enabled: true, min_inventory: 6, target_inventory: 12, cadence: "continuous" }, music: { enabled: true, min_inventory: 4, target_inventory: 8, cadence: "weekly" } },
@@ -1635,7 +1636,7 @@ const ShowModal = ({ show, t, onClose, onSaved, segmentTypes, hosts }) => {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div><Label t={t}>Default TTS Backend</Label>
               <Select t={t} value={form.tts_backend} onChange={e => setForm(f => ({ ...f, tts_backend: e.target.value }))}>
-                <option value="kokoro">Kokoro (local)</option><option value="minimax">MiniMax (cloud)</option><option value="google">Google Gemini (cloud)</option>
+                <option value="breeze">Breeze (mac01)</option><option value="qwen">Qwen3-TTS (mac01)</option><option value="kokoro">Kokoro (local)</option><option value="minimax">MiniMax (cloud)</option><option value="google">Google Gemini (cloud)</option>
               </Select>
             </div>
             <div><Label t={t}>Bumper Style</Label>
@@ -1862,7 +1863,7 @@ const ShowsScreen = ({ t, shows, reloadShows }) => {
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 15, fontWeight: 600, color: t.text }}>{show.name}</span>
                   {(show.hosts || []).map(h => <Pill key={h.id} label={h.display_name || h.id} bg={t.navActiveBg} color={t.accent} />)}
-                  <Pill label={show.tts_backend || "kokoro"} bg={t.border} color={t.textMuted} />
+                  <Pill label={show.tts_backend || "breeze"} bg={t.border} color={t.textMuted} />
                 </div>
                 <p style={{ fontSize: 13, color: t.textMuted, lineHeight: 1.5, marginBottom: 10 }}>{show.description}</p>
                 <div style={{ display: "flex", gap: 14, fontSize: 12, color: t.textFaint }}>
@@ -2186,6 +2187,7 @@ const HostsScreen = ({ t }) => {
     const h = host ? { ...host, _id: id } : {};
     setHostForm({
       name: h.name || "", bio: h.identity || "", voice_style: h.voice_style || "",
+      voice_breeze: h.voice_breeze || "silas", voice_qwen: h.voice_qwen || "silas",
       tts_voice: h.tts_voice || "am_michael", voice_minimax: h.voice_minimax || "Deep_Voice_Man",
       voice_google: h.voice_google || "Kore", speaking_pace_wpm: h.speaking_pace_wpm || 130,
       _id: id || "",
@@ -2199,6 +2201,7 @@ const HostsScreen = ({ t }) => {
     try {
       const body = {
         name: hostForm.name, bio: hostForm.bio, voice_style: hostForm.voice_style, philosophy: "", anti_patterns: "",
+        voice_breeze: hostForm.voice_breeze, voice_qwen: hostForm.voice_qwen,
         tts_voice: hostForm.tts_voice, voice_minimax: hostForm.voice_minimax, voice_google: hostForm.voice_google,
         speaking_pace_wpm: parseInt(hostForm.speaking_pace_wpm) || 130,
         speaking_pace_wpm_kokoro: parseInt(hostForm.speaking_pace_wpm) || 130,
@@ -2244,13 +2247,13 @@ const HostsScreen = ({ t }) => {
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {[["Kokoro Voice", "tts_voice"], ["MiniMax Voice", "voice_minimax"], ["Google Voice", "voice_google"]].map(([lbl, key]) => (
+              {[["Breeze Voice", "voice_breeze"], ["Qwen3-TTS Voice", "voice_qwen"], ["Kokoro Voice", "tts_voice"], ["MiniMax Voice", "voice_minimax"], ["Google Voice", "voice_google"]].map(([lbl, key]) => (
                 <div key={key}>
                   <Label t={t}>{lbl}</Label>
                   <div style={{ display: "flex", gap: 6 }}>
                     <Input t={t} value={hostForm[key]} onChange={e => setHostForm(f => ({ ...f, [key]: e.target.value }))} style={{ flex: 1 }} />
                     <button onClick={() => {
-                      const backend = key === "tts_voice" ? "kokoro" : key === "voice_minimax" ? "minimax" : "google";
+                      const backend = key === "tts_voice" ? "kokoro" : key.replace("voice_", "");
                       playVoiceSample(backend, hostForm[key]);
                     }} style={{ width: 34, height: 34, borderRadius: 7, border: `1px solid ${t.border}`, background: "transparent", color: t.textMuted, cursor: "pointer" }}>▶</button>
                   </div>
@@ -2286,7 +2289,7 @@ const HostsScreen = ({ t }) => {
                   <div style={{ fontSize: 15, fontWeight: 600, color: t.text, marginBottom: 4 }}>{host.name || id}</div>
                   <p style={{ fontSize: 13, color: t.textMuted, lineHeight: 1.5, marginBottom: 10 }}>{(host.identity || "").slice(0, 120)}{host.identity?.length > 120 ? "…" : ""}</p>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {[["Kokoro", host.tts_voice], ["MiniMax", host.voice_minimax], ["Google", host.voice_google]].filter(([, v]) => v).map(([b, v]) => (
+                    {[["Breeze", host.voice_breeze], ["Kokoro", host.tts_voice], ["MiniMax", host.voice_minimax], ["Google", host.voice_google]].filter(([, v]) => v).map(([b, v]) => (
                       <span key={b} style={{ fontSize: 11.5, color: t.textFaint, background: t.border, padding: "3px 9px", borderRadius: 99 }}>{b}: {v}</span>
                     ))}
                     {host.speaking_pace_wpm && <span style={{ fontSize: 11.5, color: t.textFaint, background: t.border, padding: "3px 9px", borderRadius: 99 }}>{host.speaking_pace_wpm} WPM</span>}

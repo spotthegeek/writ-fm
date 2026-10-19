@@ -87,6 +87,8 @@ hosts:
 
       '
     tts_voice: am_michael
+    voice_breeze: silas
+    voice_qwen: silas
     voice_minimax: Deep_Voice_Man
     voice_google: Puck
     tts_backend: kokoro
@@ -156,6 +158,8 @@ hosts:
 
       '
     tts_voice: bm_daniel
+    voice_breeze: owen
+    voice_qwen: owen
     voice_minimax: Elegant_Man
     voice_google: Kore
     tts_backend: kokoro
@@ -225,6 +229,8 @@ hosts:
 
       '
     tts_voice: af_heart
+    voice_breeze: ivy
+    voice_qwen: ivy
     voice_minimax: Calm_Woman
     tts_backend: kokoro
     speaking_pace_wpm: 120
@@ -293,6 +299,8 @@ hosts:
 
       '
     tts_voice: am_onyx
+    voice_breeze: margot
+    voice_qwen: margot
     voice_minimax: Deep_Voice_Man
     voice_google: Kore
     tts_backend: kokoro
@@ -361,6 +369,8 @@ hosts:
 
       '
     tts_voice: af_bella
+    voice_breeze: lena
+    voice_qwen: lena
     voice_minimax: Friendly_Person
     voice_google: Zephyr
     tts_backend: kokoro
@@ -376,6 +386,8 @@ hosts:
     anti_patterns: ''
     tts_backend: kokoro
     tts_voice: am_liam
+    voice_breeze: hank
+    voice_qwen: hank
     voice_minimax: Deep_Voice_Man
     speaking_pace_wpm: 125
   sudo:
@@ -386,6 +398,8 @@ hosts:
     philosophy: ''
     anti_patterns: ''
     tts_voice: af_nova
+    voice_breeze: jasper
+    voice_qwen: jasper
     voice_minimax: Wise_Woman
     voice_google: Zephyr
     speaking_pace_wpm: 110
@@ -405,6 +419,8 @@ hosts:
     anti_patterns: ''
     tts_backend: kokoro
     tts_voice: am_michael
+    voice_breeze: silas
+    voice_qwen: silas
     voice_minimax: Patient_Man
     voice_google: Puck
     speaking_pace_wpm: 130
@@ -421,6 +437,8 @@ hosts:
     anti_patterns: ''
     tts_backend: kokoro
     tts_voice: af_bella
+    voice_breeze: ada
+    voice_qwen: ada
     voice_minimax: Calm_Woman
     voice_google: Sulafat
     speaking_pace_wpm: 130
@@ -437,6 +455,8 @@ hosts:
     anti_patterns: ''
     tts_backend: kokoro
     tts_voice: am_puck
+    voice_breeze: rory
+    voice_qwen: rory
     voice_minimax: Elegant_Man
     voice_google: Charon
     speaking_pace_wpm: 125
@@ -472,6 +492,8 @@ hosts:
     anti_patterns: ''
     tts_backend: kokoro
     tts_voice: am_liam
+    voice_breeze: dev
+    voice_qwen: dev
     voice_minimax: Friendly_Person
     voice_google: Umbriel
     speaking_pace_wpm: 120
@@ -510,6 +532,8 @@ hosts:
       - Perform enthusiasm you do not feel'
     tts_backend: kokoro
     tts_voice: am_adam
+    voice_breeze: mick
+    voice_qwen: mick
     voice_minimax: Deep_Voice_Man
     voice_google: Kore
     speaking_pace_wpm: 145
@@ -545,6 +569,8 @@ hosts:
       - Use phrases like "shocking" or "unbelievable"'
     tts_backend: kokoro
     tts_voice: af_sky
+    voice_breeze: wren
+    voice_qwen: wren
     voice_minimax: Calm_Woman
     voice_google: Zephyr
     speaking_pace_wpm: 135

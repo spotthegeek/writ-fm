@@ -65,7 +65,19 @@ def sample_media_type(path: Path) -> str:
     }.get(path.suffix.lower(), "application/octet-stream")
 
 
+MAC_BACKENDS = ("breeze", "qwen")
+
+
+def _mac_voices() -> list[dict]:
+    from station.mac_tts import list_voices
+    return list_voices()
+
+
 def voice_label(backend: str, voice_id: str) -> str:
+    if backend in MAC_BACKENDS:
+        meta = next((v for v in _mac_voices() if v.get("name") == voice_id), {})
+        extra = ", ".join(x for x in (meta.get("gender"), meta.get("accent")) if x)
+        return f"{voice_id.title()} ({extra})" if extra else voice_id.title()
     if backend == "kokoro":
         return KOKORO_VOICE_LABELS.get(voice_id, voice_id)
     if backend == "google":
@@ -75,7 +87,21 @@ def voice_label(backend: str, voice_id: str) -> str:
 
 
 def voice_catalog() -> dict[str, list[dict]]:
+    mac_names = [v["name"] for v in _mac_voices() if v.get("name")]
     return {
+        **{
+            backend: [
+                {
+                    "backend": backend,
+                    "voice": voice_id,
+                    "label": voice_label(backend, voice_id),
+                    "sample_ready": sample_path(backend, voice_id).exists(),
+                    "sample_url": sample_url(backend, voice_id),
+                }
+                for voice_id in mac_names
+            ]
+            for backend in MAC_BACKENDS
+        },
         "kokoro": [
             {
                 "backend": "kokoro",
@@ -117,7 +143,7 @@ def ensure_voice_sample(
     text: str = VOICE_SAMPLE_TEXT,
 ) -> Path:
     backend = backend.lower().strip()
-    if backend not in {"kokoro", "minimax", "google"}:
+    if backend not in {"kokoro", "minimax", "google", *MAC_BACKENDS}:
         raise ValueError(f"Unknown backend: {backend}")
 
     out = sample_path(backend, voice_id)
@@ -125,7 +151,10 @@ def ensure_voice_sample(
         return out
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    if backend == "kokoro":
+    if backend in MAC_BACKENDS:
+        from station.mac_tts import generate_speech as generate_mac_speech
+        ok = generate_mac_speech(text, out, voice_id, model=backend)
+    elif backend == "kokoro":
         ok = render_speech(text, out, voice=voice_id, allow_downloads=True)
     elif backend == "google":
         ok = generate_google_speech(text, out, voice_id=voice_id)
@@ -144,7 +173,9 @@ def ensure_voice_samples(
     created: dict[str, list[str]] = {}
     for backend in backends:
         backend = backend.lower().strip()
-        if backend == "kokoro":
+        if backend in MAC_BACKENDS:
+            voices = [v["name"] for v in _mac_voices() if v.get("name")]
+        elif backend == "kokoro":
             voices = KOKORO_VOICES
         elif backend == "google":
             voices = GOOGLE_VOICES

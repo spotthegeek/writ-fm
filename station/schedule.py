@@ -13,6 +13,7 @@ The streamer can use this to:
 """
 
 from __future__ import annotations
+from shared.settings import default_tts_backend
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -207,7 +208,7 @@ class Show:
     host: str = "liminal_operator"
     hosts: list[dict[str, Any]] = field(default_factory=list)
     guests: list[dict[str, Any]] = field(default_factory=list)
-    tts_backend: str = "kokoro"
+    tts_backend: str = "breeze"
     topic_focus: str = ""
     segment_types: list[str] = field(default_factory=lambda: ["deep_dive"])
     bumper_style: str = "ambient"
@@ -416,7 +417,7 @@ def load_schedule(path: Path) -> StationSchedule:
         host = str(cfg.get("host", "liminal_operator")).strip()
         hosts = cfg.get("hosts") if isinstance(cfg.get("hosts"), list) else []
         guests = cfg.get("guests") if isinstance(cfg.get("guests"), list) else []
-        tts_backend = str(cfg.get("tts_backend", "kokoro")).strip() or "kokoro"
+        tts_backend = str(cfg.get("tts_backend", "") or "").strip() or default_tts_backend()
         topic_focus = str(cfg.get("topic_focus", "")).strip()
         segment_types_raw = cfg.get("segment_types")
         if segment_types_raw is None or segment_types_raw == []:

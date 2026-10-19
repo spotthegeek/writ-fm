@@ -35,7 +35,22 @@ DEFAULT_VOICE_BY_BACKEND_AND_ROLE = {
         "host": "Kore",
         "guest": "Puck",
     },
+    # crouch-tts on mac01: voices designed once and named on the service (GET /v1/voices).
+    "breeze": {
+        "host": "silas",
+        "guest": "wren",
+    },
+    "qwen": {
+        "host": "silas",
+        "guest": "wren",
+    },
 }
+
+TTS_BACKENDS = ("breeze", "qwen", "kokoro", "minimax", "google")
+MAC_TTS_BACKENDS = ("breeze", "qwen")          # served by crouch-tts on mac01
+DEFAULT_TTS_BACKEND = "breeze"
+DEFAULT_MAC_TTS_TIMEOUT_SECONDS = 600.0
+DEFAULT_MAC_TTS_MAX_RETRIES = 2
 
 
 def inventory_cache_ttl() -> float:
@@ -121,14 +136,49 @@ def google_tts_api_key() -> str:
     )
 
 
+def default_tts_backend() -> str:
+    """The backend a show or host uses when it names none (WRIT_DEFAULT_TTS_BACKEND, else breeze)."""
+    value = os.environ.get("WRIT_DEFAULT_TTS_BACKEND", "").strip().lower()
+    return value if value in TTS_BACKENDS else DEFAULT_TTS_BACKEND
+
+
+def tts_fallback_backend() -> str:
+    """WRIT_TTS_FALLBACK_BACKEND: re-render with this backend when a crouch-tts render fails (unset = none)."""
+    value = os.environ.get("WRIT_TTS_FALLBACK_BACKEND", "").strip().lower()
+    return value if value in TTS_BACKENDS else ""
+
+
+def mac_tts_service_url() -> str:
+    return os.environ.get("MAC_TTS_SERVICE_URL", "").strip().rstrip("/")
+
+
+def mac_tts_timeout_seconds() -> float:
+    return float(os.environ.get("MAC_TTS_TIMEOUT", str(DEFAULT_MAC_TTS_TIMEOUT_SECONDS)))
+
+
+def mac_tts_max_retries() -> int:
+    return max(1, int(os.environ.get("MAC_TTS_MAX_RETRIES", str(DEFAULT_MAC_TTS_MAX_RETRIES))))
+
+
+def voice_field(backend: str) -> str:
+    """The per-host voice field for a backend in shows.yaml host entries (voice_breeze, voice_kokoro, ...)."""
+    return f"voice_{(backend or default_tts_backend()).strip().lower()}"
+
+
+def roster_voice_field(backend: str) -> str:
+    """The same field in hosts.yaml, where Kokoro's is the older `tts_voice`."""
+    key = (backend or default_tts_backend()).strip().lower()
+    return "tts_voice" if key == "kokoro" else f"voice_{key}"
+
+
 def default_voice_for_backend(backend: str, role: str = "host") -> str:
-    backend_key = (backend or "kokoro").strip().lower()
+    backend_key = (backend or default_tts_backend()).strip().lower()
     role_key = "guest" if role == "guest" else "host"
     backend_defaults = DEFAULT_VOICE_BY_BACKEND_AND_ROLE.get(
         backend_key,
-        DEFAULT_VOICE_BY_BACKEND_AND_ROLE["kokoro"],
+        DEFAULT_VOICE_BY_BACKEND_AND_ROLE[DEFAULT_TTS_BACKEND],
     )
-    return backend_defaults.get(role_key, DEFAULT_VOICE_BY_BACKEND_AND_ROLE["kokoro"][role_key])
+    return backend_defaults.get(role_key, DEFAULT_VOICE_BY_BACKEND_AND_ROLE[DEFAULT_TTS_BACKEND][role_key])
 
 
 def icecast_status_url() -> str:
