@@ -308,7 +308,7 @@ hosts:
     voice_breeze: margot
     voice_qwen: margot
     speaking_pace_wpm_breeze: 173
-    speaking_pace_wpm_qwen: 150
+    speaking_pace_wpm_qwen: 168
     voice_minimax: Deep_Voice_Man
     voice_google: Kore
     tts_backend: kokoro
@@ -398,8 +398,8 @@ hosts:
     tts_voice: am_liam
     voice_breeze: hank
     voice_qwen: hank
-    speaking_pace_wpm_breeze: 103
-    speaking_pace_wpm_qwen: 160
+    speaking_pace_wpm_breeze: 140
+    speaking_pace_wpm_qwen: 147
     voice_minimax: Deep_Voice_Man
     speaking_pace_wpm: 125
   sudo:
@@ -413,7 +413,7 @@ hosts:
     voice_breeze: jasper
     voice_qwen: jasper
     speaking_pace_wpm_breeze: 171
-    speaking_pace_wpm_qwen: 188
+    speaking_pace_wpm_qwen: 182
     voice_minimax: Wise_Woman
     voice_google: Zephyr
     speaking_pace_wpm: 110
@@ -515,7 +515,7 @@ hosts:
     voice_breeze: dev
     voice_qwen: dev
     speaking_pace_wpm_breeze: 149
-    speaking_pace_wpm_qwen: 213
+    speaking_pace_wpm_qwen: 186
     voice_minimax: Friendly_Person
     voice_google: Umbriel
     speaking_pace_wpm: 120
