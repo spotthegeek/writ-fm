@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from shared.settings import default_voice_for_backend
+from shared.settings import default_tts_backend, default_voice_for_backend, roster_voice_field, voice_field
 
 
 RosterLookup = Callable[[str], dict[str, Any] | None]
@@ -32,16 +32,16 @@ def primary_host_assignment(show: Any, roster_lookup: RosterLookup | None = None
         if host.get("role") == "primary":
             assignment = dict(host)
             if not assignment.get("tts_backend"):
-                assignment["tts_backend"] = show_backend or "kokoro"
+                assignment["tts_backend"] = show_backend or default_tts_backend()
             return assignment
     if hosts:
         assignment = dict(hosts[0])
         if not assignment.get("tts_backend"):
-            assignment["tts_backend"] = show_backend or "kokoro"
+            assignment["tts_backend"] = show_backend or default_tts_backend()
         return assignment
 
     host_id = _show_value(show, "host", "liminal_operator")
-    tts_backend = show_backend or str(_show_value(show, "tts_backend", "kokoro") or "kokoro").strip() or "kokoro"
+    tts_backend = show_backend or str(_show_value(show, "tts_backend", "") or "").strip() or default_tts_backend()
     legacy_voices = _show_value(show, "voices", {}) or {}
     legacy_host_voice = legacy_voices.get("host") if isinstance(legacy_voices, dict) else None
 
@@ -107,11 +107,11 @@ def assignment_voice(
             roster_host = roster_lookup(host_id) or {}
         except Exception:
             roster_host = None
-    if backend == "minimax":
-        return assignment.get("voice_minimax") or (roster_host or {}).get("voice_minimax") or fallback
-    if backend == "google":
-        return assignment.get("voice_google") or (roster_host or {}).get("voice_google") or fallback
-    return assignment.get("voice_kokoro") or (roster_host or {}).get("tts_voice") or fallback
+    return (
+        assignment.get(voice_field(backend))
+        or (roster_host or {}).get(roster_voice_field(backend))
+        or fallback
+    )
 
 
 def assignment_wpm(

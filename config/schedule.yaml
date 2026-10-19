@@ -9,9 +9,11 @@ shows:
     - id: signal
       role: primary
       voice_kokoro: am_onyx
+      voice_breeze: margot
+      voice_qwen: margot
       voice_minimax: Deep_Voice_Man
       voice_google: Kore
-      tts_backend: kokoro
+      tts_backend: breeze
       display_name: Signal
     segment_types:
     - news_analysis
@@ -25,16 +27,20 @@ shows:
     - id: dr_resonance
       role: primary
       voice_kokoro: bm_daniel
+      voice_breeze: owen
+      voice_qwen: owen
       voice_minimax: Elegant_Man
       voice_google: Kore
-      tts_backend: kokoro
+      tts_backend: breeze
       display_name: Dr. Resonance
     - id: ember
       role: co-host
       voice_kokoro: af_bella
+      voice_breeze: lena
+      voice_qwen: lena
       voice_minimax: Friendly_Person
       voice_google: Zephyr
-      tts_backend: kokoro
+      tts_backend: breeze
       display_name: Ember
     segment_types:
     - panel
@@ -48,9 +54,11 @@ shows:
     - id: liminal_operator
       role: primary
       voice_kokoro: am_michael
+      voice_breeze: silas
+      voice_qwen: silas
       voice_minimax: Deep_Voice_Man
       voice_google: Puck
-      tts_backend: kokoro
+      tts_backend: breeze
       display_name: The Liminal Operator
     segment_types:
     - listener_mailbag
@@ -92,9 +100,11 @@ shows:
     - id: the_archivist
       role: primary
       voice_kokoro: am_michael
+      voice_breeze: silas
+      voice_qwen: silas
       voice_minimax: Patient_Man
       voice_google: Puck
-      tts_backend: kokoro
+      tts_backend: breeze
       display_name: The Archivist
     research_sources: *id001
     content_lifecycle:
@@ -114,7 +124,7 @@ shows:
         target_inventory: 8
         cadence: weekly
     playback_sequence: {}
-    tts_backend: kokoro
+    tts_backend: breeze
   alien_theory:
     name: /r/alien_theory
     description: Reddit discussions and theories about extraterrestrials or ancient
@@ -147,9 +157,11 @@ shows:
     - id: nova
       role: primary
       voice_kokoro: am_puck
+      voice_breeze: rory
+      voice_qwen: rory
       voice_minimax: Elegant_Man
       voice_google: Charon
-      tts_backend: kokoro
+      tts_backend: breeze
       display_name: Nova
     research_sources: *id002
     content_lifecycle:
@@ -169,7 +181,7 @@ shows:
         target_inventory: 8
         cadence: weekly
     playback_sequence: {}
-    tts_backend: kokoro
+    tts_backend: breeze
   sysadmin:
     name: /r/sysadmin
     description: Analysis and discussion of the top posts on /r/sysadmin and adjacent
@@ -192,16 +204,20 @@ shows:
     - id: root
       role: primary
       voice_kokoro: am_liam
+      voice_breeze: hank
+      voice_qwen: hank
       voice_minimax: Deep_Voice_Man
       voice_google: Kore
-      tts_backend: kokoro
+      tts_backend: breeze
       display_name: root
     - id: sudo
       role: co-host
       voice_kokoro: af_nova
+      voice_breeze: jasper
+      voice_qwen: jasper
       voice_minimax: Lively_Girl
       voice_google: Zephyr
-      tts_backend: kokoro
+      tts_backend: breeze
       display_name: Sudo
     content_lifecycle:
       talk:
@@ -256,9 +272,11 @@ shows:
     - id: vector
       role: primary
       voice_kokoro: am_liam
+      voice_breeze: dev
+      voice_qwen: dev
       voice_minimax: Friendly_Person
       voice_google: Umbriel
-      tts_backend: kokoro
+      tts_backend: breeze
       display_name: Vector
     content_lifecycle:
       talk:
@@ -276,7 +294,7 @@ shows:
         min_inventory: 4
         target_inventory: 8
         cadence: weekly
-    tts_backend: kokoro
+    tts_backend: breeze
     playback_sequence: {}
   briefing_ai:
     name: AI Briefing
@@ -285,13 +303,15 @@ shows:
     - id: byte
       role: primary
       voice_kokoro: am_adam
+      voice_breeze: mick
+      voice_qwen: mick
       voice_minimax: Deep_Voice_Man
       voice_google: Kore
-      tts_backend: kokoro
+      tts_backend: breeze
       display_name: Byte
     segment_types:
     - news_briefing
-    tts_backend: kokoro
+    tts_backend: breeze
     content_lifecycle:
       talk:
         max_days: 3
@@ -540,13 +560,15 @@ shows:
     - id: byte
       role: primary
       voice_kokoro: am_adam
+      voice_breeze: mick
+      voice_qwen: mick
       voice_minimax: Deep_Voice_Man
       voice_google: Kore
-      tts_backend: kokoro
+      tts_backend: breeze
       display_name: Byte
     segment_types:
     - news_briefing
-    tts_backend: kokoro
+    tts_backend: breeze
     content_lifecycle:
       talk:
         max_days: 3
@@ -665,13 +687,15 @@ shows:
     - id: byte
       role: primary
       voice_kokoro: am_adam
+      voice_breeze: mick
+      voice_qwen: mick
       voice_minimax: Deep_Voice_Man
       voice_google: Kore
-      tts_backend: kokoro
+      tts_backend: breeze
       display_name: Byte
     segment_types:
     - news_briefing
-    tts_backend: kokoro
+    tts_backend: breeze
     content_lifecycle:
       talk:
         max_days: 3
@@ -1024,13 +1048,15 @@ shows:
     - id: matilda
       role: primary
       voice_kokoro: af_sky
+      voice_breeze: wren
+      voice_qwen: wren
       voice_minimax: Calm_Woman
       voice_google: Zephyr
-      tts_backend: kokoro
+      tts_backend: breeze
       display_name: Matilda
     segment_types:
     - news_briefing
-    tts_backend: kokoro
+    tts_backend: breeze
     content_lifecycle:
       talk:
         max_days: 3

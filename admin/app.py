@@ -48,7 +48,10 @@ from shared.hosts import primary_host_assignment
 from shared.settings import (
     admin_password,
     admin_session_days,
+    default_tts_backend,
     default_voice_for_backend,
+    roster_voice_field,
+    voice_field,
     google_tts_model,
     icecast_status_url,
     inventory_cache_ttl,
@@ -410,6 +413,8 @@ def _hosts_yaml_to_api(hid: str, h: dict) -> dict:
         "voice_style": h.get("voice_style", ""),
         "philosophy": h.get("philosophy", ""),
         "anti_patterns": h.get("anti_patterns", ""),
+        "voice_breeze": h.get("voice_breeze", default_voice_for_backend("breeze", "host")),
+        "voice_qwen": h.get("voice_qwen", default_voice_for_backend("qwen", "host")),
         "tts_voice": h.get("tts_voice", default_voice_for_backend("kokoro", "host")),
         "voice_minimax": h.get("voice_minimax", default_voice_for_backend("minimax", "host")),
         "voice_google": h.get("voice_google", default_voice_for_backend("google", "host")),
@@ -417,6 +422,8 @@ def _hosts_yaml_to_api(hid: str, h: dict) -> dict:
         "speaking_pace_wpm_kokoro": h.get("speaking_pace_wpm_kokoro", h.get("speaking_pace_wpm", 130)),
         "speaking_pace_wpm_minimax": h.get("speaking_pace_wpm_minimax", h.get("speaking_pace_wpm", 130)),
         "speaking_pace_wpm_google": h.get("speaking_pace_wpm_google", h.get("speaking_pace_wpm", 130)),
+        "speaking_pace_wpm_breeze": h.get("speaking_pace_wpm_breeze", h.get("speaking_pace_wpm", 130)),
+        "speaking_pace_wpm_qwen": h.get("speaking_pace_wpm_qwen", h.get("speaking_pace_wpm", 130)),
     }
 
 
@@ -428,6 +435,8 @@ def get_hosts_from_persona() -> dict[str, dict]:
             hid: {
                 "id": hid,
                 "name": h.get("name", hid),
+                "voice_breeze": h.get("voice_breeze", default_voice_for_backend("breeze", "host")),
+                "voice_qwen": h.get("voice_qwen", default_voice_for_backend("qwen", "host")),
                 "tts_voice": h.get("tts_voice", default_voice_for_backend("kokoro", "host")),
                 "voice_google": h.get("voice_google", default_voice_for_backend("google", "host")),
                 "speaking_pace_wpm": h.get("speaking_pace_wpm", 130),
@@ -468,6 +477,8 @@ def _default_host_assignment(host_id: str, role: str = "primary") -> dict:
     return {
         "id": host_id,
         "role": role,
+        "voice_breeze": host.get("voice_breeze", default_voice_for_backend("breeze", "host")),
+        "voice_qwen": host.get("voice_qwen", default_voice_for_backend("qwen", "host")),
         "voice_kokoro": host.get("tts_voice", default_voice_for_backend("kokoro", "host")),
         "voice_minimax": host.get("voice_minimax", default_voice_for_backend("minimax", "host")),
         "voice_google": host.get("voice_google", default_voice_for_backend("google", "host")),
@@ -1025,6 +1036,10 @@ def _expiry_info(
 
 def _backend_label(backend: str | None) -> str:
     value = str(backend or "").strip().lower()
+    if value.startswith("breeze"):
+        return "Breeze (mac01)"
+    if value.startswith("qwen"):
+        return "Qwen3-TTS (mac01)"
     if value.startswith("kokoro"):
         return "Kokoro"
     if value.startswith("minimax"):
@@ -1040,7 +1055,7 @@ def _backend_label(backend: str | None) -> str:
 
 def _backend_origin_label(backend: str | None) -> str:
     value = str(backend or "").strip().lower()
-    if value.startswith("kokoro"):
+    if value.startswith(("kokoro", "breeze", "qwen")):
         return "local"
     if value.startswith("minimax"):
         return "cloud"
@@ -1065,13 +1080,12 @@ def _show_primary_host_meta(show_id: str, schedule_data: dict[str, Any] | None =
     host_id = str(primary.get("id") or show_id).strip() or show_id
     host_entry = roster.get(host_id, {})
     host_name = host_entry.get("name") or host_id
-    backend = str(show.get("tts_backend") or primary.get("tts_backend") or "kokoro")
-    if backend == "minimax":
-        voice = primary.get("voice_minimax") or host_entry.get("voice_minimax") or default_voice_for_backend("minimax", "host")
-    elif backend == "google":
-        voice = primary.get("voice_google") or host_entry.get("voice_google") or default_voice_for_backend("google", "host")
-    else:
-        voice = primary.get("voice_kokoro") or host_entry.get("tts_voice") or default_voice_for_backend("kokoro", "host")
+    backend = str(show.get("tts_backend") or primary.get("tts_backend") or default_tts_backend())
+    voice = (
+        primary.get(voice_field(backend))
+        or host_entry.get(roster_voice_field(backend))
+        or default_voice_for_backend(backend, "host")
+    )
     return {
         "host_id": host_id,
         "host_name": host_name,
@@ -1352,7 +1366,7 @@ def _normalize_show(show_id: str, show: dict) -> dict:
     s = dict(show)
     s["id"] = show_id
     all_hosts = get_all_hosts()
-    show_backend = str(s.get("tts_backend", "kokoro")).strip() or "kokoro"
+    show_backend = str(s.get("tts_backend", "") or "").strip() or default_tts_backend()
     # Normalize hosts to list format
     if "hosts" not in s:
         primary = _primary_host_assignment_from_show(show_id, s)
@@ -1413,7 +1427,7 @@ def _normalize_show(show_id: str, show: dict) -> dict:
 class ShowUpdate(BaseModel):
     name: str
     description: str
-    tts_backend: str = "kokoro"
+    tts_backend: str = "breeze"
     hosts: list[dict]
     research_sources: list[dict] = []
     source_rules: list[dict] = []
@@ -1642,10 +1656,23 @@ class HostUpdate(BaseModel):
     speaking_pace_wpm_kokoro: int = 130
     speaking_pace_wpm_minimax: int = 130
     speaking_pace_wpm_google: int = 130
+    voice_breeze: str = default_voice_for_backend("breeze", "host")
+    voice_qwen: str = default_voice_for_backend("qwen", "host")
+    # Measured per voice; left out of a save unless sent, so the UI cannot flatten them.
+    speaking_pace_wpm_breeze: int | None = None
+    speaking_pace_wpm_qwen: int | None = None
 
 
 def _host_update_to_yaml(update: HostUpdate) -> dict:
+    paces = {
+        k: getattr(update, k)
+        for k in ("speaking_pace_wpm_breeze", "speaking_pace_wpm_qwen")
+        if getattr(update, k) is not None
+    }
     return {
+        "voice_breeze": update.voice_breeze,
+        "voice_qwen": update.voice_qwen,
+        **paces,
         "name": update.name,
         "identity": update.bio,
         "voice_style": update.voice_style,
@@ -1679,7 +1706,8 @@ def update_host(host_id: str, update: HostUpdate):
     hosts = data.get("hosts", {})
     if host_id not in hosts:
         raise HTTPException(404, f"Host '{host_id}' not found")
-    hosts[host_id] = _host_update_to_yaml(update)
+    # Merge, so fields the form does not carry (measured paces, notes) survive a save.
+    hosts[host_id] = {**(hosts[host_id] or {}), **_host_update_to_yaml(update)}
     data["hosts"] = hosts
     save_hosts_config(data)
     return {"ok": True, "host_id": host_id}
@@ -1724,8 +1752,8 @@ def tts_preview(body: dict, background_tasks: BackgroundTasks):
     import importlib.util
     import tempfile
 
-    backend = body.get("backend", "kokoro")
-    voice = body.get("voice", default_voice_for_backend(body.get("backend", "kokoro"), "host"))
+    backend = body.get("backend") or default_tts_backend()
+    voice = body.get("voice", default_voice_for_backend(backend, "host"))
     text = body.get("text", _preview_text())
 
     # Serve from cache if available
@@ -1734,6 +1762,15 @@ def tts_preview(body: dict, background_tasks: BackgroundTasks):
         cached = _PREVIEW_CACHE[cache_key]
         mt = "audio/wav" if cached.suffix == ".wav" else "audio/mpeg"
         return FileResponse(str(cached), media_type=mt, filename=f"preview{cached.suffix}")
+
+    if backend in {"breeze", "qwen"}:
+        from station.mac_tts import generate_speech as mac_generate_speech
+        tmp = Path(tempfile.mktemp(suffix=".wav", prefix="writ_preview_"))
+        if not mac_generate_speech(text, tmp, voice, model=backend) or not tmp.exists():
+            tmp.unlink(missing_ok=True)
+            raise HTTPException(500, f"{backend} TTS preview failed")
+        _PREVIEW_CACHE[cache_key] = tmp
+        return FileResponse(str(tmp), media_type="audio/wav", filename="preview.wav")
 
     if backend == "kokoro":
         spec = importlib.util.spec_from_file_location(
@@ -1811,7 +1848,7 @@ def get_voice_samples():
 def ensure_voice_samples_api(body: dict | None = None):
     body = body or {}
     force = bool(body.get("force", False))
-    backends = body.get("backends") or ["kokoro", "minimax", "google"]
+    backends = body.get("backends") or ["breeze", "qwen", "kokoro", "minimax", "google"]
     created = ensure_voice_samples(backends=backends, force=force)
     return {"ok": True, "created": created}
 
@@ -2105,6 +2142,10 @@ def get_generate_options():
         "segment_types": list(segment_types.keys()),
         "segment_type_defs": segment_types,
         "bumper_styles": taxonomy["bumper_styles"],
+        "breeze_voices": [v["voice"] for v in voices["breeze"]],
+        "qwen_voices": [v["voice"] for v in voices["qwen"]],
+        "breeze_voice_defs": voices["breeze"],
+        "qwen_voice_defs": voices["qwen"],
         "kokoro_voices": [v["voice"] for v in voices["kokoro"]],
         "minimax_voices": [v["voice"] for v in voices["minimax"]],
         "google_voices": [v["voice"] for v in voices["google"]],
@@ -2242,7 +2283,7 @@ def _run_generation_job(job_id: str, req: GenerateRequest):
 
         # Determine TTS backend
         primary_host = _primary_host_assignment_from_show(req.show_id, show)
-        tts_backend = req.tts_backend or str(show.get("tts_backend") or primary_host.get("tts_backend") or "kokoro")
+        tts_backend = req.tts_backend or str(show.get("tts_backend") or primary_host.get("tts_backend") or default_tts_backend())
 
         # Build command
         if req.content_type == "music":

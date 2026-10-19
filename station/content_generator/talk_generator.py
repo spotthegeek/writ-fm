@@ -82,7 +82,7 @@ from shared.hosts import (
     primary_host_assignment as shared_primary_host_assignment,
     secondary_host_assignment as shared_secondary_host_assignment,
 )
-from shared.settings import default_voice_for_backend
+from shared.settings import MAC_TTS_BACKENDS, default_tts_backend, default_voice_for_backend, tts_fallback_backend
 
 # =============================================================================
 # SEGMENT TYPE DEFINITIONS
@@ -2723,7 +2723,7 @@ def build_generation_prompt(
             f"A response over {max_words} words will be cut short on air."
         )
     _backend_lower = (backend or "").strip().lower()
-    if _backend_lower == "minimax":
+    if _backend_lower in {"minimax", "breeze", "qwen"}:
         length_reminder += f"\n\n{_minimax_performance_instructions(segment_type)}"
     elif _backend_lower == "google":
         length_reminder += f"\n\n{_google_performance_instructions(segment_type)}"
@@ -3000,6 +3000,20 @@ def _split_tts_text(text: str, max_chars: int = 900) -> list[str]:
     return [c for c in chunks if c.strip()]
 
 
+def _local_render_speech(backend: str, text: str, output_path: Path, *, voice: str, speed: float = 1.0) -> bool:
+    """One chunk through a 24 kHz WAV backend: crouch-tts (breeze, qwen) or Kokoro.
+
+    Every backend that reaches the shared chunk/gap/concat paths comes through here, so an unknown
+    name fails loudly instead of quietly rendering with Kokoro."""
+    if backend in MAC_TTS_BACKENDS:
+        from station.mac_tts import generate_speech as mac_generate_speech
+        return mac_generate_speech(text, output_path, voice, model=backend)
+    if backend == "kokoro":
+        return _kokoro_render_speech(text, output_path, voice=voice, speed=speed)
+    log(f"  Unknown TTS backend {backend!r}: refusing to render")
+    return False
+
+
 def render_single_voice(
     script: str,
     output_path: Path,
@@ -3056,7 +3070,7 @@ def render_single_voice(
             return False
 
     log(f"  Rendering single voice '{voice}' to {output_path.name}...")
-    success = _kokoro_render_speech(script, output_path, voice=voice, speed=speed)
+    success = _local_render_speech(backend, script, output_path, voice=voice, speed=speed)
     if success:
         log(f"  Finished rendering.")
     return success
@@ -3230,7 +3244,7 @@ def render_single_voice_chunked(
     if not parts:
         return False
 
-    log(f"  Rendering {len(parts)} Kokoro text chunks to {output_path.name}...")
+    log(f"  Rendering {len(parts)} {backend} text chunks to {output_path.name}...")
     try:
         with tempfile.TemporaryDirectory(prefix="writ_kokoro_single_") as tmpdir:
             tmp = Path(tmpdir)
@@ -3255,14 +3269,14 @@ def render_single_voice_chunked(
                 if rendered_parts > 0:
                     concat_entries.append(silence_path)
                 segment_path = tmp / f"segment_{i:03d}.wav"
-                if not _kokoro_render_speech(text, segment_path, voice=voice, speed=speed):
-                    log(f"  Kokoro rendering failed for chunk {i + 1}")
+                if not _local_render_speech(backend, text, segment_path, voice=voice, speed=speed):
+                    log(f"  {backend} rendering failed for chunk {i + 1}")
                     return False
                 concat_entries.append(segment_path)
                 rendered_parts += 1
 
             if not concat_entries:
-                log("  No Kokoro chunks rendered")
+                log(f"  No {backend} chunks rendered")
                 return False
 
             concat_list = tmp / "concat.txt"
@@ -3276,12 +3290,12 @@ def render_single_voice_chunked(
             ]
             concat_proc = subprocess.run(concat_cmd, capture_output=True, text=True)
             if concat_proc.returncode != 0:
-                log(f"  Kokoro concat failed: {(concat_proc.stderr or '').strip()[:200]}")
+                log(f"  {backend} concat failed: {(concat_proc.stderr or '').strip()[:200]}")
                 return False
-            log(f"  Finished rendering {rendered_parts} Kokoro chunks.")
+            log(f"  Finished rendering {rendered_parts} {backend} chunks.")
             return True
     except Exception as e:
-        log(f"  Kokoro chunked rendering error: {e}")
+        log(f"  {backend} chunked rendering error: {e}")
         return False
 
 
@@ -3511,7 +3525,7 @@ def render_multi_voice(script: str, output_path: Path, voices: dict[str, str], b
     for key in ("GUEST", "HOST_B", "HOSTB"):
         speed_map[key] = guest_speed
 
-    log(f"  Rendering {len(parts)} Kokoro dialogue segments to {output_path.name}...")
+    log(f"  Rendering {len(parts)} {backend} dialogue segments to {output_path.name}...")
     try:
         with tempfile.TemporaryDirectory(prefix="writ_kokoro_dialogue_") as tmpdir:
             tmp = Path(tmpdir)
@@ -3538,8 +3552,8 @@ def render_multi_voice(script: str, output_path: Path, voices: dict[str, str], b
                 if rendered_parts > 0:
                     concat_entries.append(silence_path)
                 segment_path = tmp / f"segment_{i:03d}.wav"
-                if not _kokoro_render_speech(text, segment_path, voice=voice, speed=speed):
-                    log(f"  Kokoro rendering failed for dialogue segment {i + 1}")
+                if not _local_render_speech(backend, text, segment_path, voice=voice, speed=speed):
+                    log(f"  {backend} rendering failed for dialogue segment {i + 1}")
                     return False
                 concat_entries.append(segment_path)
                 rendered_parts += 1
@@ -3559,12 +3573,12 @@ def render_multi_voice(script: str, output_path: Path, voices: dict[str, str], b
             ]
             concat_proc = subprocess.run(concat_cmd, capture_output=True, text=True)
             if concat_proc.returncode != 0:
-                log(f"  Kokoro concat failed: {(concat_proc.stderr or '').strip()[:200]}")
+                log(f"  {backend} concat failed: {(concat_proc.stderr or '').strip()[:200]}")
                 return False
-            log(f"  Finished rendering {rendered_parts} Kokoro dialogue segments.")
+            log(f"  Finished rendering {rendered_parts} {backend} dialogue segments.")
             return True
     except Exception as e:
-        log(f"  Kokoro multi-voice rendering error: {e}")
+        log(f"  {backend} multi-voice rendering error: {e}")
         return False
 
 
@@ -3707,7 +3721,7 @@ def generate_segment(
         segment_type = "youtube"
 
     primary = _primary_host_assignment(show)
-    backend = os.environ.get("WRIT_TTS_BACKEND", "").strip() or primary.get("tts_backend", getattr(show, "tts_backend", "kokoro"))
+    backend = os.environ.get("WRIT_TTS_BACKEND", "").strip() or primary.get("tts_backend", getattr(show, "tts_backend", "") or default_tts_backend())
     # Resolved once here and passed down, so the prompt, the repair/condense gates
     # and this log all agree on the same band (source-scaled types depend on it).
     word_targets = resolve_word_targets(
@@ -3809,7 +3823,7 @@ def generate_segment(
             "transcript_source": source_context.transcript_source,
             "tts_backend": backend_used,
             "audio_backend": backend_used,
-            "backend_origin": "local" if backend_used == "kokoro" else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
+            "backend_origin": "local" if backend_used in {"kokoro", "breeze", "qwen"} else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
             "generated_at": station_iso_now(),
         }
         _write_script_record(meta_path, meta)
@@ -3838,7 +3852,7 @@ def generate_segment(
                 "source_audio_path": source_context.audio_path,
                 "tts_backend": backend_used,
                 "audio_backend": backend_used,
-                "backend_origin": "local" if backend_used == "kokoro" else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
+                "backend_origin": "local" if backend_used in {"kokoro", "breeze", "qwen"} else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
                 "generated_at": station_iso_now(),
             }, f, indent=2)
 
@@ -3935,7 +3949,8 @@ def generate_segment(
     log("  Rendering audio...")
     is_multi_voice = bool(get_segment_type_definition(segment_type).get("multi_voice", False))
     # For Kokoro, preprocess_for_tts strips speaker labels, so detect from the original script.
-    _detect_source = script if backend == "kokoro" else processed
+    # Always the labelled script: `processed` has had HOST_A:/HOST_B: stripped for non-Kokoro backends.
+    _detect_source = script
     if not is_multi_voice and re.search(
         r"^(?:HOST|GUEST|HOST_A|HOST_B|HOSTA|HOSTB|[A-Z][A-Z\s.]+)(?:\s*\([^)]+\))?:",
         _detect_source,
@@ -4031,6 +4046,27 @@ def generate_segment(
             wpm=int(voices.get("host_wpm", 130)),
         )
 
+    fallback_backend = tts_fallback_backend()
+    if not success and backend in MAC_TTS_BACKENDS and fallback_backend and fallback_backend != backend:
+        # crouch-tts is stopped during H3 video renders on mac01, and can fail like any service.
+        _fb_labels, fb_voices = _voice_plan(show, segment_type, fallback_backend)
+        fb_path = output_path.with_suffix(".mp3" if fallback_backend == "minimax" else ".wav")
+        log(f"  {backend} render failed; falling back to {fallback_backend} voice '{fb_voices.get('host')}'")
+        if is_multi_voice:
+            success = render_multi_voice(script, fb_path, fb_voices, backend=fallback_backend)
+        else:
+            success = render_single_voice(
+                preprocess_for_tts(script, backend=fallback_backend),
+                fb_path,
+                fb_voices.get("host", default_voice_for_backend(fallback_backend, "host")),
+                backend=fallback_backend,
+                speed=float(fb_voices.get("host_speed", 1.0)),
+                wpm=int(fb_voices.get("host_wpm", 130)),
+            )
+        if success:
+            output_path = fb_path
+            backend_used = f"{fallback_backend}_fallback"
+
     if not success or not output_path.exists():
         log("  TTS rendering failed")
         return None
@@ -4062,7 +4098,7 @@ def generate_segment(
         "source_created_utc": source_context.source_created_utc if source_context else None,
         "tts_backend": backend_used,
         "audio_backend": backend_used,
-        "backend_origin": "local" if backend_used == "kokoro" else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
+        "backend_origin": "local" if backend_used in {"kokoro", "breeze", "qwen"} else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
         "generated_at": station_iso_now(),
     }
     _write_script_record(meta_path, meta)
@@ -4092,7 +4128,7 @@ def generate_segment(
             "source_audio_path": source_context.audio_path if source_context else "",
             "tts_backend": backend_used,
             "audio_backend": backend_used,
-            "backend_origin": "local" if backend_used == "kokoro" else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
+            "backend_origin": "local" if backend_used in {"kokoro", "breeze", "qwen"} else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
             "generated_at": station_iso_now(),
         }, f, indent=2)
 
