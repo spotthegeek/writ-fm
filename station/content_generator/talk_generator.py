@@ -4138,7 +4138,13 @@ def generate_for_show(
     log(f"{'='*60}")
 
     success = 0
-    for i in range(count):
+    # A slot whose chosen source fails the size gate tries again with the next
+    # source instead of being spent: a subreddit with a few thin posts at the top
+    # otherwise loses a segment per thin post, every run.
+    max_rejected_retries = 3
+    rejected_retries = 0
+    i = 0
+    while i < count:
         iter_source_type = base_source_type
         iter_source_value = base_source_value
         iter_source_lookback_days = base_source_lookback_days
@@ -4219,12 +4225,18 @@ def generate_for_show(
                     # a substitute for unavailable source content causes infinite scheduler loops.
                     if auto_source and all(s in _agnostic_types for s in non_source_segment_types):
                         log(f"  [{i+1}/{count}] No source content available; skipping structural fallback to prevent overflow.")
+                        i += 1
                         continue
                     eligible_segment_types = non_source_segment_types
             st = random.choice(eligible_segment_types)
 
         log(f"\n[{i+1}/{count}]")
 
+        selected_key = (
+            _canonical_source_key(selected_source_context.source_type, selected_source_context.source_value)
+            if selected_source_context else ""
+        )
+        key_was_used = bool(selected_key) and selected_key in used_source_keys
         result = generate_segment(
             show,
             st,
@@ -4238,6 +4250,14 @@ def generate_for_show(
             station_name=station_name,
             include_topic=include_topic,
         )
+        rejected = (
+            not result and selected_key and not key_was_used and selected_key in used_source_keys
+        )
+        if rejected and rejected_retries < max_rejected_retries:
+            rejected_retries += 1
+            log(f"  [{i+1}/{count}] Trying the next source for this slot.")
+            continue
+        rejected_retries = 0
         if result:
             success += 1
             if selected_source_context:
@@ -4251,6 +4271,7 @@ def generate_for_show(
 
         if i < count - 1:
             time.sleep(2)
+        i += 1
 
     return success
 
