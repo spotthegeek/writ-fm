@@ -3244,7 +3244,7 @@ def render_single_voice_chunked(
     if not parts:
         return False
 
-    log(f"  Rendering {len(parts)} Kokoro text chunks to {output_path.name}...")
+    log(f"  Rendering {len(parts)} {backend} text chunks to {output_path.name}...")
     try:
         with tempfile.TemporaryDirectory(prefix="writ_kokoro_single_") as tmpdir:
             tmp = Path(tmpdir)
@@ -3270,13 +3270,13 @@ def render_single_voice_chunked(
                     concat_entries.append(silence_path)
                 segment_path = tmp / f"segment_{i:03d}.wav"
                 if not _local_render_speech(backend, text, segment_path, voice=voice, speed=speed):
-                    log(f"  Kokoro rendering failed for chunk {i + 1}")
+                    log(f"  {backend} rendering failed for chunk {i + 1}")
                     return False
                 concat_entries.append(segment_path)
                 rendered_parts += 1
 
             if not concat_entries:
-                log("  No Kokoro chunks rendered")
+                log(f"  No {backend} chunks rendered")
                 return False
 
             concat_list = tmp / "concat.txt"
@@ -3290,12 +3290,12 @@ def render_single_voice_chunked(
             ]
             concat_proc = subprocess.run(concat_cmd, capture_output=True, text=True)
             if concat_proc.returncode != 0:
-                log(f"  Kokoro concat failed: {(concat_proc.stderr or '').strip()[:200]}")
+                log(f"  {backend} concat failed: {(concat_proc.stderr or '').strip()[:200]}")
                 return False
-            log(f"  Finished rendering {rendered_parts} Kokoro chunks.")
+            log(f"  Finished rendering {rendered_parts} {backend} chunks.")
             return True
     except Exception as e:
-        log(f"  Kokoro chunked rendering error: {e}")
+        log(f"  {backend} chunked rendering error: {e}")
         return False
 
 
@@ -3525,7 +3525,7 @@ def render_multi_voice(script: str, output_path: Path, voices: dict[str, str], b
     for key in ("GUEST", "HOST_B", "HOSTB"):
         speed_map[key] = guest_speed
 
-    log(f"  Rendering {len(parts)} Kokoro dialogue segments to {output_path.name}...")
+    log(f"  Rendering {len(parts)} {backend} dialogue segments to {output_path.name}...")
     try:
         with tempfile.TemporaryDirectory(prefix="writ_kokoro_dialogue_") as tmpdir:
             tmp = Path(tmpdir)
@@ -3553,7 +3553,7 @@ def render_multi_voice(script: str, output_path: Path, voices: dict[str, str], b
                     concat_entries.append(silence_path)
                 segment_path = tmp / f"segment_{i:03d}.wav"
                 if not _local_render_speech(backend, text, segment_path, voice=voice, speed=speed):
-                    log(f"  Kokoro rendering failed for dialogue segment {i + 1}")
+                    log(f"  {backend} rendering failed for dialogue segment {i + 1}")
                     return False
                 concat_entries.append(segment_path)
                 rendered_parts += 1
@@ -3573,12 +3573,12 @@ def render_multi_voice(script: str, output_path: Path, voices: dict[str, str], b
             ]
             concat_proc = subprocess.run(concat_cmd, capture_output=True, text=True)
             if concat_proc.returncode != 0:
-                log(f"  Kokoro concat failed: {(concat_proc.stderr or '').strip()[:200]}")
+                log(f"  {backend} concat failed: {(concat_proc.stderr or '').strip()[:200]}")
                 return False
-            log(f"  Finished rendering {rendered_parts} Kokoro dialogue segments.")
+            log(f"  Finished rendering {rendered_parts} {backend} dialogue segments.")
             return True
     except Exception as e:
-        log(f"  Kokoro multi-voice rendering error: {e}")
+        log(f"  {backend} multi-voice rendering error: {e}")
         return False
 
 
