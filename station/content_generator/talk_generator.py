@@ -2599,6 +2599,14 @@ def _slugify_topic(value: str, max_len: int = 30) -> str:
     return slug or "segment"
 
 
+# Phonon performs no cues and reads every word, so a stage direction goes out aloud (2026-11-02).
+PHONON_SPOKEN_ONLY = (
+    "Write only the words that are spoken aloud: this voice reads every word it is given. "
+    "No stage directions, sound effects or descriptions of what anyone is doing, "
+    "whether in brackets, in asterisks or as plain sentences. No cues such as [pause] or (sighs)."
+)
+
+
 def _minimax_performance_instructions(segment_type: str) -> str:
     # Ask for generic bracket cues, never MiniMax-native markup. preprocess_for_tts
     # translates these per backend at render time, which keeps the saved script
@@ -2725,6 +2733,8 @@ def build_generation_prompt(
     _backend_lower = (backend or "").strip().lower()
     if _backend_lower in {"minimax", "breeze", "qwen"}:
         length_reminder += f"\n\n{_minimax_performance_instructions(segment_type)}"
+    elif _backend_lower == "phonon":
+        length_reminder += f"\n\n{PHONON_SPOKEN_ONLY}"
     elif _backend_lower == "google":
         length_reminder += f"\n\n{_google_performance_instructions(segment_type)}"
 
