@@ -65,17 +65,17 @@ def sample_media_type(path: Path) -> str:
     }.get(path.suffix.lower(), "application/octet-stream")
 
 
-MAC_BACKENDS = ("breeze", "qwen")
+MAC_BACKENDS = ("breeze", "qwen", "phonon")
 
 
-def _mac_voices() -> list[dict]:
+def _mac_voices(backend: str = "breeze") -> list[dict]:
     from station.mac_tts import list_voices
-    return list_voices()
+    return list_voices(backend)
 
 
 def voice_label(backend: str, voice_id: str) -> str:
     if backend in MAC_BACKENDS:
-        meta = next((v for v in _mac_voices() if v.get("name") == voice_id), {})
+        meta = next((v for v in _mac_voices(backend) if v.get("name") == voice_id), {})
         extra = ", ".join(x for x in (meta.get("gender"), meta.get("accent")) if x)
         return f"{voice_id.title()} ({extra})" if extra else voice_id.title()
     if backend == "kokoro":
@@ -87,7 +87,6 @@ def voice_label(backend: str, voice_id: str) -> str:
 
 
 def voice_catalog() -> dict[str, list[dict]]:
-    mac_names = [v["name"] for v in _mac_voices() if v.get("name")]
     return {
         **{
             backend: [
@@ -98,7 +97,7 @@ def voice_catalog() -> dict[str, list[dict]]:
                     "sample_ready": sample_path(backend, voice_id).exists(),
                     "sample_url": sample_url(backend, voice_id),
                 }
-                for voice_id in mac_names
+                for voice_id in [v["name"] for v in _mac_voices(backend) if v.get("name")]
             ]
             for backend in MAC_BACKENDS
         },
@@ -174,7 +173,7 @@ def ensure_voice_samples(
     for backend in backends:
         backend = backend.lower().strip()
         if backend in MAC_BACKENDS:
-            voices = [v["name"] for v in _mac_voices() if v.get("name")]
+            voices = [v["name"] for v in _mac_voices(backend) if v.get("name")]
         elif backend == "kokoro":
             voices = KOKORO_VOICES
         elif backend == "google":

@@ -1,11 +1,11 @@
-"""crouch-tts client: Breeze TTS 2 and Qwen3-TTS VoiceDesign, served from mac01.
+"""crouch-tts client: Breeze TTS 2, Qwen3-TTS VoiceDesign and Phonon, served from mac01.
 
 The service (agent-os bootstrap/mac01/crouch-tts) speaks the OpenAI-style API the Kokoro service does:
-POST {MAC_TTS_SERVICE_URL}/v1/audio/speech with {"model": "breeze"|"qwen", "input", "voice",
+POST {MAC_TTS_SERVICE_URL}/v1/audio/speech with {"model": "breeze"|"qwen"|"phonon", "input", "voice",
 "response_format": "wav", "instruct"?} returns 24 kHz mono 16-bit WAV, the same format Kokoro writes,
 so the existing chunk/gap/concat paths can join it with `-c copy`. Voices are designed once on the
-service and named (GET /v1/voices). The service renders one request at a time at roughly 0.25-0.7 s per
-second of audio, so the read timeout is long; a refused or timed-out connection (the daemon is stopped
+service and named (GET /v1/voices; Phonon has its own list, GET /v1/voices?model=phonon). The service renders
+one request at a time at roughly 0.25-0.7 s per second of audio (Phonon about 0.02 s), so the read timeout is long; a refused or timed-out connection (the daemon is stopped
 during H3 video renders on mac01) fails fast so the generator's fallback backend can take over.
 """
 from __future__ import annotations
@@ -17,8 +17,8 @@ import httpx
 
 from shared.settings import mac_tts_max_retries, mac_tts_service_url, mac_tts_timeout_seconds
 
-MODELS = ("breeze", "qwen")
-_VOICE_CACHE: dict[str, object] = {"at": 0.0, "voices": []}
+MODELS = ("breeze", "qwen", "phonon")
+_VOICE_CACHE: dict[str, dict] = {}      # per voice list: Breeze and Qwen share one, Phonon has its own
 _VOICE_CACHE_TTL = 300.0
 
 
@@ -60,17 +60,19 @@ def generate_speech(text: str, output_path: Path, voice_id: str, *, model: str =
     return False
 
 
-def list_voices() -> list[dict]:
-    """Designed voices on the service, cached for five minutes; [] if it cannot be reached quickly."""
+def list_voices(model: str = "breeze") -> list[dict]:
+    """A backend's voices on the service, cached for five minutes; [] if it cannot be reached quickly."""
+    phonon = model == "phonon"
+    cache = _VOICE_CACHE.setdefault("phonon" if phonon else "designed", {"at": 0.0, "voices": []})
     now = time.time()
-    if now - float(_VOICE_CACHE["at"]) < _VOICE_CACHE_TTL and _VOICE_CACHE["voices"]:
-        return list(_VOICE_CACHE["voices"])
+    if now - float(cache["at"]) < _VOICE_CACHE_TTL and cache["voices"]:
+        return list(cache["voices"])
     url = mac_tts_service_url()
     if not url:
         return []
     try:
-        voices = httpx.get(f"{url}/v1/voices", timeout=3.0).json().get("voices", [])
+        voices = httpx.get(f"{url}/v1/voices", params={"model": "phonon"} if phonon else None, timeout=3.0).json().get("voices", [])
     except Exception:
-        return list(_VOICE_CACHE["voices"])
-    _VOICE_CACHE.update(at=now, voices=voices)
+        return list(cache["voices"])
+    cache.update(at=now, voices=voices)
     return list(voices)

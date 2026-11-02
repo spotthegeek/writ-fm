@@ -165,9 +165,9 @@ def preprocess_for_tts(text: str, *, include_cough: bool = True, backend: str = 
         text = re.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
 
-    if backend in {"breeze", "qwen"}:
+    if backend in {"breeze", "qwen", "phonon"}:
         # crouch-tts translates the generic [cue] tags itself (Breeze performs [laugh] [sigh]
-        # [cough]; [pause] becomes a beat), so keep them. Strip what it would read aloud.
+        # [cough]; [pause] becomes a beat; Phonon drops the rest), so keep them. Strip what it would read aloud.
         text = _SPEAKER_PREFIX.sub("", text or "")
         text = _MM_PAUSE.sub("...", text)
         lines = [ln for ln in text.splitlines() if not (ln.strip().startswith("(") and ln.strip().endswith(")"))]

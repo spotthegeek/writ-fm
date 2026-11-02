@@ -3022,7 +3022,7 @@ def _split_tts_text(text: str, max_chars: int = 900) -> list[str]:
 
 
 def _local_render_speech(backend: str, text: str, output_path: Path, *, voice: str, speed: float = 1.0) -> bool:
-    """One chunk through a 24 kHz WAV backend: crouch-tts (breeze, qwen) or Kokoro.
+    """One chunk through a 24 kHz WAV backend: crouch-tts (breeze, qwen, phonon) or Kokoro.
 
     Every backend that reaches the shared chunk/gap/concat paths comes through here, so an unknown
     name fails loudly instead of quietly rendering with Kokoro."""
@@ -3844,7 +3844,7 @@ def generate_segment(
             "transcript_source": source_context.transcript_source,
             "tts_backend": backend_used,
             "audio_backend": backend_used,
-            "backend_origin": "local" if backend_used in {"kokoro", "breeze", "qwen"} else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
+            "backend_origin": "local" if backend_used in {"kokoro", "breeze", "qwen", "phonon"} else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
             "generated_at": station_iso_now(),
         }
         _write_script_record(meta_path, meta)
@@ -3873,7 +3873,7 @@ def generate_segment(
                 "source_audio_path": source_context.audio_path,
                 "tts_backend": backend_used,
                 "audio_backend": backend_used,
-                "backend_origin": "local" if backend_used in {"kokoro", "breeze", "qwen"} else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
+                "backend_origin": "local" if backend_used in {"kokoro", "breeze", "qwen", "phonon"} else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
                 "generated_at": station_iso_now(),
             }, f, indent=2)
 
@@ -4119,7 +4119,7 @@ def generate_segment(
         "source_created_utc": source_context.source_created_utc if source_context else None,
         "tts_backend": backend_used,
         "audio_backend": backend_used,
-        "backend_origin": "local" if backend_used in {"kokoro", "breeze", "qwen"} else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
+        "backend_origin": "local" if backend_used in {"kokoro", "breeze", "qwen", "phonon"} else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
         "generated_at": station_iso_now(),
     }
     _write_script_record(meta_path, meta)
@@ -4149,7 +4149,7 @@ def generate_segment(
             "source_audio_path": source_context.audio_path if source_context else "",
             "tts_backend": backend_used,
             "audio_backend": backend_used,
-            "backend_origin": "local" if backend_used in {"kokoro", "breeze", "qwen"} else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
+            "backend_origin": "local" if backend_used in {"kokoro", "breeze", "qwen", "phonon"} else "cloud" if backend_used in {"minimax", "minimax_async", "google"} else "source" if backend_used == "youtube_ingest" else backend_used,
             "generated_at": station_iso_now(),
         }, f, indent=2)
 

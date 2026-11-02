@@ -415,6 +415,7 @@ def _hosts_yaml_to_api(hid: str, h: dict) -> dict:
         "anti_patterns": h.get("anti_patterns", ""),
         "voice_breeze": h.get("voice_breeze", default_voice_for_backend("breeze", "host")),
         "voice_qwen": h.get("voice_qwen", default_voice_for_backend("qwen", "host")),
+        "voice_phonon": h.get("voice_phonon", default_voice_for_backend("phonon", "host")),
         "tts_voice": h.get("tts_voice", default_voice_for_backend("kokoro", "host")),
         "voice_minimax": h.get("voice_minimax", default_voice_for_backend("minimax", "host")),
         "voice_google": h.get("voice_google", default_voice_for_backend("google", "host")),
@@ -424,6 +425,7 @@ def _hosts_yaml_to_api(hid: str, h: dict) -> dict:
         "speaking_pace_wpm_google": h.get("speaking_pace_wpm_google", h.get("speaking_pace_wpm", 130)),
         "speaking_pace_wpm_breeze": h.get("speaking_pace_wpm_breeze", h.get("speaking_pace_wpm", 130)),
         "speaking_pace_wpm_qwen": h.get("speaking_pace_wpm_qwen", h.get("speaking_pace_wpm", 130)),
+        "speaking_pace_wpm_phonon": h.get("speaking_pace_wpm_phonon", h.get("speaking_pace_wpm", 130)),
     }
 
 
@@ -437,6 +439,7 @@ def get_hosts_from_persona() -> dict[str, dict]:
                 "name": h.get("name", hid),
                 "voice_breeze": h.get("voice_breeze", default_voice_for_backend("breeze", "host")),
                 "voice_qwen": h.get("voice_qwen", default_voice_for_backend("qwen", "host")),
+                "voice_phonon": h.get("voice_phonon", default_voice_for_backend("phonon", "host")),
                 "tts_voice": h.get("tts_voice", default_voice_for_backend("kokoro", "host")),
                 "voice_google": h.get("voice_google", default_voice_for_backend("google", "host")),
                 "speaking_pace_wpm": h.get("speaking_pace_wpm", 130),
@@ -479,6 +482,7 @@ def _default_host_assignment(host_id: str, role: str = "primary") -> dict:
         "role": role,
         "voice_breeze": host.get("voice_breeze", default_voice_for_backend("breeze", "host")),
         "voice_qwen": host.get("voice_qwen", default_voice_for_backend("qwen", "host")),
+        "voice_phonon": host.get("voice_phonon", default_voice_for_backend("phonon", "host")),
         "voice_kokoro": host.get("tts_voice", default_voice_for_backend("kokoro", "host")),
         "voice_minimax": host.get("voice_minimax", default_voice_for_backend("minimax", "host")),
         "voice_google": host.get("voice_google", default_voice_for_backend("google", "host")),
@@ -1040,6 +1044,8 @@ def _backend_label(backend: str | None) -> str:
         return "Breeze (mac01)"
     if value.startswith("qwen"):
         return "Qwen3-TTS (mac01)"
+    if value.startswith("phonon"):
+        return "Phonon (mac01)"
     if value.startswith("kokoro"):
         return "Kokoro"
     if value.startswith("minimax"):
@@ -1055,7 +1061,7 @@ def _backend_label(backend: str | None) -> str:
 
 def _backend_origin_label(backend: str | None) -> str:
     value = str(backend or "").strip().lower()
-    if value.startswith(("kokoro", "breeze", "qwen")):
+    if value.startswith(("kokoro", "breeze", "qwen", "phonon")):
         return "local"
     if value.startswith("minimax"):
         return "cloud"
@@ -1658,20 +1664,23 @@ class HostUpdate(BaseModel):
     speaking_pace_wpm_google: int = 130
     voice_breeze: str = default_voice_for_backend("breeze", "host")
     voice_qwen: str = default_voice_for_backend("qwen", "host")
+    voice_phonon: str = default_voice_for_backend("phonon", "host")
     # Measured per voice; left out of a save unless sent, so the UI cannot flatten them.
     speaking_pace_wpm_breeze: int | None = None
     speaking_pace_wpm_qwen: int | None = None
+    speaking_pace_wpm_phonon: int | None = None
 
 
 def _host_update_to_yaml(update: HostUpdate) -> dict:
     paces = {
         k: getattr(update, k)
-        for k in ("speaking_pace_wpm_breeze", "speaking_pace_wpm_qwen")
+        for k in ("speaking_pace_wpm_breeze", "speaking_pace_wpm_qwen", "speaking_pace_wpm_phonon")
         if getattr(update, k) is not None
     }
     return {
         "voice_breeze": update.voice_breeze,
         "voice_qwen": update.voice_qwen,
+        "voice_phonon": update.voice_phonon,
         **paces,
         "name": update.name,
         "identity": update.bio,
@@ -1763,7 +1772,7 @@ def tts_preview(body: dict, background_tasks: BackgroundTasks):
         mt = "audio/wav" if cached.suffix == ".wav" else "audio/mpeg"
         return FileResponse(str(cached), media_type=mt, filename=f"preview{cached.suffix}")
 
-    if backend in {"breeze", "qwen"}:
+    if backend in {"breeze", "qwen", "phonon"}:
         from station.mac_tts import generate_speech as mac_generate_speech
         tmp = Path(tempfile.mktemp(suffix=".wav", prefix="writ_preview_"))
         if not mac_generate_speech(text, tmp, voice, model=backend) or not tmp.exists():
@@ -1848,7 +1857,7 @@ def get_voice_samples():
 def ensure_voice_samples_api(body: dict | None = None):
     body = body or {}
     force = bool(body.get("force", False))
-    backends = body.get("backends") or ["breeze", "qwen", "kokoro", "minimax", "google"]
+    backends = body.get("backends") or ["breeze", "qwen", "phonon", "kokoro", "minimax", "google"]
     created = ensure_voice_samples(backends=backends, force=force)
     return {"ok": True, "created": created}
 
@@ -1856,7 +1865,7 @@ def ensure_voice_samples_api(body: dict | None = None):
 @app.get("/api/voice-samples/audio/{backend}/{voice}")
 def stream_voice_sample(backend: str, voice: str):
     path = sample_path(backend, voice)
-    if not path.exists() and backend in {"breeze", "qwen"}:
+    if not path.exists() and backend in {"breeze", "qwen", "phonon"}:
         # crouch-tts voices are designed on mac01 and can be added or redesigned at any time,
         # so their samples are made on first play rather than in advance (about 5-15 s).
         try:
@@ -2151,8 +2160,10 @@ def get_generate_options():
         "bumper_styles": taxonomy["bumper_styles"],
         "breeze_voices": [v["voice"] for v in voices["breeze"]],
         "qwen_voices": [v["voice"] for v in voices["qwen"]],
+        "phonon_voices": [v["voice"] for v in voices["phonon"]],
         "breeze_voice_defs": voices["breeze"],
         "qwen_voice_defs": voices["qwen"],
+        "phonon_voice_defs": voices["phonon"],
         "kokoro_voices": [v["voice"] for v in voices["kokoro"]],
         "minimax_voices": [v["voice"] for v in voices["minimax"]],
         "google_voices": [v["voice"] for v in voices["google"]],
