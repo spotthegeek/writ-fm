@@ -82,7 +82,7 @@ TTS pipeline:
 | `OLLAMA_URL` / `OLLAMA_MODEL` | LLM for script generation |
 | `GOOGLE_TTS_API_KEY` / `GOOGLE_TTS_MODEL` | Google Gemini TTS |
 | `MINIMAX_API_KEY` | MiniMax TTS + music generation (legacy; kept for fallback) |
-| `WRIT_MUSIC_BACKEND` | Music bumper provider: `lyria` (default) or `minimax` |
+| `WRIT_MUSIC_BACKEND` | Music bumper provider: `ace-step` (crouch-tts on mac01), `lyria` (default) or `minimax` |
 | `GOOGLE_VERTEX_PROJECT` | GCP project ID for Lyria (falls back to `GOOGLE_CLOUD_PROJECT`) |
 | `GOOGLE_VERTEX_LOCATION` | Vertex AI region (default `us-central1`) |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Service-account JSON with `roles/aiplatform.user` |

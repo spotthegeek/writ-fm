@@ -145,6 +145,8 @@ DEFAULT_TALK_CONFIG = {
 # runs only inside this window: one show at a time (crouch-tts renders one request at a time), shows
 # that keep stock first, the daily briefings last so they are the freshest thing made. Unset means
 # generate around the clock, as before. Manual generation from the admin page is not affected.
+# Music takes the same turn: it goes first, one show at a time, because a week of bumpers takes minutes and ACE-Step
+# then gives its 13 GB back to the talk that fills the rest of the window.
 WINDOW_BRIEFING_RESERVE_MIN = int(os.environ.get("WRIT_GEN_WINDOW_BRIEFING_RESERVE_MIN", "45"))
 WINDOW_CHECK_INTERVAL = 30
 
@@ -622,8 +624,9 @@ def _run_music_generation(show_id: str, count: int, bumper_style: str, job_regis
         state.active_jobs.pop(job_id, None)
 
     _jlog(f"Generation {'complete' if final_status == 'completed' else final_status}.")
-    state.record_run(show_id, "music")
     if final_status == "completed":
+        # Only a success starts the cadence again, or one night with mac01 down costs a show a week of bumpers.
+        state.record_run(show_id, "music")
         state.record_success(show_id, "music")
     elif final_status == "unavailable":
         wait = state.record_unavailable(show_id, "music")
@@ -1040,6 +1043,22 @@ def _seed_last_run_from_fs() -> None:
                 state.last_run_per_show.setdefault(show_id, {})["music"] = music_time
 
 
+def _music_needed(show_id: str, show: dict) -> int:
+    """How many bumpers this show should generate now; 0 if it is off, backing off, already running or not due."""
+    music_cfg = {**DEFAULT_MUSIC_CONFIG, **((show.get("generation") or {}).get("music") or {})}
+    if not music_cfg["enabled"] or state.in_failure_backoff(show_id, "music"):
+        return 0
+    if any(j.get("show_id") == show_id and j.get("type") == "music" for j in state.active_jobs.values()):
+        return 0
+    inventory = _count_inventory(BUMPERS_DIR, show_id)
+    target = int(music_cfg["target_inventory"])
+    cadence = music_cfg.get("cadence", "continuous")
+    if cadence == "continuous":
+        # `<=` for the same reason as talk: exactly-at-minimum is a stall.
+        return target - inventory if inventory <= int(music_cfg["min_inventory"]) and inventory < target else 0
+    return max(1, target - inventory) if _cadence_ok(show_id, "music", cadence) else 0
+
+
 def _check_and_generate(job_registry: dict):
     """One pass: check inventory for all shows and trigger generation as needed."""
     try:
@@ -1054,6 +1073,8 @@ def _check_and_generate(job_registry: dict):
     window = _generation_window()
     window_left = _window_minutes_left(window, _station_now()) if window else None
     talk_busy = window is not None and any(j.get("type") == "talk" for j in state.active_jobs.values())
+    music_busy = window is not None and any(j.get("type") == "music" for j in state.active_jobs.values())
+    music_first = window_left is not None and (music_busy or any(_music_needed(sid, sh) for sid, sh in shows.items()))
     stock_needed = False          # a stock-keeping show still wants a top-up this window
     items = list(shows.items())
     if window:
@@ -1068,7 +1089,7 @@ def _check_and_generate(job_registry: dict):
 
         # ── Talk segments ──────────────────────────────────────────
         talk_cfg = {**DEFAULT_TALK_CONFIG, **(gen_cfg.get("talk") or {})}
-        talk_held = window is not None and (window_left is None or talk_busy)
+        talk_held = window is not None and (window_left is None or talk_busy or music_first)
         if talk_cfg["enabled"] and not talk_held:
             # Skip if a generation job is already running for this show
             already_running = any(
@@ -1138,41 +1159,21 @@ def _check_and_generate(job_registry: dict):
                     talk_busy = True      # one talk job at a time inside the window
 
         # ── Music bumpers ──────────────────────────────────────────
-        music_cfg = {**DEFAULT_MUSIC_CONFIG, **(gen_cfg.get("music") or {})}
-        if music_cfg["enabled"]:
-            if state.in_failure_backoff(show_id, "music"):
-                continue
-
-            already_running = any(
-                j.get("show_id") == show_id and j.get("type") == "music"
-                for j in state.active_jobs.values()
-                )
-            if already_running:
-                continue
-
-            inventory = _count_inventory(BUMPERS_DIR, show_id)
-            target = int(music_cfg["target_inventory"])
-            minimum = int(music_cfg["min_inventory"])
-            cadence = music_cfg.get("cadence", "continuous")
-
-            if cadence == "continuous":
-                # `<=` for the same reason as talk: exactly-at-minimum is a stall.
-                should_run = inventory <= minimum and inventory < target
-                needed = target - inventory
-            else:
-                should_run = _cadence_ok(show_id, "music", cadence)
-                needed = max(1, target - inventory)
-
-            if should_run and needed > 0:
-                bumper_style = show.get("bumper_style", "ambient")
-                state.add_log(show_id, "music",
-                    f"Bumper inventory {inventory}, cadence={cadence} → generating {needed}")
-                t = threading.Thread(
-                    target=_run_music_generation,
-                    args=(show_id, needed, bumper_style, job_registry, env, _inventory_invalidator),
-                    daemon=True,
-                )
-                t.start()
+        music_held = window is not None and (window_left is None or talk_busy or music_busy)
+        needed = 0 if music_held else _music_needed(show_id, show)
+        if needed > 0:
+            cadence = {**DEFAULT_MUSIC_CONFIG, **(gen_cfg.get("music") or {})}.get("cadence", "continuous")
+            bumper_style = show.get("bumper_style", "ambient")
+            state.add_log(show_id, "music",
+                f"Bumper inventory {_count_inventory(BUMPERS_DIR, show_id)}, cadence={cadence} → generating {needed}")
+            t = threading.Thread(
+                target=_run_music_generation,
+                args=(show_id, needed, bumper_style, job_registry, env, _inventory_invalidator),
+                daemon=True,
+            )
+            t.start()
+            if window:
+                music_busy = True      # one music job at a time inside the window
 
 
 def run_scheduler(job_registry: dict, check_interval: int = 300):

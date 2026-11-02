@@ -19,6 +19,7 @@ DEFAULT_GOOGLE_TTS_MAX_RETRIES = 3
 # Music bumper generation. Lyria bills per 30s of output, so a 15-30s bumper costs
 # one unit; MiniMax always renders ~130s regardless of the requested duration.
 DEFAULT_MUSIC_BACKEND = "lyria"
+DEFAULT_ACE_STEP_MODEL = "ace-step-1.5-xl-turbo-8bit"     # chosen by crouch-tts; recorded in the sidecar
 DEFAULT_LYRIA_MODEL = "lyria-002"
 DEFAULT_VERTEX_LOCATION = "us-central1"
 
@@ -93,8 +94,12 @@ def minimax_music_model() -> str:
 
 
 def music_backend() -> str:
-    """Which provider generates music bumpers: 'lyria' or 'minimax'."""
+    """Which provider generates music bumpers: 'ace-step' (crouch-tts on mac01), 'lyria' or 'minimax'."""
     return (os.environ.get("WRIT_MUSIC_BACKEND") or DEFAULT_MUSIC_BACKEND).strip().lower()
+
+
+def ace_step_model() -> str:
+    return DEFAULT_ACE_STEP_MODEL
 
 
 def lyria_model() -> str:

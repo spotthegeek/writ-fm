@@ -23,7 +23,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 from station.schedule import load_schedule, merge_playback_sequence
 from station.time_utils import station_now, station_iso_now
-from shared.settings import music_backend, lyria_model, minimax_music_model
+from shared.settings import ace_step_model, music_backend, lyria_model, minimax_music_model
 
 
 def _music_client():
@@ -32,6 +32,9 @@ def _music_client():
     if music_backend() == "minimax":
         from station import music_gen_client as client
         return client, minimax_music_model()
+    if music_backend() == "ace-step":
+        from station import ace_step_client as client
+        return client, ace_step_model()
     from station import lyria_music_client as client
     return client, lyria_model()
 
@@ -562,7 +565,7 @@ def generate_one_bumper(show_id: str, verbose: bool = True,
             "instrumental": instrumental,
             "voice": "instrumental" if instrumental else "vocal",
             "generation_backend": music_backend(),
-            "backend_origin": "cloud",
+            "backend_origin": "local" if music_backend() == "ace-step" else "cloud",
             "generated_at": station_iso_now(),
             "generation_seconds": round(elapsed, 1),
             "ai_generated": True,
@@ -614,6 +617,8 @@ def main():
         backend = music_backend()
         if backend == "minimax":
             print("MINIMAX_TOKEN_PLAN_API_KEY is not set — cannot generate music")
+        elif backend == "ace-step":
+            print("MAC_TTS_SERVICE_URL is not set — cannot generate music")
         else:
             print(
                 f"Music backend '{backend}' is not configured — cannot generate music.\n"
