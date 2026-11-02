@@ -104,3 +104,76 @@ def test_unset_window_keeps_round_the_clock_behaviour(monkeypatch, harness):
     inventory["sysadmin"] = 8
     sch._check_and_generate({})
     assert "sysadmin" in started
+
+
+def _music(cadence="weekly"):
+    return {"enabled": True, "cadence": cadence, "min_inventory": 4, "target_inventory": 6}
+
+
+def test_outside_the_window_music_waits(monkeypatch, harness):
+    inventory, started = harness
+    sch._load_schedule()["shows"]["sysadmin"]["generation"]["music"] = _music()
+    monkeypatch.setattr(sch, "_station_now", lambda: _at(10, 20))
+    sch._check_and_generate({})
+    assert started == []
+
+
+def test_inside_the_window_music_goes_first_one_show_at_a_time(monkeypatch, harness):
+    inventory, started = harness
+    shows = sch._load_schedule()["shows"]
+    shows["sysadmin"]["generation"]["music"] = _music()
+    shows["nosleep"]["generation"]["music"] = _music()
+    monkeypatch.setattr(sch, "_station_now", lambda: _at(3, 0))
+    sch._check_and_generate({})
+    assert started == ["sysadmin"]          # its music, not its talk; nosleep\x27s music and all talk wait
+
+
+def test_talk_waits_while_a_music_job_runs_then_resumes(monkeypatch, harness):
+    inventory, started = harness
+    monkeypatch.setattr(sch, "_station_now", lambda: _at(3, 1))
+    sch.state.active_jobs["m"] = {"show_id": "nosleep", "type": "music"}
+    sch._check_and_generate({})
+    assert started == []
+    sch.state.active_jobs.clear()
+    sch._check_and_generate({})
+    assert started == ["sysadmin"]
+
+
+def test_music_due_mid_window_waits_for_the_running_talk_job(monkeypatch, harness):
+    inventory, started = harness
+    sch._load_schedule()["shows"]["nosleep"]["generation"]["music"] = _music()
+    monkeypatch.setattr(sch, "_station_now", lambda: _at(3, 30))
+    sch.state.active_jobs["t"] = {"show_id": "sysadmin", "type": "talk"}
+    sch._check_and_generate({})
+    assert started == []
+
+
+def test_without_a_window_music_runs_whenever_it_is_due(monkeypatch, harness):
+    inventory, started = harness
+    monkeypatch.delenv("WRIT_GEN_WINDOW")
+    shows = sch._load_schedule()["shows"]
+    shows["nosleep"]["generation"]["music"] = _music()
+    monkeypatch.setattr(sch, "_station_now", lambda: _at(10, 20))
+    sch._check_and_generate({})
+    assert "nosleep" in started
+
+
+def test_a_failed_music_run_does_not_restart_the_cadence(monkeypatch, harness):
+    recorded = []
+    monkeypatch.setattr(sch.state, "record_run", lambda *a: recorded.append(a))
+    monkeypatch.setattr(sch.state, "record_failure", lambda *a: 900)
+    monkeypatch.setattr(sch.state, "record_success", lambda *a: recorded.append(("success",)))
+
+    class Proc:
+        stdout = iter(["[ace-step] HTTP 503: not enough memory"])
+        returncode = 1
+        def wait(self, timeout=None):
+            return self.returncode
+
+    monkeypatch.setattr(sch.subprocess, "Popen", lambda *a, **k: Proc())
+    sch._run_music_generation("sysadmin", 2, "ambient", {}, {})
+    assert recorded == []
+    Proc.returncode = 0
+    Proc.stdout = iter(["Saved"])
+    sch._run_music_generation("sysadmin", 2, "ambient", {}, {})
+    assert recorded == [("sysadmin", "music"), ("success",)]

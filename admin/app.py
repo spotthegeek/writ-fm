@@ -1061,7 +1061,7 @@ def _backend_label(backend: str | None) -> str:
 
 def _backend_origin_label(backend: str | None) -> str:
     value = str(backend or "").strip().lower()
-    if value.startswith(("kokoro", "breeze", "qwen", "phonon")):
+    if value.startswith(("kokoro", "breeze", "qwen", "phonon", "ace-step")):
         return "local"
     if value.startswith("minimax"):
         return "cloud"
