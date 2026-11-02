@@ -147,3 +147,38 @@ def test_dialogue_with_named_labels_uses_both_voices(monkeypatch, tmp_path):
 def test_labels_already_in_role_form_are_untouched():
     script = "HOST_A: Hi.\nHOST_B: Hello."
     assert tg._canonical_dialogue_script(script, {"primary_host_name": "root", "secondary_host_name": "sudo"}) == script
+
+
+def test_phonon_is_a_crouch_tts_backend_and_breeze_stays(monkeypatch, tmp_path):
+    assert {"breeze", "qwen", "phonon"} <= set(settings.MAC_TTS_BACKENDS)
+    assert "breeze" in settings.TTS_BACKENDS and "phonon" in settings.TTS_BACKENDS
+    monkeypatch.setenv("WRIT_DEFAULT_TTS_BACKEND", "phonon")
+    assert settings.default_tts_backend() == "phonon"
+    assert settings.voice_field("phonon") == settings.roster_voice_field("phonon") == "voice_phonon"
+    calls = []
+    monkeypatch.setattr(mac_tts, "generate_speech", lambda text, out, voice, model="breeze", instruct=None: calls.append((voice, model)) or True)
+    assert tg._local_render_speech("phonon", "Hello.", tmp_path / "a.wav", voice="Hugh")
+    assert calls == [("Hugh", "phonon")]
+
+
+def test_phonon_lists_its_own_voices_apart_from_the_designed_ones(monkeypatch):
+    monkeypatch.setattr(mac_tts, "mac_tts_service_url", lambda: "http://mac")
+    monkeypatch.setattr(mac_tts, "_VOICE_CACHE", {})
+    seen = []
+
+    def fake_get(url, params=None, timeout=None):
+        seen.append(params)
+        return httpx.Response(200, json={"voices": [{"name": "Hugh" if params else "owen"}]}, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(mac_tts.httpx, "get", fake_get)
+    assert [v["name"] for v in mac_tts.list_voices("phonon")] == ["Hugh"]
+    assert [v["name"] for v in mac_tts.list_voices()] == ["owen"]
+    assert [v["name"] for v in mac_tts.list_voices("phonon")] == ["Hugh"]     # cached separately
+    assert seen == [{"model": "phonon"}, None]
+
+
+def test_host_save_keeps_a_phonon_voice_and_its_measured_pace():
+    from admin import app as admin_app
+    data = admin_app._host_update_to_yaml(admin_app.HostUpdate(name="root", voice_phonon="Hugh", speaking_pace_wpm_phonon=217))
+    assert data["voice_phonon"] == "Hugh" and data["speaking_pace_wpm_phonon"] == 217
+    assert "speaking_pace_wpm_phonon" not in admin_app._host_update_to_yaml(admin_app.HostUpdate(name="root"))

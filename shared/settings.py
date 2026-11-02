@@ -44,10 +44,15 @@ DEFAULT_VOICE_BY_BACKEND_AND_ROLE = {
         "host": "silas",
         "guest": "wren",
     },
+    # Phonon through crouch-tts: its catalog voices plus Gradium clones of the Breeze designs.
+    "phonon": {
+        "host": "silas",
+        "guest": "wren",
+    },
 }
 
-TTS_BACKENDS = ("breeze", "qwen", "kokoro", "minimax", "google")
-MAC_TTS_BACKENDS = ("breeze", "qwen")          # served by crouch-tts on mac01
+TTS_BACKENDS = ("breeze", "qwen", "phonon", "kokoro", "minimax", "google")
+MAC_TTS_BACKENDS = ("breeze", "qwen", "phonon")          # served by crouch-tts on mac01
 DEFAULT_TTS_BACKEND = "breeze"
 DEFAULT_MAC_TTS_TIMEOUT_SECONDS = 600.0
 DEFAULT_MAC_TTS_MAX_RETRIES = 2
