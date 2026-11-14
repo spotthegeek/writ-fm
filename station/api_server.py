@@ -12,6 +12,7 @@ import http.server
 import ipaddress
 import json
 import os
+import re
 import secrets
 import socketserver
 import subprocess
@@ -86,6 +87,7 @@ _live_override: dict | None = None  # {"show_id": str, "end_at": ISO-datetime st
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MESSAGES_FILE = Path.home() / ".writ" / "messages.json"
+SCRIPTS_DIR = PROJECT_ROOT / "output" / "scripts"
 
 # Rate limiting for messages
 MESSAGE_COOLDOWN = message_cooldown_seconds()
@@ -102,6 +104,19 @@ _LISTENER_COOKIE = "writ_listener_token"
 _LISTENER_TOKENS_FILE = PROJECT_ROOT / "output" / "listener_tokens.json"
 _LISTENER_TOKENS_LOCK = threading.Lock()
 _LISTENER_EXEMPT = {"/stream", "/health", "/auth", "/logout", "/favicon.svg", "/favicon.ico"}
+
+# ---------------------------------------------------------------------------
+# Control auth — POST /control (skip/reorder) and POST /override (switch show)
+# change what every listener hears, so a listener token (or being on the LAN)
+# is not enough. Only the admin app may call them: it talks to us directly
+# over loopback in the systemd deployment, or presents WRIT_CONTROL_TOKEN as
+# X-Writ-Control-Token when it can't (e.g. the Docker stack).
+# ---------------------------------------------------------------------------
+_CONTROL_PATHS = {"/control", "/override"}
+_CONTROL_TOKEN = os.environ.get("WRIT_CONTROL_TOKEN", "").strip()
+# cloudflared and local reverse proxies also connect from loopback; what tells
+# them apart from the admin app is that they forward the visitor's address.
+_PROXY_HEADERS = ("CF-Connecting-IP", "X-Forwarded-For", "X-Real-IP", "Forwarded")
 
 # Parse LAN bypass ranges at startup
 _LAN_NETS: list = []
@@ -250,6 +265,92 @@ def _deny(handler) -> None:
         handler.end_headers()
 
 
+def _is_control_authorized(handler) -> bool:
+    """True if this request may use the control endpoints (see _CONTROL_PATHS)."""
+    if _CONTROL_TOKEN:
+        supplied = handler.headers.get("X-Writ-Control-Token", "")
+        if supplied and hmac.compare_digest(supplied, _CONTROL_TOKEN):
+            return True
+    try:
+        direct = ipaddress.ip_address(handler.client_address[0])
+    except ValueError:
+        return False
+    if not direct.is_loopback:
+        return False
+    return not any(handler.headers.get(name) for name in _PROXY_HEADERS)
+
+
+# ---------------------------------------------------------------------------
+# On-demand IDs and transcripts
+# ---------------------------------------------------------------------------
+# Talk segments are output/talk_segments/<show_id>/<type>_<slug>_<YYYYMMDD_HHMMSS>.<ext>
+# and the generator writes the matching script to
+# output/scripts/talk_<type>_<YYYYMMDD_HHMMSS>.json using the same timestamp.
+_SEGMENT_TIMESTAMP = re.compile(r"(\d{8}_\d{6})$")
+_SAFE_SEGMENT_TYPE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _item_id_for_path(path) -> str | None:
+    """On-demand item ID (`show:<show_id>:<stem>`) for a talk segment file path."""
+    if not path:
+        return None
+    p = Path(str(path))
+    if p.parent.parent.name != "talk_segments" or not p.parent.name:
+        return None
+    return f"show:{p.parent.name}:{p.stem}"
+
+
+def _with_item_id(entry):
+    """Copy of a queue/history dict with `item_id` added when it's a talk segment."""
+    if not isinstance(entry, dict):
+        return entry
+    item_id = _item_id_for_path(entry.get("path") or entry.get("filepath"))
+    return {**entry, "item_id": item_id} if item_id else dict(entry)
+
+
+def get_transcript(item_id: str) -> tuple[int, dict]:
+    """Script for a talk segment, as (HTTP status, body)."""
+    if not item_id:
+        return 400, {"error": "item_id required"}
+    audio = _od().get_segment_path(item_id)
+    if audio is None:
+        return 404, {"error": "Item not found"}
+    try:
+        sidecar = json.loads(audio.with_suffix(".json").read_text())
+    except Exception:
+        sidecar = {}
+    segment_type = str(sidecar.get("type") or "")
+    stamp = _SEGMENT_TIMESTAMP.search(audio.stem)
+    record = None
+    if stamp and _SAFE_SEGMENT_TYPE.match(segment_type):
+        record_path = SCRIPTS_DIR / f"talk_{segment_type}_{stamp.group(1)}.json"
+        try:
+            candidate = json.loads(record_path.read_text())
+            # Same-second segments from different shows would share a name.
+            if candidate.get("show_id") == audio.parent.name:
+                record = candidate
+        except Exception:
+            record = None
+    script = str((record or {}).get("script") or "").strip()
+    if not script:
+        return 404, {"error": "No transcript for this segment"}
+    return 200, {
+        "item_id": item_id,
+        "title": record.get("topic") or sidecar.get("topic") or audio.stem,
+        "show_id": record.get("show_id"),
+        "show_name": record.get("show_name") or sidecar.get("show_name"),
+        "host_name": record.get("host_name"),
+        "script": script,
+        "word_count": record.get("word_count"),
+        # YouTube ingests air the source audio, so "script" is the source transcript.
+        "is_source_transcript": record.get("tts_backend") == "youtube_ingest",
+        "source_type": record.get("source_type") or sidecar.get("source_type"),
+        "source_value": record.get("source_value") or sidecar.get("source_value"),
+        "source_title": record.get("source_title") or sidecar.get("source_title"),
+        "generated_at": record.get("generated_at") or sidecar.get("generated_at"),
+    }
+
+
 # Shared state — set by start_api_thread()
 _track_info: dict = {}
 _encoder_getter = None
@@ -389,6 +490,13 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(get_ondemand_items(source))
         elif path == "/api/ondemand/state":
             self._send_json(get_ondemand_state())
+        elif path == "/api/transcript":
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            status, body = get_transcript(qs.get("item_id", [""])[0])
+            if status == 200:
+                self._send_json(body, "public, max-age=300")
+            else:
+                self._send_error(status, body["error"])
         elif path.startswith("/api/ondemand/audio/"):
             item_id = path[len("/api/ondemand/audio/"):]
             item_id = urllib.parse.unquote(item_id)
@@ -590,6 +698,9 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
 
+        if path in _CONTROL_PATHS and not _is_control_authorized(self):
+            return self._send_error(403, "Control endpoints are restricted to the admin app")
+
         if path == "/override":
             try:
                 content_length = int(self.headers.get("Content-Length", 0))
@@ -742,9 +853,9 @@ def get_play_history() -> dict:
         history = get_history()
         return {
             "enabled": True,
-            "recent": history.get_recent_plays(50),
+            "recent": [_with_item_id(r) for r in history.get_recent_plays(50)],
             "stats": history.get_stats(),
-            "most_played": history.get_most_played(10),
+            "most_played": [_with_item_id(r) for r in history.get_most_played(10)],
         }
     except Exception as e:
         return {"enabled": True, "error": str(e)}
@@ -804,6 +915,10 @@ def get_now_playing() -> dict:
 
 
 def get_live_queue() -> dict:
+    return _queue_with_item_ids(_raw_live_queue())
+
+
+def _raw_live_queue() -> dict:
     if _live_queue_getter:
         try:
             state = _live_queue_getter() or {}
@@ -816,6 +931,18 @@ def get_live_queue() -> dict:
         state["upcoming"] = list(_live_queue_state.get("upcoming", []))
         state["display_queue"] = list(_live_queue_state.get("display_queue", []))
         return state
+
+
+def _queue_with_item_ids(state: dict) -> dict:
+    """Add on-demand `item_id`s so clients can fetch transcripts / replay segments.
+    Copies rather than mutates: the getter may hand back the streamer's own state."""
+    out = dict(state)
+    if out.get("current_item"):
+        out["current_item"] = _with_item_id(out["current_item"])
+    for key in ("upcoming", "display_queue"):
+        if isinstance(out.get(key), list):
+            out[key] = [_with_item_id(entry) for entry in out[key]]
+    return out
 
 
 def set_live_queue(state: dict) -> None:

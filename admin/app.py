@@ -75,6 +75,10 @@ BUMPERS_DIR = PROJECT_ROOT / "output" / "music_bumpers"
 SCRIPTS_DIR = PROJECT_ROOT / "output" / "scripts"
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python3"
 STREAMER_API = os.environ.get("WRIT_STREAMER_API", "http://localhost:8001")
+# Shared secret for the streamer's control endpoints (/control, /override).
+# Not needed when admin and streamer share a host (loopback is trusted);
+# set it on both services when they don't (e.g. the Docker stack).
+STREAMER_CONTROL_TOKEN = os.environ.get("WRIT_CONTROL_TOKEN", "").strip()
 STATION_SERVICE = os.environ.get("WRIT_STATION_SERVICE", "writ-fm.service")
 LEGACY_STREAMER_SERVICE = os.environ.get("WRIT_LEGACY_STREAMER_SERVICE", "writ-fm-streamer.service")
 
@@ -1186,6 +1190,8 @@ def _streamer_request(path: str, method: str = "GET", payload: dict | None = Non
     url = f"{STREAMER_API}{path}"
     data = None
     headers = {}
+    if STREAMER_CONTROL_TOKEN:
+        headers["X-Writ-Control-Token"] = STREAMER_CONTROL_TOKEN
     if payload is not None:
         data = json.dumps(payload).encode()
         headers["Content-Type"] = "application/json"

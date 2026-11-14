@@ -661,6 +661,11 @@ def get_segment_path(item_id: str) -> Path | None:
     show_id, _, stem = rest.partition(":")
     if not stem:
         return None
+    # Both parts come straight from the URL: refuse anything that could step
+    # outside talk_segments/<show_id>/ (e.g. "show:..:..%2F..%2Fetc").
+    for part in (show_id, stem):
+        if not part or part in (".", "..") or "/" in part or "\\" in part or "\x00" in part:
+            return None
     show_dir = SEGMENTS_DIR / show_id
     for ext in SEGMENT_AUDIO_EXTS:
         candidate = show_dir / f"{stem}{ext}"
