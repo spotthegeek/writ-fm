@@ -2987,6 +2987,26 @@ def create_listener_token(body: CreateTokenRequest):
     return entry
 
 
+class UpdateTokenRequest(BaseModel):
+    admin: bool
+
+
+@app.patch("/api/listener-tokens/{token}")
+def update_listener_token(token: str, body: UpdateTokenRequest):
+    """Grant or revoke admin (station controls: skip / switch show) for a token."""
+    with _listener_tokens_lock:
+        tokens = _load_listener_tokens()
+        for entry in tokens:
+            if entry.get("token") == token:
+                if body.admin:
+                    entry["admin"] = True
+                else:
+                    entry.pop("admin", None)
+                _save_listener_tokens(tokens)
+                return entry
+    raise HTTPException(404, "Token not found")
+
+
 @app.delete("/api/listener-tokens/{token}")
 def revoke_listener_token(token: str):
     with _listener_tokens_lock:

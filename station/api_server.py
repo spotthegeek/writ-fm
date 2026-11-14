@@ -169,14 +169,19 @@ def _load_listener_tokens() -> list[dict]:
         return []
 
 
-def _is_valid_token(token: str) -> bool:
+def _listener_token_entry(token: str) -> dict | None:
+    """The listener_tokens.json entry for `token`, if it's a valid token."""
     if not token:
-        return False
+        return None
     for entry in _load_listener_tokens():
         stored = entry.get("token", "")
         if stored and hmac.compare_digest(stored, token):
-            return True
-    return False
+            return entry
+    return None
+
+
+def _is_valid_token(token: str) -> bool:
+    return _listener_token_entry(token) is not None
 
 
 def _touch_last_used(token: str) -> None:
@@ -265,19 +270,79 @@ def _deny(handler) -> None:
         handler.end_headers()
 
 
-def _is_control_authorized(handler) -> bool:
-    """True if this request may use the control endpoints (see _CONTROL_PATHS)."""
+def _control_actor(handler) -> str | None:
+    """Who is allowed to use the control endpoints (see _CONTROL_PATHS), for
+    the audit log — or None if this request isn't.
+
+    Allowed: the admin app (direct loopback, no proxy headers), anyone with
+    WRIT_CONTROL_TOKEN, or a listener whose token entry has "admin": true
+    (set per device in the admin UI's Listener Access screen). Being on the
+    LAN alone is never enough.
+    """
     if _CONTROL_TOKEN:
         supplied = handler.headers.get("X-Writ-Control-Token", "")
         if supplied and hmac.compare_digest(supplied, _CONTROL_TOKEN):
-            return True
+            return "control token"
+    entry = _listener_token_entry(_get_cookies(handler).get(_LISTENER_COOKIE, ""))
+    if entry and entry.get("admin") is True:
+        return f"listener {entry.get('label') or 'unlabeled'!r}"
     try:
         direct = ipaddress.ip_address(handler.client_address[0])
     except ValueError:
-        return False
-    if not direct.is_loopback:
-        return False
-    return not any(handler.headers.get(name) for name in _PROXY_HEADERS)
+        return None
+    if direct.is_loopback and not any(handler.headers.get(name) for name in _PROXY_HEADERS):
+        return "admin app"
+    return None
+
+
+def _is_control_authorized(handler) -> bool:
+    return _control_actor(handler) is not None
+
+
+def get_me(handler) -> dict:
+    """GET /api/me — lets clients decide whether to offer station controls."""
+    entry = _listener_token_entry(_get_cookies(handler).get(_LISTENER_COOKIE, ""))
+    return {
+        "label": entry.get("label") if entry else None,
+        "admin": bool(entry and entry.get("admin") is True),
+    }
+
+
+def get_scheduled_shows() -> dict:
+    """GET /api/shows — shows that appear on the schedule (base or override
+    blocks), i.e. the ones that make sense to put on air with /override.
+    Briefing-only shows are defined but never scheduled, so they're skipped."""
+    try:
+        from schedule import load_schedule as _load_sched
+        sched = _load_sched(PROJECT_ROOT / "config")
+        scheduled_ids = {block.show_id for block in sched.base + sched.overrides}
+        try:
+            current = sched.resolve(station_now()).show_id
+        except Exception:
+            current = None
+        shows = [
+            {
+                "show_id": show.show_id,
+                "name": show.name,
+                "description": show.description,
+                "host": show.host,
+            }
+            for show_id, show in sched.shows.items()
+            if show_id in scheduled_ids
+        ]
+        shows.sort(key=lambda s: s["name"].lower())
+        override = get_live_override()
+        return {
+            "shows": shows,
+            "current_show_id": (override or {}).get("show_id") or current,
+        }
+    except Exception as e:
+        return {"shows": [], "error": str(e)}
+
+
+def _log_control(actor: str, what: str) -> None:
+    # stdout goes to the writ-fm.service journal alongside the streamer log.
+    print(f"[control] {actor}: {what}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -490,6 +555,10 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(get_ondemand_items(source))
         elif path == "/api/ondemand/state":
             self._send_json(get_ondemand_state())
+        elif path == "/api/me":
+            self._send_json(get_me(self), "no-store")
+        elif path == "/api/shows":
+            self._send_json(get_scheduled_shows(), "no-store")
         elif path == "/api/transcript":
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             status, body = get_transcript(qs.get("item_id", [""])[0])
@@ -698,8 +767,9 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        if path in _CONTROL_PATHS and not _is_control_authorized(self):
-            return self._send_error(403, "Control endpoints are restricted to the admin app")
+        actor = _control_actor(self) if path in _CONTROL_PATHS else None
+        if path in _CONTROL_PATHS and actor is None:
+            return self._send_error(403, "Control endpoints are restricted to the admin app and admin devices")
 
         if path == "/override":
             try:
@@ -731,6 +801,8 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
                 set_live_override(target_id, end_at.isoformat())
                 # Also skip the current segment so playback cuts over immediately
                 enqueue_live_command({"action": "skip"})
+                _log_control(actor, f"override -> {target_id} until {end_at.isoformat()}"
+                             + (" (next show)" if show_id is None else ""))
                 self._send_json({"ok": True, "show_id": target_id, "end_at": end_at.isoformat()})
             except Exception as e:
                 self._send_error(500, str(e))
@@ -743,6 +815,7 @@ class NowPlayingHandler(http.server.BaseHTTPRequestHandler):
                 if not isinstance(data, dict) or not data.get("action"):
                     return self._send_error(400, "Invalid control command")
                 enqueue_live_command(data)
+                _log_control(actor, f"control {data.get('action')}")
                 self._send_json({"ok": True, "queued": data.get("action")})
             except Exception as e:
                 self._send_error(500, str(e))

@@ -135,3 +135,62 @@ def test_segment_path_refuses_traversal(station_dirs, item_id):
     segments, _ = station_dirs
     (segments.parent / "secret.wav").write_bytes(b"RIFF")
     assert ondemand.get_segment_path(item_id) is None
+
+
+# --- admin devices (per-token "admin" flag) ---------------------------------
+
+@pytest.fixture
+def token_file(tmp_path, monkeypatch):
+    path = tmp_path / "listener_tokens.json"
+    path.write_text(json.dumps([
+        {"token": "admin-tok", "label": "Mark iPhone", "admin": True},
+        {"token": "plain-tok", "label": "Friend"},
+    ]))
+    monkeypatch.setattr(api_server, "_LISTENER_TOKENS_FILE", path)
+    monkeypatch.setattr(api_server, "_CONTROL_TOKEN", "")
+    return path
+
+
+def test_admin_token_allows_control_through_the_tunnel(token_file):
+    h = _handler("10.0.0.200", Cookie="writ_listener_token=admin-tok", CF_Connecting_IP="203.0.113.9")
+    assert api_server._is_control_authorized(h)
+    assert api_server._control_actor(h) == "listener 'Mark iPhone'"
+
+
+def test_plain_and_unknown_tokens_are_refused(token_file):
+    assert not api_server._is_control_authorized(_handler("10.0.0.200", Cookie="writ_listener_token=plain-tok"))
+    assert not api_server._is_control_authorized(_handler("10.0.0.200", Cookie="writ_listener_token=nope"))
+
+
+def test_admin_flag_must_be_literally_true(token_file):
+    token_file.write_text(json.dumps([{"token": "t", "label": "x", "admin": "yes"}]))
+    assert not api_server._is_control_authorized(_handler("10.0.0.200", Cookie="writ_listener_token=t"))
+
+
+def test_me_reports_admin_status(token_file):
+    assert api_server.get_me(_handler("10.0.0.200", Cookie="writ_listener_token=admin-tok")) == \
+        {"label": "Mark iPhone", "admin": True}
+    assert api_server.get_me(_handler("10.0.0.200", Cookie="writ_listener_token=plain-tok")) == \
+        {"label": "Friend", "admin": False}
+    assert api_server.get_me(_handler("10.0.0.60")) == {"label": None, "admin": False}
+
+
+def test_scheduled_shows_excludes_unscheduled_and_reports_current(monkeypatch):
+    import schedule as schedule_module
+    from types import SimpleNamespace as NS
+
+    def show(show_id, name):
+        return NS(show_id=show_id, name=name, description=f"{name} desc", host="host")
+
+    fake = NS(
+        shows={"nosleep": show("nosleep", "/r/nosleep"), "sysadmin": show("sysadmin", "/r/sysadmin"),
+               "briefing_ai": show("briefing_ai", "AI Briefing")},
+        base=[NS(show_id="sysadmin"), NS(show_id="nosleep")],
+        overrides=[],
+        resolve=lambda now: NS(show_id="sysadmin"),
+    )
+    monkeypatch.setattr(schedule_module, "load_schedule", lambda _config: fake)
+    monkeypatch.setattr(api_server, "get_live_override", lambda: None)
+    result = api_server.get_scheduled_shows()
+    assert [s["show_id"] for s in result["shows"]] == ["nosleep", "sysadmin"]
+    assert result["current_show_id"] == "sysadmin"

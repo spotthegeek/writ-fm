@@ -2841,6 +2841,21 @@ const AccessScreen = ({ t }) => {
     finally { setCreating(false); }
   };
 
+  const setAdmin = async (tok) => {
+    const grant = !tok.admin;
+    const who = tok.label ? `"${tok.label}"` : "this token";
+    if (grant && !confirm(`Allow ${who} to skip segments and switch shows from the listener app? This affects everyone listening.`)) return;
+    try {
+      const r = await fetch(`/api/listener-tokens/${encodeURIComponent(tok.token)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ admin: grant }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      reload();
+    } catch(e) { alert("Failed: " + e.message); }
+  };
+
   const revoke = async (token, lbl) => {
     if (!confirm(`Revoke token${lbl ? ` for "${lbl}"` : ""}? The listener will need a new token.`)) return;
     try {
@@ -2894,8 +2909,12 @@ const AccessScreen = ({ t }) => {
             borderBottom: i < tokens.length - 1 ? `1px solid ${t.border}` : "none",
             display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 500, fontSize: 13, color: t.text }}>
+              <div style={{ fontWeight: 500, fontSize: 13, color: t.text, display: "flex", alignItems: "center", gap: 8 }}>
                 {tok.label || <em style={{ color: t.textFaint, fontWeight: 400 }}>Unlabeled</em>}
+                {tok.admin && (
+                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase",
+                    color: t.pillReadyText, background: t.pillReady, padding: "2px 7px", borderRadius: 999 }}>Admin</span>
+                )}
               </div>
               <div style={{ fontSize: 11, color: t.textFaint, marginTop: 2, fontFamily: "'DM Mono',monospace" }}>
                 {tok.token.slice(0, 8)}…
@@ -2903,6 +2922,7 @@ const AccessScreen = ({ t }) => {
                 {tok.last_used ? ` · Last used ${new Date(tok.last_used).toLocaleDateString()}` : " · Never used"}
               </div>
             </div>
+            <Btn onClick={() => setAdmin(tok)}>{tok.admin ? "Remove admin" : "Make admin"}</Btn>
             <Btn danger onClick={() => revoke(tok.token, tok.label)}>Revoke</Btn>
           </div>
         ))}
