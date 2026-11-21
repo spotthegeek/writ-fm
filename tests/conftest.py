@@ -37,3 +37,13 @@ def _sandbox_generator_state(tmp_path, monkeypatch):
     sandbox = tmp_path / "generator_state"
     monkeypatch.setattr(talk_generator, "SCRIPTS_DIR", sandbox / "scripts", raising=False)
     monkeypatch.setattr(talk_generator, "STATE_DIR", sandbox / "state", raising=False)
+    # Never reach the real Arctic Shift from the suite. Tests that exercise it
+    # patch _arctic_get themselves; everything else sees it as unavailable,
+    # which is how the Reddit-mode fallbacks behaved before it existed.
+    def _no_arctic(path, params):
+        raise RuntimeError("Arctic Shift is not reachable from the test suite")
+
+    monkeypatch.setattr(talk_generator, "_arctic_get", _no_arctic, raising=False)
+    monkeypatch.setattr(talk_generator, "_ARCTIC_POSTS_CACHE", {}, raising=False)
+    monkeypatch.delenv("WRIT_REDDIT_SOURCE", raising=False)
+    monkeypatch.delenv("WRIT_REDDIT_ALLOW_NSFW", raising=False)
