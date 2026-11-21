@@ -3264,11 +3264,12 @@ def _split_tts_text(text: str, max_chars: int = 900) -> list[str]:
     return [c for c in chunks if c.strip()]
 
 
-def _local_render_speech(backend: str, text: str, output_path: Path, *, voice: str, speed: float = 1.0) -> bool:
+def _local_render_speech(backend: str, text: str, output_path: Path, *, voice: str, speed: float = 1.0) -> bool | None:
     """One chunk through a 24 kHz WAV backend: crouch-tts (breeze, qwen, phonon) or Kokoro.
 
     Every backend that reaches the shared chunk/gap/concat paths comes through here, so an unknown
-    name fails loudly instead of quietly rendering with Kokoro."""
+    name fails loudly instead of quietly rendering with Kokoro. None means crouch-tts found
+    nothing speakable in the chunk; the chunk loops skip it rather than fail the segment."""
     if backend in MAC_TTS_BACKENDS:
         from station.mac_tts import generate_speech as mac_generate_speech
         return mac_generate_speech(text, output_path, voice, model=backend)
@@ -3530,12 +3531,18 @@ def render_single_voice_chunked(
                 text = preprocess_for_tts(part, backend=backend)
                 if not text.strip():
                     continue
-                if rendered_parts > 0:
-                    concat_entries.append(silence_path)
                 segment_path = tmp / f"segment_{i:03d}.wav"
-                if not _local_render_speech(backend, text, segment_path, voice=voice, speed=speed):
+                rendered = _local_render_speech(backend, text, segment_path, voice=voice, speed=speed)
+                if rendered is None:
+                    # Seen on air 2026-11-18/19: a closing stage cue left as its own last chunk
+                    # failed the whole segment, then the fallback, then the job.
+                    log(f"  {backend} chunk {i + 1} had nothing to say; skipped")
+                    continue
+                if not rendered:
                     log(f"  {backend} rendering failed for chunk {i + 1}")
                     return False
+                if rendered_parts > 0:
+                    concat_entries.append(silence_path)
                 concat_entries.append(segment_path)
                 rendered_parts += 1
 
@@ -3813,12 +3820,16 @@ def render_multi_voice(script: str, output_path: Path, voices: dict[str, str], b
                 text = preprocess_for_tts(text, backend=backend)
                 if not text.strip():
                     continue
-                if rendered_parts > 0:
-                    concat_entries.append(silence_path)
                 segment_path = tmp / f"segment_{i:03d}.wav"
-                if not _local_render_speech(backend, text, segment_path, voice=voice, speed=speed):
+                rendered = _local_render_speech(backend, text, segment_path, voice=voice, speed=speed)
+                if rendered is None:
+                    log(f"  {backend} dialogue segment {i + 1} had nothing to say; skipped")
+                    continue
+                if not rendered:
                     log(f"  {backend} rendering failed for dialogue segment {i + 1}")
                     return False
+                if rendered_parts > 0:
+                    concat_entries.append(silence_path)
                 concat_entries.append(segment_path)
                 rendered_parts += 1
 
