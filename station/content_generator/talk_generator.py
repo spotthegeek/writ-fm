@@ -663,7 +663,11 @@ def _fetch_url_reddit(url: str, timeout: int = REDDIT_TIMEOUT_SECONDS) -> bytes:
 
 
 def _reddit_allow_nsfw() -> bool:
-    """True when OAuth credentials are configured — user has opted in to NSFW content."""
+    """True when OAuth credentials are configured — user has opted in to NSFW content.
+    WRIT_REDDIT_ALLOW_NSFW=1 opts in without them, for when Arctic Shift is the
+    only source and the Reddit credentials are retired."""
+    if os.environ.get("WRIT_REDDIT_ALLOW_NSFW", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
     return bool(REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET)
 
 
@@ -677,6 +681,176 @@ def _reddit_thread_base() -> str:
 
 def _pullpush_base() -> str:
     return os.environ.get("WRIT_REDDIT_PULLPUSH_BASE", "https://api.pullpush.io").rstrip("/")
+
+
+# --- Arctic Shift ------------------------------------------------------------
+# Reddit closed self-service API access in November 2025, stopped taking new
+# requests on 2026-10-31, and returns 403 "Blocked" to app-only tokens and
+# anonymous JSON alike; public API access ends in March 2027. Arctic Shift is a
+# volunteer-run copy of Reddit with a free, keyless API that serves the same
+# post and comment objects. Its catch: it re-reads each post about a day after
+# first seeing it, so posts under ~24 h old mostly show score 1.
+#
+# WRIT_REDDIT_SOURCE=arctic_shift reads everything from it and never touches
+# Reddit. The default, "reddit", keeps the Reddit API first and uses Arctic
+# Shift as the first fallback when Reddit refuses (PullPush stays behind it).
+
+ARCTIC_SHIFT_TIMEOUT_SECONDS = int(os.environ.get("WRIT_ARCTIC_SHIFT_TIMEOUT", "30"))
+ARCTIC_SHIFT_PAGE_SIZE = 100  # the API's maximum per request
+ARCTIC_SHIFT_MAX_PAGES = int(os.environ.get("WRIT_ARCTIC_SHIFT_MAX_PAGES", "6"))
+_ARCTIC_POSTS_CACHE: dict[tuple, list[dict]] = {}
+
+
+def _reddit_source_mode() -> str:
+    mode = os.environ.get("WRIT_REDDIT_SOURCE", "reddit").strip().lower().replace("-", "_")
+    return "arctic_shift" if mode in {"arctic_shift", "arctic", "arcticshift"} else "reddit"
+
+
+def _arctic_base() -> str:
+    return os.environ.get(
+        "WRIT_REDDIT_ARCTIC_BASE", "https://arctic-shift.photon-reddit.com"
+    ).rstrip("/")
+
+
+_ARCTIC_RETRY_DELAYS = (2.0, 6.0)  # seconds; Arctic Shift sheds load with 422/429
+
+
+def _arctic_get(path: str, params: dict) -> list:
+    """GET an Arctic Shift API path and return its `data` list.
+
+    A busy Arctic Shift answers 422 or 429 (first seen live on 2026-11-21 on a
+    paged r/sysadmin query that succeeded seconds later), so those and 5xx are
+    retried with a short backoff before giving up."""
+    url = f"{_arctic_base()}/api/{path.lstrip('/')}?{urllib.parse.urlencode(params)}"
+    for attempt in range(len(_ARCTIC_RETRY_DELAYS) + 1):
+        try:
+            raw = _fetch_url(url, timeout=ARCTIC_SHIFT_TIMEOUT_SECONDS)
+            break
+        except urllib.error.HTTPError as exc:
+            retryable = exc.code in (422, 429) or exc.code >= 500
+            if not retryable or attempt >= len(_ARCTIC_RETRY_DELAYS):
+                raise
+            delay = _ARCTIC_RETRY_DELAYS[attempt]
+            log(f"  Arctic Shift {path} answered {exc.code}; retrying in {delay:.0f}s")
+            time.sleep(delay)
+    payload = json.loads(raw.decode("utf-8", errors="ignore"))
+    if isinstance(payload, dict) and payload.get("error"):
+        raise RuntimeError(f"Arctic Shift error for {path}: {payload.get('error')}")
+    data = payload.get("data") if isinstance(payload, dict) else None
+    return data if isinstance(data, list) else []
+
+
+def _arctic_fetch_posts(
+    subreddit: str,
+    *,
+    after: float = 0.0,
+    before: float = 0.0,
+    max_pages: int | None = None,
+) -> list[dict]:
+    """Newest-first posts in r/subreddit created in (after, before), paging back
+    in time up to max_pages. Cached for the life of the process, keyed to the
+    hour, because one generation job asks for the same listing once per slot."""
+    pages = max(1, max_pages or ARCTIC_SHIFT_MAX_PAGES)
+    key = (subreddit.lower(), int(after) // 3600, int(before) // 3600, pages)
+    if key in _ARCTIC_POSTS_CACHE:
+        return _ARCTIC_POSTS_CACHE[key]
+    posts: list[dict] = []
+    seen: set[str] = set()
+    cursor = before
+    for _ in range(pages):
+        params: dict = {"subreddit": subreddit, "limit": ARCTIC_SHIFT_PAGE_SIZE, "sort": "desc"}
+        if after:
+            params["after"] = str(int(after))
+        if cursor:
+            params["before"] = str(int(cursor))
+        try:
+            page = [p for p in _arctic_get("posts/search", params) if isinstance(p, dict)]
+        except Exception as exc:
+            if not posts:
+                raise
+            # A later page failing still leaves a usable listing.
+            log(f"  Arctic Shift stopped after {len(posts)} r/{subreddit} post(s): {exc}")
+            break
+        fresh = [p for p in page if str(p.get("id") or "") not in seen]
+        for post in fresh:
+            seen.add(str(post.get("id") or ""))
+        posts.extend(fresh)
+        if len(page) < ARCTIC_SHIFT_PAGE_SIZE or not fresh:
+            break
+        oldest = min(float(p.get("created_utc") or 0) for p in page)
+        if not oldest or (cursor and oldest >= cursor):
+            break
+        cursor = oldest
+    _ARCTIC_POSTS_CACHE[key] = posts
+    return posts
+
+
+def _arctic_rank_key(post: dict) -> tuple[int, int]:
+    """Score first, comment count second. A post too new for Arctic Shift's
+    second read shows score 1 and few comments, so on a 'top' listing it sorts
+    behind posts that have settled; it still reaches a 'latest' listing."""
+    return (int(post.get("score") or 0), int(post.get("num_comments") or 0))
+
+
+def _arctic_listing(subreddit: str, sort: str, lookback_days: float, *, archive: bool = False) -> list[dict]:
+    """A Reddit-style listing assembled from Arctic Shift.
+
+    sort "new" is newest first. "top" and "hot" rank by score within the window
+    (Arctic Shift has no server-side score sort). archive=True stands in for
+    Reddit's top/all: the posts *older* than the window, best first."""
+    cutoff = time.time() - max(1, int(lookback_days)) * 86400
+    if archive:
+        posts = _arctic_fetch_posts(subreddit, before=cutoff)
+    else:
+        posts = _arctic_fetch_posts(subreddit, after=cutoff)
+    posts = list(posts)
+    if archive or sort in {"top", "hot"}:
+        posts.sort(key=_arctic_rank_key, reverse=True)
+    return posts
+
+
+def _arctic_pager(posts: list[dict]):
+    """Serve a pre-built listing in REDDIT_LISTING_PAGE_SIZE pages with the same
+    (posts, next_cursor) contract as _reddit_listing_page."""
+    size = max(1, REDDIT_LISTING_PAGE_SIZE)
+
+    def _page(after: str | None) -> tuple[list[dict], str | None]:
+        start = int(after or 0)
+        chunk = posts[start:start + size]
+        nxt = start + size
+        return chunk, (str(nxt) if nxt < len(posts) else None)
+
+    return _page
+
+
+_REDDIT_POST_ID_RE = re.compile(r"/comments/([a-z0-9]+)", re.IGNORECASE)
+
+
+def _arctic_thread_payload(normalized_url: str) -> tuple[dict, list[dict]]:
+    """Post and top-level comments for a thread, in the shapes Reddit's thread
+    JSON uses (post data dict, list of {"kind": "t1", "data": ...} children),
+    comments ordered best first as Reddit's sort=top would."""
+    match = _REDDIT_POST_ID_RE.search(normalized_url or "")
+    if not match:
+        raise RuntimeError(f"No Reddit post id in {normalized_url!r}")
+    post_id = match.group(1).lower()
+    found = _arctic_get("posts/ids", {"ids": post_id})
+    if not found or not isinstance(found[0], dict):
+        raise RuntimeError(f"Arctic Shift has no post {post_id}")
+    post_data = found[0]
+    try:
+        children = [c for c in _arctic_get("comments/tree", {"link_id": post_id, "limit": 100}) if isinstance(c, dict)]
+    except Exception as exc:
+        log(f"  Arctic Shift comments unavailable for {post_id}: {exc}")
+        children = []
+    children = [c for c in children if (c.get("kind") in (None, "t1")) and isinstance(c.get("data"), dict)]
+    children.sort(key=lambda c: int(c["data"].get("score") or 0), reverse=True)
+    return post_data, children
+
+
+def _arctic_hot_posts(subreddit: str, limit: int) -> list[dict]:
+    """Stand-in for /hot: the best-scoring posts of the last two days."""
+    return _arctic_listing(subreddit, "hot", 2)[:limit]
 
 
 def _clean_text_block(text: str) -> str:
@@ -1221,13 +1395,22 @@ def _extract_reddit_comments(children: list[dict], limit: int = REDDIT_COMMENT_L
     return comments
 
 
+def _reddit_thread_payload(normalized_url: str) -> tuple[dict, list[dict]]:
+    json_url = normalized_url.rstrip("/") + ".json?limit=12&sort=top"
+    payload = json.loads(_fetch_url_reddit(json_url).decode("utf-8", errors="ignore"))
+    return payload[0]["data"]["children"][0]["data"], payload[1]["data"]["children"]
+
+
 def _fetch_reddit_thread_context(source_value: str) -> SourceContext:
     _, normalized = _normalize_reddit_source(source_value)
-    json_url = normalized.rstrip("/") + ".json?limit=12&sort=top"
-    payload = json.loads(_fetch_url_reddit(json_url).decode("utf-8", errors="ignore"))
-
-    post_data = payload[0]["data"]["children"][0]["data"]
-    comments_children = payload[1]["data"]["children"]
+    if _reddit_source_mode() == "arctic_shift":
+        post_data, comments_children = _arctic_thread_payload(normalized)
+    else:
+        try:
+            post_data, comments_children = _reddit_thread_payload(normalized)
+        except Exception as exc:
+            log(f"Reddit thread fetch failed for {normalized}; trying Arctic Shift: {exc}")
+            post_data, comments_children = _arctic_thread_payload(normalized)
 
     subreddit = str(post_data.get("subreddit", "")).lower()
     story_mode = subreddit in REDDIT_STORY_SUBREDDITS
@@ -1536,11 +1719,12 @@ def _fetch_reddit_subreddit_context_with_strategy(
     seen_ids: set[str] = set()
     stats = {"scanned": 0, "too_small": 0}
 
-    def _scan(base_url: str, scan_cutoff: float, chronological: bool) -> dict | None:
-        """Page through a listing, stopping at the first usable post."""
+    def _scan(fetch_page, scan_cutoff: float, chronological: bool, max_pages: int | None = None) -> dict | None:
+        """Page through a listing, stopping at the first usable post.
+        fetch_page(after) returns (posts, next_cursor)."""
         after: str | None = None
-        for page in range(max(1, REDDIT_MAX_LISTING_PAGES)):
-            raw, after = _reddit_listing_page(base_url, after)
+        for page in range(max(1, max_pages or REDDIT_MAX_LISTING_PAGES)):
+            raw, after = fetch_page(after)
             if not raw:
                 break
             stats["scanned"] += len(raw)
@@ -1573,17 +1757,44 @@ def _fetch_reddit_subreddit_context_with_strategy(
                 break
         return None
 
+    def _reddit_pages(url: str):
+        return lambda after: _reddit_listing_page(url, after)
+
+    arctic_pages = max(1, -(-ARCTIC_SHIFT_MAX_PAGES * ARCTIC_SHIFT_PAGE_SIZE // max(1, REDDIT_LISTING_PAGE_SIZE)))
+
+    def _scan_arctic(*, archive: bool = False) -> dict | None:
+        listing = _arctic_listing(subreddit, sort, lookback_days, archive=archive)
+        return _scan(
+            _arctic_pager(listing),
+            0.0 if archive else cutoff,
+            chronological=(sort == "new" and not archive),
+            max_pages=arctic_pages,
+        )
+
     chosen: dict | None = None
     listing_blocked = False
-    try:
-        chosen = _scan(_reddit_listing_url(subreddit, sort, t), cutoff, chronological=(sort == "new"))
-    except Exception as exc:
-        log(f"Reddit {sort} listing blocked for r/{subreddit}; retrying hot listing: {exc}")
+    use_arctic = _reddit_source_mode() == "arctic_shift"
+    if use_arctic:
         try:
-            chosen = _scan(_reddit_listing_url(subreddit, "hot"), cutoff, chronological=False)
-        except Exception as exc2:
-            log(f"Reddit listing API failed for r/{subreddit}; using PullPush fallback: {exc2}")
+            chosen = _scan_arctic()
+        except Exception as exc:
+            log(f"Arctic Shift listing failed for r/{subreddit}; using PullPush fallback: {exc}")
             listing_blocked = True
+    else:
+        try:
+            chosen = _scan(_reddit_pages(_reddit_listing_url(subreddit, sort, t)), cutoff, chronological=(sort == "new"))
+        except Exception as exc:
+            log(f"Reddit {sort} listing blocked for r/{subreddit}; retrying hot listing: {exc}")
+            try:
+                chosen = _scan(_reddit_pages(_reddit_listing_url(subreddit, "hot")), cutoff, chronological=False)
+            except Exception as exc2:
+                log(f"Reddit listing API failed for r/{subreddit}; trying Arctic Shift: {exc2}")
+                try:
+                    chosen = _scan_arctic()
+                    use_arctic = True
+                except Exception as exc3:
+                    log(f"Arctic Shift listing failed for r/{subreddit}; using PullPush fallback: {exc3}")
+                    listing_blocked = True
 
     if chosen is None and not listing_blocked:
         # The show's recency window is dry. A subreddit with fifteen years of
@@ -1597,7 +1808,10 @@ def _fetch_reddit_subreddit_context_with_strategy(
                 f"after {stats['scanned']} post(s); widening to top/all."
             )
             try:
-                chosen = _scan(_reddit_listing_url(subreddit, "top", "all"), 0.0, chronological=False)
+                if use_arctic:
+                    chosen = _scan_arctic(archive=True)
+                else:
+                    chosen = _scan(_reddit_pages(_reddit_listing_url(subreddit, "top", "all")), 0.0, chronological=False)
             except Exception as exc:
                 log(f"  r/{subreddit} archive listing failed: {exc}")
         else:
@@ -1665,20 +1879,32 @@ def _bundle_listing_posts(subreddit: str, lookback_days: int, selection_strategy
     if sort == "top":
         url += f"&t={'day' if lookback_days <= 1 else 'week' if lookback_days <= 7 else 'month'}"
     cutoff = time.time() - max(1, int(lookback_days)) * 86400
+    raw: list[dict] = []
+    if _reddit_source_mode() != "arctic_shift":
+        try:
+            payload = json.loads(_fetch_url_reddit(url).decode("utf-8", errors="ignore"))
+            raw = [(child or {}).get("data", {}) for child in payload.get("data", {}).get("children", [])]
+        except Exception as exc:
+            log(f"  Bundle listing fetch failed for r/{subreddit}; trying Arctic Shift: {exc}")
+            raw = []
+        else:
+            if not raw:
+                return []
+    if not raw:
+        try:
+            raw = _arctic_listing(subreddit, sort, lookback_days)[:50]
+        except Exception as exc:
+            log(f"  Arctic Shift bundle listing failed for r/{subreddit}: {exc}")
+            return []
     posts: list[dict] = []
-    try:
-        payload = json.loads(_fetch_url_reddit(url).decode("utf-8", errors="ignore"))
-        for child in payload.get("data", {}).get("children", []):
-            data = (child or {}).get("data", {})
-            if data.get("stickied"):
-                continue
-            created = data.get("created_utc")
-            if isinstance(created, (int, float)) and created < cutoff:
-                continue
-            if data.get("title"):
-                posts.append(data)
-    except Exception as exc:
-        log(f"  Bundle listing fetch failed for r/{subreddit}: {exc}")
+    for data in raw:
+        if not isinstance(data, dict) or data.get("stickied"):
+            continue
+        created = data.get("created_utc")
+        if isinstance(created, (int, float)) and created < cutoff:
+            continue
+        if data.get("title"):
+            posts.append(data)
     return posts
 
 
@@ -2237,11 +2463,18 @@ def _fetch_all_sources_for_briefing(show, show_id: str) -> tuple[str, str]:
             elif src_type in {"reddit_subreddit", "reddit"}:
                 _, subreddit = _normalize_reddit_source(src_value)
                 try:
-                    url = f"{_reddit_listing_base()}/r/{subreddit}/hot.json?limit=12"
-                    payload = json.loads(_fetch_url(url, timeout=10).decode("utf-8", errors="ignore"))
+                    hot: list[dict] | None = None
+                    if _reddit_source_mode() != "arctic_shift":
+                        try:
+                            url = f"{_reddit_listing_base()}/r/{subreddit}/hot.json?limit=12"
+                            payload = json.loads(_fetch_url_reddit(url, timeout=10).decode("utf-8", errors="ignore"))
+                            hot = [(c or {}).get("data", {}) for c in payload.get("data", {}).get("children", [])]
+                        except Exception as exc:
+                            log(f"  Briefing: Reddit hot listing failed for r/{subreddit}; trying Arctic Shift: {exc}")
+                    if hot is None:
+                        hot = _arctic_hot_posts(subreddit, 12)
                     posts = []
-                    for child in payload.get("data", {}).get("children", []):
-                        data = child.get("data", {})
+                    for data in hot:
                         if data.get("stickied") or data.get("over_18"):
                             continue
                         title = _clean_text_block(data.get("title", ""))
