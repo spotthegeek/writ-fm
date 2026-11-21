@@ -26,8 +26,23 @@ def _log(msg: str) -> None:
     print(msg, flush=True)
 
 
+def _nothing_to_say(resp: httpx.Response) -> bool:
+    """crouch-tts strips stage directions and cues before speaking; a chunk that is
+    nothing but those comes back 400 {"detail": "no speakable text"}."""
+    if resp.status_code != 400:
+        return False
+    try:
+        detail = resp.json().get("detail", "")
+    except Exception:
+        detail = resp.text
+    return "no speakable text" in str(detail).lower()
+
+
 def generate_speech(text: str, output_path: Path, voice_id: str, *, model: str = "breeze",
-                    instruct: str | None = None) -> bool:
+                    instruct: str | None = None) -> bool | None:
+    """True when a WAV was written, False on failure, and None when crouch-tts found nothing
+    to say in `text` (a chunk that was all stage directions). None is falsy, so a caller that
+    only checks truthiness treats it as the failure it always was; the chunk loops skip it."""
     url = mac_tts_service_url()
     if not url:
         _log("  crouch-tts: MAC_TTS_SERVICE_URL is not set")
@@ -46,6 +61,9 @@ def generate_speech(text: str, output_path: Path, voice_id: str, *, model: str =
             if resp.status_code < 400 and resp.content[:4] == b"RIFF":
                 Path(output_path).write_bytes(resp.content)
                 return True
+            if _nothing_to_say(resp):
+                _log(f"  crouch-tts {model}/{voice_id}: no speakable text in {text[:80]!r}")
+                return None
             detail = resp.text[:200] if resp.status_code >= 400 else "response was not a WAV file"
             _log(f"  crouch-tts {model}/{voice_id}: HTTP {resp.status_code}: {detail}")
             if resp.status_code < 500:
